@@ -47,6 +47,10 @@ func IsNotFound(err error) bool {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+	return c.doH(ctx, method, path, nil, body, out)
+}
+
+func (c *Client) doH(ctx context.Context, method, path string, headers map[string]string, body any, out any) error {
 	u, err := url.Parse(c.endpoint + path)
 	if err != nil {
 		return err
@@ -71,6 +75,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := c.http.Do(req)
