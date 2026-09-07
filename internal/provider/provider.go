@@ -103,12 +103,18 @@ func (p *ibeeProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 func (p *ibeeProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewVpcResource,
+		NewVpcSubnetResource,
+		NewVpcNodeAttachmentResource,
 		NewFirewallGroupResource,
+		NewFirewallRuleResource,
+		NewCloudVmResource,
 	}
 }
 
 func (p *ibeeProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewSitesDataSource,
+		NewComputePlansDataSource,
+		NewImagesDataSource,
 	}
 }
