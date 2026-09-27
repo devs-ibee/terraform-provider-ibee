@@ -188,7 +188,7 @@ func TestNetworkLBStateConversion(t *testing.T) {
 }
 func TestReservedIPAttachmentDoesNotDetachMovedIP(t *testing.T) {
 	mutations := 0
-	r := NewReservedIPAttachmentResource().(*networkResource)
+	r := NewReservedIPAttachmentResource().(*reservedIPAttachmentResource).networkResource
 	r.client = networkTestClient(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != "GET" {
 			mutations++
@@ -213,6 +213,14 @@ func TestVpcDeletionOwnsOnlyRecordedDefaultSubnet(t *testing.T) {
 				if strings.Contains(req.URL.Path, "unmanaged") {
 					t.Fatal("unmanaged subnet touched")
 				}
+				if req.Method == http.MethodGet {
+					if owned == "" {
+						fmt.Fprint(w, `[]`)
+					} else {
+						fmt.Fprint(w, `[{"subnet_id":"owned"}]`)
+					}
+					return
+				}
 				w.WriteHeader(204)
 			})
 			model := vpcResourceModel{ID: types.StringValue("vpc"), Name: types.StringValue("test"), SiteID: types.StringValue("site"), Cidr: types.StringValue("10.0.0.0/24"), AutoCidr: types.BoolValue(true), CreateDefaultSubnet: types.BoolValue(false), DefaultSubnetID: types.StringValue("unmanaged"), OwnedDefaultSubnetID: types.StringNull(), Description: types.StringValue(""), Status: types.StringValue("available")}
@@ -229,6 +237,7 @@ func TestVpcDeletionOwnsOnlyRecordedDefaultSubnet(t *testing.T) {
 			if owned != "" {
 				want = append([]string{"DELETE /networking/vpcs/vpc/subnets/owned"}, want...)
 			}
+			want = append([]string{"GET /networking/vpcs/vpc/subnets"}, want...)
 			if !reflect.DeepEqual(paths, want) {
 				t.Fatalf("got %v want %v", paths, want)
 			}
@@ -313,7 +322,7 @@ func TestNetworkRejectsWrongResponseIdentity(t *testing.T) {
 	}{
 		{"load-balancer", NewL4LoadBalancerResource().(*networkResource), map[string]any{"id": "wanted"}, `{"lb_id":"other","layer":"l4"}`},
 		{"reserved-ip", NewReservedIPResource().(*reservedIPResource).networkResource, map[string]any{"id": "wanted"}, `{"public_ip_id":"other"}`},
-		{"attachment", NewReservedIPAttachmentResource().(*networkResource), map[string]any{"id": "vm", "vm_id": "vm", "reserved_ip_id": "wanted"}, `{"public_ip_id":"other","attached_resource_id":"vm"}`},
+		{"attachment", NewReservedIPAttachmentResource().(*reservedIPAttachmentResource).networkResource, map[string]any{"id": "vm", "vm_id": "vm", "reserved_ip_id": "wanted"}, `{"public_ip_id":"other","attached_resource_id":"vm"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -327,7 +336,7 @@ func TestNetworkRejectsWrongResponseIdentity(t *testing.T) {
 }
 func TestReservedIPAttachmentMissingOwnershipPreservesState(t *testing.T) {
 	mutations := 0
-	r := NewReservedIPAttachmentResource().(*networkResource)
+	r := NewReservedIPAttachmentResource().(*reservedIPAttachmentResource).networkResource
 	r.client = networkTestClient(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != "GET" {
 			mutations++

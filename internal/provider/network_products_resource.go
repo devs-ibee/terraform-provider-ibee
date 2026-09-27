@@ -99,10 +99,10 @@ func (r *reservedIPResource) Create(ctx context.Context, req resource.CreateRequ
 
 func NewReservedIPAttachmentResource() resource.Resource {
 	base := func(v networkValues) string { return "/networking/reserved-ips/" + v.segment("reserved_ip_id") }
-	return &networkResource{name: "reserved_ip_attachment", description: "Attaches an existing reserved IP to a VM. Import as reserved_ip_id/vm_id. Detach refuses to affect an IP moved to another VM outside Terraform.", idField: "public_ip_id", readIdentity: "reserved_ip_id", importFields: []string{"reserved_ip_id", "vm_id"},
-		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "reserved_ip_id": networkRequired(true), "vm_id": networkRequired(true), "vpc_id": networkOptionalReference(), "subnet_id": networkOptionalReference()},
+	r := &networkResource{name: "reserved_ip_attachment", description: "Attaches an existing reserved IP to a VM. Changes to the VM or network use the public atomic move operation. Import as reserved_ip_id/vm_id. Detach refuses to affect an IP moved to another VM outside Terraform.", idField: "public_ip_id", readIdentity: "reserved_ip_id", importFields: []string{"reserved_ip_id", "vm_id"},
+		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "reserved_ip_id": networkRequired(true), "vm_id": networkRequired(false), "vpc_id": schema.StringAttribute{Optional: true, Computed: true}, "subnet_id": schema.StringAttribute{Optional: true, Computed: true}},
 		requestFields: networkIdentityFields("vm_id", "vpc_id", "subnet_id"), responseFields: map[string]string{"vm_id": "attached_resource_id", "vpc_id": "attached_vpc_id", "subnet_id": "attached_subnet_id"},
-		createPath: func(v networkValues) string { return base(v) + "/attach" }, readPath: base, deletePath: func(v networkValues) string { return base(v) + "/detach" }, deleteMethod: http.MethodPost,
+		createPath: func(v networkValues) string { return base(v) + "/attach" }, readPath: base, updatePath: func(v networkValues) string { return base(v) + "/move" }, updateMethod: http.MethodPost, deletePath: func(v networkValues) string { return base(v) + "/detach" }, deleteMethod: http.MethodPost,
 		createResultID: func(v networkValues, _ map[string]any) (string, error) { return v.str("vm_id"), nil },
 		readTransform: func(v networkValues, out map[string]any) (map[string]any, error) {
 			if _, ok := out["attached_resource_id"]; !ok {
@@ -138,6 +138,24 @@ func NewReservedIPAttachmentResource() resource.Resource {
 			}
 			return nil
 		}}
+	return &reservedIPAttachmentResource{networkResource: r}
+}
+
+// The move endpoint owns detach/attach atomically. Verify that the source
+// attachment still belongs to this state before changing its destination.
+type reservedIPAttachmentResource struct{ *networkResource }
+
+func (r *reservedIPAttachmentResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var object types.Object
+	resp.Diagnostics.Append(req.State.Get(ctx, &object)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := r.beforeDelete(ctx, r.client, networkObject(object)); err != nil {
+		resp.Diagnostics.AddError("Cannot move reserved IP attachment", err.Error())
+		return
+	}
+	r.networkResource.Update(ctx, req, resp)
 }
 
 func NewFirewallAttachmentResource() resource.Resource {
@@ -197,9 +215,20 @@ func newNetworkLB(layer string) resource.Resource {
 		request["rules"] = "rules"
 		response["rules"] = "rules"
 	}
-	return &networkResource{name: "load_balancer_" + layer, description: "An IBEE " + layer + " load balancer. Import using the load balancer ID. Supports readable backend and routing-rule fields. The public read contract does not expose custom-domain, routing-policy or TLS configuration, so those settings cannot yet be safely managed." + networkBillingDescription,
+	return &networkResource{name: "load_balancer_" + layer, description: "An IBEE " + layer + " load balancer. Import using the load balancer ID. Supports readable backend and routing-rule fields. HTTPS uses managed TLS termination and tls_passthrough uses passthrough TLS. Certificate material and routing-policy configuration cannot be refreshed through the public read contract." + networkBillingDescription,
 		attributes: attrs, requestFields: request, responseFields: response, createOnlyFields: map[string]bool{"protocol": true}, idField: "lb_id", importFields: []string{"id"}, billable: true, waitReady: true, waitDelete: true,
 		createPath: networkPath(base + "/" + layer), readPath: func(v networkValues) string { return base + "/" + v.segment("id") }, updatePath: func(v networkValues) string { return base + "/" + layer + "/" + v.segment("id") }, deletePath: func(v networkValues) string { return base + "/" + v.segment("id") },
+		requestTransform: func(v networkValues, body map[string]any, update bool) error {
+			if !update {
+				switch v.str("protocol") {
+				case "https":
+					body["tls"] = map[string]any{"mode": "terminate", "certificate_source": "managed"}
+				case "tls_passthrough":
+					body["tls"] = map[string]any{"mode": "passthrough", "certificate_source": "managed"}
+				}
+			}
+			return nil
+		},
 		readTransform: func(_ networkValues, out map[string]any) (map[string]any, error) {
 			if out["layer"] != layer {
 				return nil, fmt.Errorf("load balancer is %v, expected %s", out["layer"], layer)

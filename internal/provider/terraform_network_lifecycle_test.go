@@ -89,7 +89,8 @@ resource "ibee_vpc" "test" {
 resource "ibee_vpc_subnet" "test" {
  vpc_id = ibee_vpc.test.id
  name = "app"
- cidr = "10.144.0.0/24"
+ prefix_length = 24
+ dns = ["1.1.1.1", "8.8.8.8"]
 }
 resource "ibee_nat_gateway" "test" {
  vpc_id = ibee_vpc.test.id
@@ -156,6 +157,17 @@ resource "ibee_load_balancer_l7" "test" {
 	config = strings.Replace(config, "port = 8080", "port = 8082", 1)
 	config = strings.Replace(config, " rules = [{ path_prefix = \"/api\", backends = [{ type = \"ip\", target = \"192.0.2.1\", port = 8081 }] }]", " rules = []", 1)
 	config = strings.Replace(config, "internal_port = 443", "internal_port = 444", 1)
+	config = strings.Replace(config, `name = "fixture"`, `name = "renamed-vpc"`, 1)
+	config = strings.Replace(config, `dns = ["1.1.1.1", "8.8.8.8"]`, `dns = ["9.9.9.9"]`, 1)
+	config = strings.Replace(config, `vm_id = "vm-public"`, `vm_id = "vm-public-2"`, 1)
+	config = strings.Replace(config, `protocol = "tcp"`, `protocol = "tls_passthrough"`, 1)
+	config = strings.Replace(config, `protocol = "http"`, `protocol = "https"`, 1)
+	writeTestFile(t, filepath.Join(dir, "main.tf"), config)
+	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
+	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	// Changing automatic prefix must allocate a fresh CIDR, not reuse the prior
+	// computed CIDR as though it were explicitly configured.
+	config = strings.Replace(config, "prefix_length = 24", "prefix_length = 25", 1)
 	writeTestFile(t, filepath.Join(dir, "main.tf"), config)
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
@@ -220,7 +232,7 @@ func (f *networkTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		send(f.objects[groupPath])
 		return
 	}
-	if (p == "/networking/reserved-ips/ip-1/attach" || p == "/networking/reserved-ips/ip-1/detach") && r.Method == "POST" {
+	if (p == "/networking/reserved-ips/ip-1/attach" || p == "/networking/reserved-ips/ip-1/detach" || p == "/networking/reserved-ips/ip-1/move") && r.Method == "POST" {
 		ip := f.objects["/networking/reserved-ips/ip-1"]
 		ip["attached_resource_id"] = body["vm_id"]
 		ip["attached_vpc_id"] = body["vpc_id"]
@@ -240,8 +252,20 @@ func (f *networkTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			}
 		case "/networking/vpcs/vpc-1/subnets":
 			id, idField, collection = "subnet-1", "subnet_id", p
+			if body["cidr"] == nil {
+				prefix := 24
+				if n, ok := body["prefix_length"].(float64); ok {
+					prefix = int(n)
+				}
+				body["cidr"] = fmt.Sprintf("10.144.0.0/%d", prefix)
+			}
+			body["gateway"] = "10.144.0.1"
 			body["status"] = "available"
 		case "/networking/vpcs/vpc-1/nat-gateways":
+			if body["reserved_public_ip_id"] != nil {
+				http.Error(w, "computed platform IP must not be reused as a reservation", 400)
+				return
+			}
 			id, idField, collection = "nat-1", "nat_gateway_id", p
 			body["public_ip_id"] = "nat-ip"
 			body["public_ip"] = "203.0.113.2"
@@ -268,6 +292,17 @@ func (f *networkTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			body["status"] = "reserved"
 			body["reverse_dns"] = ""
 		case "/networking/load-balancers/l4", "/networking/load-balancers/l7":
+			if protocol := body["protocol"]; protocol == "https" || protocol == "tls_passthrough" {
+				tls, ok := body["tls"].(map[string]any)
+				mode := "terminate"
+				if protocol == "tls_passthrough" {
+					mode = "passthrough"
+				}
+				if !ok || tls["mode"] != mode || tls["certificate_source"] != "managed" {
+					http.Error(w, "TLS request missing required managed mode", 400)
+					return
+				}
+			}
 			layer := strings.TrimPrefix(p, "/networking/load-balancers/")
 			id, idField, collection = "lb-"+layer, "lb_id", "/networking/load-balancers"
 			body["layer"] = layer

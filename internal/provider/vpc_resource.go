@@ -38,6 +38,7 @@ type vpcResourceModel struct {
 	CreateDefaultSubnet  types.Bool   `tfsdk:"create_default_subnet"`
 	DefaultSubnetID      types.String `tfsdk:"default_subnet_id"`
 	OwnedDefaultSubnetID types.String `tfsdk:"owned_default_subnet_id"`
+	DefaultSubnetCidr    types.String `tfsdk:"default_subnet_cidr"`
 	Status               types.String `tfsdk:"status"`
 }
 
@@ -73,13 +74,10 @@ func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
-			"name": schema.StringAttribute{
-				Required:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
+			"name": schema.StringAttribute{Required: true},
 			"site_id": schema.StringAttribute{
 				Required:      true,
-				Description:   "Network placement site (site_id from the ibee_sites data source).",
+				Description:   "Network placement site (site_id from the ibee_network_sites data source).",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"description": schema.StringAttribute{
@@ -105,6 +103,7 @@ func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				Default:       booldefault.StaticBool(true),
 				PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
 			},
+			"default_subnet_cidr": schema.StringAttribute{Optional: true, Description: "Optional RFC1918 CIDR for the default subnet. Requires create_default_subnet=true.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"default_subnet_id": schema.StringAttribute{
 				Computed:      true,
 				Description:   "Default subnet created with this VPC; never adopts an arbitrary existing subnet.",
@@ -151,6 +150,13 @@ func (r *vpcResource) Create(ctx context.Context, req resource.CreateRequest, re
 		body["auto_cidr"] = false
 	}
 
+	if !plan.DefaultSubnetCidr.IsNull() && !plan.DefaultSubnetCidr.IsUnknown() {
+		if !plan.CreateDefaultSubnet.ValueBool() {
+			resp.Diagnostics.AddError("Invalid VPC configuration", "default_subnet_cidr requires create_default_subnet=true")
+			return
+		}
+		body["default_subnet_cidr"] = plan.DefaultSubnetCidr.ValueString()
+	}
 	var out vpcAPI
 	if err := r.client.do(ctx, http.MethodPost, "/networking/vpcs", body, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to create VPC", err.Error())
@@ -251,6 +257,9 @@ func (r *vpcResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		found := false
 		for _, subnet := range out.Subnets {
 			if subnet.identifier() == state.OwnedDefaultSubnetID.ValueString() {
+				if !state.DefaultSubnetCidr.IsNull() {
+					state.DefaultSubnetCidr = types.StringValue(subnet.Cidr)
+				}
 				found = true
 			}
 		}
@@ -270,7 +279,7 @@ func (r *vpcResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
-	body := map[string]any{"description": plan.Description.ValueString()}
+	body := map[string]any{"name": plan.Name.ValueString(), "description": plan.Description.ValueString()}
 	var out vpcAPI
 	if err := r.client.do(ctx, http.MethodPatch, "/networking/vpcs/"+url.PathEscape(plan.ID.ValueString()), body, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to update VPC", err.Error())
@@ -293,6 +302,31 @@ func (r *vpcResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	}
 	vpcID := state.ID.ValueString()
 
+	// The service currently cascades subnet deletion even though the published
+	// DELETE contract says the VPC must be empty. Inspect children before any
+	// mutation to avoid indirectly destroying an unmanaged subnet.
+	var children []subnetAPI
+	if err := r.client.do(ctx, http.MethodGet, "/networking/vpcs/"+url.PathEscape(vpcID)+"/subnets", nil, &children); err != nil {
+		if IsNotFound(err) {
+			return
+		}
+		resp.Diagnostics.AddError("Cannot verify VPC subnet ownership", err.Error())
+		return
+	}
+	if children == nil {
+		resp.Diagnostics.AddError("Cannot verify VPC subnet ownership", "The API did not return a subnet array; no resources were deleted.")
+		return
+	}
+	for _, child := range children {
+		if child.identifier() == "" {
+			resp.Diagnostics.AddError("Cannot verify VPC subnet ownership", "The API returned a subnet without an ID; no resources were deleted.")
+			return
+		}
+		if child.identifier() != state.OwnedDefaultSubnetID.ValueString() {
+			resp.Diagnostics.AddError("VPC contains separately managed subnets", "Remove or import and destroy subnet "+child.identifier()+" before deleting the VPC. The service would otherwise cascade its deletion.")
+			return
+		}
+	}
 	// Only the subnet explicitly returned by this resource's Create is owned.
 	// Imported and independently created subnets are never removed here.
 	if sid := state.OwnedDefaultSubnetID.ValueString(); sid != "" {

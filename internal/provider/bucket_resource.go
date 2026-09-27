@@ -61,14 +61,14 @@ func (r *bucketResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An IBEE object storage bucket. The API deletes all contents recursively. By default the provider refuses deletion unless both reported usage counters are zero. This preflight is not atomic; stop writers before destroy. Imported buckets use force_destroy=false.",
+		Description: "An IBEE object storage bucket. By default the provider refuses deletion unless both reported usage counters are zero. This preflight is not atomic; stop writers before destroy. The provider never empties a bucket itself, and the service may reject deletion when objects or retained versions remain. Imported buckets use force_destroy=false.",
 		Attributes: map[string]schema.Attribute{
 			"id":                  schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"name":                schema.StringAttribute{Required: true, Description: "Bucket name, 3–63 characters. Import using this name.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"region":              schema.StringAttribute{Required: true, Description: "Object Storage region identifier, not a compute site ID.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"is_public":           schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Allow unauthenticated read access."},
-			"object_lock_enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()}, Description: "Enable object lock at creation. Retention configuration is currently managed outside this resource."},
-			"force_destroy":       schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Explicitly permit recursive deletion of all bucket contents. Apply this setting before destroy. Object retention may still prevent deletion."},
+			"object_lock_enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()}, Description: "Enable object lock at creation. Manage a default retention rule separately with ibee_bucket_retention; the service cannot clear that rule after creation."},
+			"force_destroy":       schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Skip the provider's usage-counter deletion guard and permit the bucket delete API call. This does not purge objects or bypass server emptiness/retention checks. Apply before destroy. On API versions that delete recursively, this permits content deletion."},
 			"status":              schema.StringAttribute{Computed: true},
 			"plan":                schema.StringAttribute{Computed: true, Description: "Storage plan returned by the API."},
 			"site_id":             schema.StringAttribute{Computed: true},
@@ -234,12 +234,12 @@ func (r *bucketResource) Delete(ctx context.Context, req resource.DeleteRequest,
 			return
 		}
 		if out.ObjectCount == nil || out.TotalSize == nil || *out.ObjectCount != 0 || *out.TotalSize != 0 {
-			resp.Diagnostics.AddError("Bucket deletion blocked", "Bucket is nonempty or usage is unavailable. Empty it and stop writers before retrying, or explicitly apply force_destroy=true to permit recursive deletion of its contents.")
+			resp.Diagnostics.AddError("Bucket deletion blocked", "Bucket is nonempty or usage is unavailable. Empty it and stop writers before retrying. If counters are stale after emptying, explicitly apply force_destroy=true to skip this local check; the API may still reject a nonempty or retained bucket.")
 			return
 		}
 	}
 	if err := r.client.do(ctx, http.MethodDelete, bucketPath(state.ID.ValueString()), nil, nil); err != nil && !IsNotFound(err) {
-		resp.Diagnostics.AddError("Failed to delete bucket", err.Error())
+		resp.Diagnostics.AddError("Failed to delete bucket", err.Error()+" The provider does not purge objects, historical versions or retained data; empty the bucket through the supported storage workflow before retrying.")
 	}
 }
 

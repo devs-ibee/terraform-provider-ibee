@@ -1,19 +1,19 @@
 # Implemented coverage and portal dependencies
 
-This is the implementation status after the 2026-09-27 source review. The earlier [portal assessment](PORTAL_PARITY_ASSESSMENT.md) records the baseline and service-side requirements. All 19 portal categories remain in scope; navigation visibility does not establish a supported public API.
+This is the implementation status after the 2026-09-27 source review and development API checks. Some deployed routes are newer than the checked-in public API specification; verified native service contracts take precedence over an absent spec entry. The earlier [portal assessment](PORTAL_PARITY_ASSESSMENT.md) records the baseline and service-side requirements. All 19 portal categories remain in scope; navigation visibility does not establish a supported public API.
 
 | Portal category | Provider implementation | Remaining dependency or boundary |
 | --- | --- | --- |
-| Cloud VMs | `ibee_cloud_vm` | All configuration changes replace. Catalog and canonical GET requirements below must be present in the target deployment. |
+| Cloud VMs | `ibee_cloud_vm` | All configuration changes replace; explicit power operations use ibee_vm_power (Terraform 1.14+). Catalog and canonical GET requirements below must be present in the target deployment. |
 | GPU VMs | `ibee_gpu_vm` | Same requirements as cloud VMs; real GPU capacity is unverified. |
 | Bare metal | Blocked | Reviewed portal handler does not provision; no public lifecycle contract. |
-| Object storage | `ibee_bucket` | No retention lifecycle or object data management. S3 credentials deferred because GET omits creation scope and secret retrieval semantics. |
-| Block storage | Cloud/GPU `*_vm_volume_attachment` | Existing volumes only. No public standalone volume CRUD/catalog. VM GET must expose attachment projection. |
+| Object storage | `ibee_bucket`, `ibee_bucket_retention`, `ibee_bucket_cors`, `ibee_bucket_lifecycle`, `ibee_bucket_notifications`, `ibee_s3_credential` | Default retention cannot be cleared; destruction is guarded. CORS/notification configuration readback is not data-plane delivery proof. Standalone versioning API is absent; uploads/downloads remain S3 data operations. |
+| Block storage | `ibee_block_volume`, `ibee_block_volume_attachment` plus Cloud/GPU `*_vm_volume_attachment` | Standalone volume create/read/grow/delete implemented from current service contracts. Public volume listing works; public plan catalog returned 404. VM attachment projection and safe detach remain required. |
 | VPC | `ibee_vpc`, `ibee_vpc_subnet`, `ibee_vpc_node_attachment`, `ibee_nat_gateway`, `ibee_nat_port_forwarding_rule` | Authoritative network quotas and any NAT pricing remain backend responsibilities. |
 | Reserved IPs | `ibee_reserved_ip`, `ibee_reserved_ip_attachment` | Site availability and charges enforced by service; account admission check has no public quote. |
 | Load balancers | `ibee_load_balancer_l4`, `ibee_load_balancer_l7` | Readable name/protocol/backends and L7 rules only. Custom-domain, routing-mode and TLS settings are omitted where GET cannot round-trip them. |
 | DNS | Blocked | Portal coming-soon route; no public zone/record contract. |
-| CDN | Blocked | No public distribution/domain lifecycle. |
+| CDN | `ibee_cdn_distribution`, `ibee_cdn_origin`, `ibee_cdn_website`, `ibee_cdn_domain` | Distribution import/no-change verified live. Custom-origin route returned 404 in development; SPA requires an existing index object, and custom domains require DNS validation. Purge and domain verification use explicit Terraform actions (1.14+); metrics are observational, not a managed resource. |
 | Firewalls | `ibee_firewall_group`, `ibee_firewall_rule`, `ibee_firewall_attachment` | Group configuration replaces where no update API exists. |
 | SSL certificates | Blocked | No public certificate issue/import/read/delete contract. |
 | Backups | Cloud/GPU `*_vm_backup_policy` | Destroy disables scheduling; existing backups are retained. One-off restore is outside resource lifecycle. |
@@ -21,7 +21,7 @@ This is the implementation status after the 2026-09-27 source review. The earlie
 | ISOs | Blocked | Image discovery only; no public upload/management contract. |
 | SSH keys | Existing key IDs on VMs | No public standalone key CRUD. |
 | Email service | Blocked | No public control-plane domain/webhook/limit lifecycle. |
-| Secret manager | `ibee_secret_store`, `ibee_secret` | Write-only values; soft delete/archive semantics, retained names/history. No permanent erase or unarchive API. |
+| Secret manager | `ibee_secret_store`, `ibee_secret` | Write-only values; soft delete/archive semantics, retained names/history. Native recovery and permanent-removal endpoints exist, but the provider deliberately does not invoke them as ordinary destroy operations; separate recovery/destructive actions remain unimplemented. |
 | Container registry | Blocked | Registry service exists, but no public token-authenticated provisioning/plan/credential contract in reviewed spec. |
 
 ## Required API alignment before live validation

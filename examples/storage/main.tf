@@ -78,4 +78,5 @@ output "secret_id" {
 # Destroy soft-deletes the latest secret value, then archives the store; history
 # and reserved names remain. Buckets refuse destroy while reported nonempty.
 # Stop object writers before destroy: the API has no atomic empty-bucket delete.
-# To deliberately delete all objects, apply force_destroy=true before destroy.
+# force_destroy=true skips the local usage check but does not empty the bucket;
+# the service may still reject nonempty buckets or retained historical versions.
