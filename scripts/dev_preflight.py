@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only development API checks through the real Terraform provider.
+"""Read-only API checks through the real Terraform provider (development by default).
 
 No managed resources, payments, or infrastructure mutations are configured.
 Credentials are read from an ignored local JSON file and passed only via the
@@ -17,26 +17,31 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--credentials", type=Path, default=ROOT / ".ibee-dev.json")
+    parser.add_argument("--environment", choices=("development", "production"), default="development")
+    parser.add_argument("--credentials", type=Path)
     args = parser.parse_args()
+    production = args.environment == "production"
+    credentials_path = args.credentials or ROOT / (".ibee-prod.json" if production else ".ibee-dev.json")
     try:
-        credentials = json.loads(args.credentials.read_text())
+        credentials = json.loads(credentials_path.read_text())
     except (OSError, ValueError):
-        raise SystemExit("Create the ignored .ibee-dev.json with token and workspace_id before running this check.")
+        raise SystemExit(f"Configure {credentials_path.name} locally with token and workspace_id before running this check.")
     if not isinstance(credentials, dict):
         raise SystemExit("Credentials must be a JSON object.")
     for key in ("token", "workspace_id"):
         if not isinstance(credentials.get(key), str) or not credentials[key].strip():
             raise SystemExit(f"Credentials require a nonempty {key} string.")
     token = credentials["token"].strip()
-    if token.startswith("ibee_prod_key_"):
-        raise SystemExit("Use a development API token for this check.")
+    expected_prefix = "ibee_prod_key_" if production else "ibee_dev_key_"
+    if not token.startswith(expected_prefix):
+        raise SystemExit(f"Use a {args.environment} API token for this check; no request was sent.")
     env = {k: v for k, v in os.environ.items() if not k.startswith(("IBEE_", "TF_"))}
     env.update(IBEE_TOKEN=token, IBEE_WORKSPACE_ID=credentials["workspace_id"].strip(),
-               IBEE_ENDPOINT="https://api.ibee.co.in/v1", TF_IN_AUTOMATION="1", CHECKPOINT_DISABLE="1")
+               IBEE_ENDPOINT="https://api.ibee.ai/v1" if production else "https://api.ibee.co.in/v1",
+               TF_IN_AUTOMATION="1", CHECKPOINT_DISABLE="1")
     if credentials.get("organization_id"):
         env["IBEE_ORGANIZATION_ID"] = str(credentials["organization_id"])
-    with tempfile.TemporaryDirectory(prefix="ibee-dev-preflight-") as temp:
+    with tempfile.TemporaryDirectory(prefix=f"ibee-{args.environment}-preflight-") as temp:
         work = Path(temp)
         binary = work / "bin" / "terraform-provider-ibee"
         binary.parent.mkdir()
@@ -88,7 +93,7 @@ output "preflight" {
             raise SystemExit(1)
         result = subprocess.run(["terraform", "output", "-json", "preflight"], cwd=work, env=env, capture_output=True, text=True, check=True)
         print(json.dumps(json.loads(result.stdout), indent=2))
-        print("Read-only development preflight passed. No infrastructure or payments were created.")
+        print(f"Read-only {args.environment} preflight passed. No infrastructure or payments were created.")
 
 
 if __name__ == "__main__":
