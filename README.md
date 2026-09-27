@@ -4,6 +4,8 @@ Manage IBEE infrastructure through the workspace-scoped public API, with service
 
 **Status: partial development live validation completed; not yet published to the Terraform Registry.** This repository contains 34 resources and 5 data sources, plus explicit actions for Terraform 1.14+. Product coverage and remaining portal gaps are listed in [COVERAGE.md](COVERAGE.md); exact live evidence is in [LIVE_PRODUCT_VALIDATION.md](LIVE_PRODUCT_VALIDATION.md). Nothing here automatically funds an account.
 
+Latest production readiness and SDK/CLI parity: [CROSS_CLIENT_RESULTS.md](CROSS_CLIENT_RESULTS.md). Full portal feature parity is not yet certified.
+
 ## Local usage
 
 Requirements: Go as specified in `go.mod`, Terraform **1.11+** for resources (**1.14+** for actions), an IBEE API token with the relevant product permissions and `billing.read`, and a workspace ID.

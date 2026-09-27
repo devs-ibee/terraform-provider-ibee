@@ -3,12 +3,12 @@ package provider
 import (
 	"context"
 	"fmt"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"net/http"
 	"net/url"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -56,7 +56,7 @@ func (d *computePlansDataSource) Metadata(_ context.Context, req datasource.Meta
 
 func (d *computePlansDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Compute plans accepted by VM creation. Billing follows the plan automatically.",
+		Description: "Compute catalog plans for the selected billing interval. Selectability and pricing status can differ between hourly and monthly terms; match the interval configured on VM resources.",
 		Attributes: map[string]schema.Attribute{
 			"vm_type": schema.StringAttribute{
 				Optional:    true,
@@ -69,7 +69,7 @@ func (d *computePlansDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				Description: "Restrict plans to one placement site.",
 			},
 			"currency":         schema.StringAttribute{Optional: true, Computed: true, Validators: []validator.String{computeCurrencyValidator{}}, Description: "Three-letter uppercase catalog currency; defaults to INR. VM creation independently resolves the organization currency from billing."},
-			"billing_interval": schema.StringAttribute{Optional: true, Computed: true, Validators: []validator.String{computeOneOf("HOURLY", "MONTHLY")}, Description: "Catalog display interval; defaults to MONTHLY. VM resources explicitly select their own supported billing_interval."},
+			"billing_interval": schema.StringAttribute{Optional: true, Computed: true, Validators: []validator.String{computeOneOf("HOURLY", "MONTHLY")}, Description: "Catalog pricing and availability interval; defaults to HOURLY, matching new VM resources. Use MONTHLY to discover commitment plans."},
 			"plans": schema.ListNestedAttribute{
 				Computed: true,
 				NestedObject: schema.NestedAttributeObject{
@@ -123,7 +123,7 @@ func (d *computePlansDataSource) Read(ctx context.Context, req datasource.ReadRe
 		cfg.Currency = types.StringValue("INR")
 	}
 	if cfg.BillingInterval.IsNull() {
-		cfg.BillingInterval = types.StringValue("MONTHLY")
+		cfg.BillingInterval = types.StringValue("HOURLY")
 	}
 	plans, err := d.client.listComputePlansFiltered(ctx, vmType, cfg.SiteID.ValueString(), cfg.Currency.ValueString(), cfg.BillingInterval.ValueString())
 	if err != nil {

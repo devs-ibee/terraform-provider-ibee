@@ -122,6 +122,14 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	run(0, "validate", "-no-color")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	// The production-shaped hourly response (absent/null commitment_period)
+	// must also import and leave both cloud and GPU VM plans unchanged.
+	for _, kind := range []string{"cloud", "gpu"} {
+		address := "ibee_" + kind + "_vm.test"
+		run(0, "state", "rm", address)
+		run(0, "import", "-input=false", "-no-color", address, kind+"-vm-id")
+	}
+	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	// Simulate pre-existing monthly purchases before importing. Omitted terms must
 	// preserve the canonical one-month commitment, rather than plan replacement.
 	f.mu.Lock()
@@ -163,6 +171,11 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	f.mu.Lock()
 	f.allowed = false
 	admissionCalls := f.admissions
+	// Destroy performs its own refresh. Reproduce the production response here
+	// as well so the compatibility regression cannot strand an hourly VM.
+	for _, kind := range []string{"cloud", "gpu"} {
+		f.vms[kind]["billing_catalog"] = computeTestSelectedBillingTerm("HOURLY")
+	}
 	f.mu.Unlock()
 	run(0, "destroy", "-auto-approve", "-input=false", "-no-color")
 	f.mu.Lock()
@@ -202,13 +215,17 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 	if p == "/compute/plans" {
 		kind := r.URL.Query().Get("vm_type")
+		if r.URL.Query().Get("billing_interval") != "HOURLY" {
+			http.Error(w, "fixture plans are only selectable for explicit hourly discovery", 400)
+			return
+		}
 		count := 0
 		model := ""
 		if kind == "gpu" {
 			count = 1
 			model = "A100"
 		}
-		send(map[string]any{"plans": []any{map[string]any{"plan_id": kind + "-plan", "name": kind + " plan", "code": kind + "-sku", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "gpu_count": count, "gpu_model": model, "selectable": true, "pricing_status": "priced", "currency": "INR", "billing_interval": "MONTHLY", "hourly_price_minor": 20, "monthly_price_minor": 12000, "site_id": "site", "billing_catalog": computeTestBillingCatalog(kind+"-sku", 20)}}})
+		send(map[string]any{"plans": []any{map[string]any{"plan_id": kind + "-plan", "name": kind + " plan", "code": kind + "-sku", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "gpu_count": count, "gpu_model": model, "selectable": true, "pricing_status": "priced", "currency": "INR", "billing_interval": "HOURLY", "hourly_price_minor": 20, "monthly_price_minor": 12000, "site_id": "site", "billing_catalog": computeTestBillingCatalog(kind+"-sku", 20)}}})
 		return
 	}
 	if p == "/compute/images" {
@@ -229,6 +246,11 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		snapshotPath := "/compute/" + kind + "-vm-snapshots/" + kind + "-snapshot-id"
 		if p == vmBase && r.Method == "POST" {
 			b := body()
+			catalog, ok := b["billing_catalog"].(map[string]any)
+			if !ok || catalog["billing_interval"] != "HOURLY" || catalog["committed"] != false || catalog["commitment_period"] != "HOURLY" {
+				http.Error(w, "purchase must preserve the complete selected catalog term", 400)
+				return
+			}
 			b["_id"] = kind + "-vm-id"
 			b["status"] = "running"
 			b["public_ip"] = "192.0.2.1"
@@ -248,7 +270,25 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 				send(operationAccepted{VmID: kind + "-vm-id", OperationID: kind + "-delete", Status: "accepted"})
 				return
 			}
-			send(vm)
+			// Read contract observed in production: hourly, explicitly uncommitted,
+			// but commitment_period omitted (cloud) or null (GPU).
+			projection := make(map[string]any, len(vm))
+			for key, value := range vm {
+				projection[key] = value
+			}
+			catalog := vm["billing_catalog"].(map[string]any)
+			if catalog["billing_interval"] == "HOURLY" {
+				term := make(map[string]any, len(catalog))
+				for key, value := range catalog {
+					term[key] = value
+				}
+				delete(term, "commitment_period")
+				if kind == "gpu" {
+					term["commitment_period"] = nil
+				}
+				projection["billing_catalog"] = term
+			}
+			send(projection)
 			return
 		}
 		if p == vmPath+"/actions/attach-volume" {
