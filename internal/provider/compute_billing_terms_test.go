@@ -2,11 +2,12 @@ package provider
 
 import (
 	"context"
-	"github.com/hashicorp/terraform-plugin-framework/resource"
-	"github.com/hashicorp/terraform-plugin-framework/types"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 func TestComputeBillingTermSelection(t *testing.T) {
@@ -34,7 +35,7 @@ func TestComputeBillingTermSelection(t *testing.T) {
 	}
 }
 func TestComputeBillingTermRejectsMissingAmbiguousAndUnpricedOptions(t *testing.T) {
-	for _, scenario := range []string{"missing", "duplicate", "negative", "missing commitment", "wrong period", "monthly no hours", "monthly no months", "hourly committed"} {
+	for _, scenario := range []string{"missing", "duplicate", "negative", "missing commitment", "wrong period", "missing period", "null period", "monthly no hours", "monthly no months", "hourly committed"} {
 		t.Run(scenario, func(t *testing.T) {
 			cat := computeTestBillingCatalog("SKU", 20)
 			opts := cat["billing_options"].([]any)
@@ -52,6 +53,10 @@ func TestComputeBillingTermRejectsMissingAmbiguousAndUnpricedOptions(t *testing.
 				delete(hourly, "committed")
 			case "wrong period":
 				hourly["commitment_period"] = "MONTHLY"
+			case "missing period":
+				delete(hourly, "commitment_period")
+			case "null period":
+				hourly["commitment_period"] = nil
 			case "monthly no hours":
 				interval = "MONTHLY"
 				delete(monthly, "committed_hours")
@@ -66,6 +71,43 @@ func TestComputeBillingTermRejectsMissingAmbiguousAndUnpricedOptions(t *testing.
 				t.Fatal("invalid billing term accepted")
 			}
 		})
+	}
+}
+
+// Production VM GET responses omit or null commitment_period for explicitly
+// uncommitted hourly purchases. Both variants must refresh and import safely.
+func TestComputeHourlyCanonicalReadWithoutCommitmentPeriod(t *testing.T) {
+	for _, kind := range []string{"cloud", "gpu"} {
+		for _, shape := range []string{"omitted", "null"} {
+			t.Run(kind+"/"+shape, func(t *testing.T) {
+				term := computeTestSelectedBillingTerm("HOURLY")
+				if shape == "omitted" {
+					delete(term, "commitment_period")
+				} else {
+					term["commitment_period"] = nil
+				}
+				r := &cloudVmResource{vmType: kind}
+				r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+					if req.Method != http.MethodGet || req.URL.Path != "/compute/"+kind+"-vms/vm-1" {
+						t.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+					}
+					v := computeCanonicalVM(kind)
+					v["billing_catalog"] = term
+					computeJSON(w, v)
+				})
+				imported := resource.ImportStateResponse{State: computeState(t, r, nil)}
+				r.ImportState(context.Background(), resource.ImportStateRequest{ID: "vm-1"}, &imported)
+				computeNoErrors(t, imported.Diagnostics)
+				read := resource.ReadResponse{State: imported.State}
+				r.Read(context.Background(), resource.ReadRequest{State: imported.State}, &read)
+				computeNoErrors(t, read.Diagnostics)
+				var got cloudVmModel
+				computeNoErrors(t, read.State.Get(context.Background(), &got))
+				if !got.BillingInterval.Equal(types.StringValue("HOURLY")) || got.Status.ValueString() != "running" {
+					t.Fatalf("canonical hourly response not hydrated: %+v", got)
+				}
+			})
+		}
 	}
 }
 func TestComputeBillingTermReadImportAndDrift(t *testing.T) {
@@ -104,13 +146,16 @@ func TestComputeBillingTermReadImportAndDrift(t *testing.T) {
 }
 
 func TestComputeBillingTermReadRejectsUnsupportedCommitments(t *testing.T) {
-	for _, scenario := range []string{"monthly three months", "monthly six months", "monthly no months", "monthly uncommitted", "hourly committed", "hourly commitment months", "hourly commitment hours", "missing commitment", "wrong period", "missing price"} {
+	for _, scenario := range []string{"monthly three months", "monthly six months", "monthly no months", "monthly uncommitted", "monthly missing period", "monthly null period", "hourly committed", "hourly commitment months", "hourly commitment hours", "missing commitment", "wrong period", "empty period", "missing price", "missing period committed", "missing period ambiguous commitment", "missing period with months", "missing period with hours", "missing period wrong price unit", "missing period missing price", "missing period negative price"} {
 		t.Run(scenario, func(t *testing.T) {
 			interval := "HOURLY"
 			if strings.HasPrefix(scenario, "monthly") {
 				interval = "MONTHLY"
 			}
 			term := computeTestSelectedBillingTerm(interval)
+			if strings.HasPrefix(scenario, "missing period") {
+				delete(term, "commitment_period")
+			}
 			switch scenario {
 			case "monthly three months":
 				term["commitment_months"] = 3
@@ -120,18 +165,28 @@ func TestComputeBillingTermReadRejectsUnsupportedCommitments(t *testing.T) {
 				delete(term, "commitment_months")
 			case "monthly uncommitted":
 				term["committed"] = false
-			case "hourly committed":
+			case "monthly missing period":
+				delete(term, "commitment_period")
+			case "monthly null period":
+				term["commitment_period"] = nil
+			case "hourly committed", "missing period committed":
 				term["committed"] = true
-			case "hourly commitment months":
+			case "hourly commitment months", "missing period with months":
 				term["commitment_months"] = 1
-			case "hourly commitment hours":
+			case "hourly commitment hours", "missing period with hours":
 				term["committed_hours"] = 731
-			case "missing commitment":
+			case "missing commitment", "missing period ambiguous commitment":
 				delete(term, "committed")
 			case "wrong period":
 				term["commitment_period"] = "YEARLY"
-			case "missing price":
+			case "empty period":
+				term["commitment_period"] = ""
+			case "missing price", "missing period missing price":
 				delete(term, "unit_price_minor")
+			case "missing period wrong price unit":
+				term["price_unit"] = "MONTH"
+			case "missing period negative price":
+				term["unit_price_minor"] = -1
 			}
 			r := &cloudVmResource{}
 			r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
