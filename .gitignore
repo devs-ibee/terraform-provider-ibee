@@ -7,3 +7,11 @@ dist/
 crash.log
 *.tfrc
 .DS_Store
+*.tfplan
+*.tfvars
+*.tfvars.json
+coverage.out
+__pycache__/
+
+# Local live-test credentials
+.ibee-dev.json
