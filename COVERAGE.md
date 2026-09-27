@@ -13,7 +13,7 @@ This is the implementation status after the 2026-09-27 source review and develop
 | Reserved IPs | `ibee_reserved_ip`, `ibee_reserved_ip_attachment` | Site availability and charges enforced by service; account admission check has no public quote. |
 | Load balancers | `ibee_load_balancer_l4`, `ibee_load_balancer_l7` | Readable name/protocol/backends and L7 rules only. Custom-domain, routing-mode and TLS settings are omitted where GET cannot round-trip them. |
 | DNS | Blocked | Portal coming-soon route; no public zone/record contract. |
-| CDN | `ibee_cdn_distribution`, `ibee_cdn_origin`, `ibee_cdn_website`, `ibee_cdn_domain` | Distribution import/no-change verified live. Custom-origin route returned 404 in development; SPA requires an existing index object, and custom domains require DNS validation. Purge and domain verification use explicit Terraform actions (1.14+); metrics are observational, not a managed resource. |
+| CDN | `ibee_cdn_distribution`, `ibee_cdn_origin`, `ibee_cdn_website`, `ibee_cdn_domain` | Distribution and website lifecycle, URL purge and actual SPA HTTPS delivery verified live. Custom-origin route returned 404 in development; SPA requires an existing index object, and custom domains require DNS validation. Purge and domain verification use explicit Terraform actions (1.14+); metrics are observational, not a managed resource. |
 | Firewalls | `ibee_firewall_group`, `ibee_firewall_rule`, `ibee_firewall_attachment` | Group configuration replaces where no update API exists. |
 | SSL certificates | Blocked | No public certificate issue/import/read/delete contract. |
 | Backups | Cloud/GPU `*_vm_backup_policy` | Destroy disables scheduling; existing backups are retained. One-off restore is outside resource lifecycle. |
@@ -24,11 +24,17 @@ This is the implementation status after the 2026-09-27 source review and develop
 | Secret manager | `ibee_secret_store`, `ibee_secret` | Write-only values; soft delete/archive semantics, retained names/history. Native recovery and permanent-removal endpoints exist, but the provider deliberately does not invoke them as ordinary destroy operations; separate recovery/destructive actions remain unimplemented. |
 | Container registry | Blocked | Registry service exists, but no public token-authenticated provisioning/plan/credential contract in reviewed spec. |
 
+## Deployed blockers found during live tests
+
+The current development pass exposed missing cloud-image backing resources, gateway GPU admission using monthly rather than selected hourly terms, exhausted public IPv4 capacity, block catalog/site/size disagreement, and S3 AccessDenied for a correctly scoped generated key. Missing custom-origin routes and unavailable load-balancer quotes also limit testing. Exact evidence and cleanup are linked from [LIVE_PRODUCT_VALIDATION.md](LIVE_PRODUCT_VALIDATION.md).
+
+Only INR pricing was exercised live. Reviewed catalog code can stamp a requested currency without verifying the underlying price currency, so non-INR pricing needs backend validation; the provider's response-currency consistency check alone cannot establish the actual denomination.
+
 ## Required API alignment before live validation
 
 The implementation is based on both the published contract and actual service source. The public OpenAPI under-documents some canonical compute fields. The provider fails on incomplete responses instead of inventing state:
 
-- Compute plans must expose the trusted `billing_catalog` used by the VM create request, an active/selectable plan, CPU/memory/disk shape, SKU code, and the selected interval price. VM creates explicitly request the monthly catalog in the organization currency returned by billing; discovery can also request hourly prices. The backend must price additional components and reserve capacity/funds as needed.
+- Compute plans must expose the trusted `billing_catalog` used by the VM create request, an active/selectable plan, CPU/memory/disk shape, SKU code, and the selected interval price. VM creates select an advertised `HOURLY` option by default, or an explicit `MONTHLY` commitment, in the organization currency returned by billing. The exact selected term is sent in `billing_catalog`; refresh/import require its canonical billing interval. The backend must price additional components and reserve capacity/funds as needed.
 - Cloud/GPU VM GET must return its stable ID (`id`, `_id`, or `vm_id` as supported in the implementation), name, plan/site/template identifiers, placement/network state, SSH key IDs, tags, and the configuration fields needed for refresh/import. Confirm actual wire names against `internal/provider/cloud_vm_resource.go`.
 - Volume attachments require the VM `data_volumes` projection, including volume identity and attachment mode. A missing projection is an error, not proof that the attachment disappeared.
 - Public billing responses must include `organization_id`, a Boolean `allowed`, `reason`, `billing_mode`, `billing_state`, `currency`, and RFC3339 `evaluated_at`. When a SKU was requested, the response must identify the same SKU. The optional configured organization must match.

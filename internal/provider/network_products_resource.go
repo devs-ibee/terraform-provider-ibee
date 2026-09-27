@@ -169,10 +169,27 @@ func NewFirewallAttachmentResource() resource.Resource {
 }
 func NewNATGatewayResource() resource.Resource {
 	base := func(v networkValues) string { return networkVpcPath(v) + "/nat-gateways" }
-	return &networkResource{name: "nat_gateway", description: "A NAT gateway in a VPC. Import as vpc_id/nat_gateway_id. Manage port-forwarding rules separately." + networkBillingDescription, idField: "nat_gateway_id", list: true, billable: true, waitReady: true, importFields: []string{"vpc_id", "id"},
+	return &networkResource{name: "nat_gateway", description: "A separately managed NAT gateway. Current deployments require a nat_gateway VPC, whose creation already creates a gateway: normally use ibee_vpc.default_nat_gateway_id directly. Use this resource to import an existing gateway or recreate one after explicit removal; creation refuses to adopt an existing gateway. Do not manage the same gateway here and as a VPC-owned default. Import as vpc_id/nat_gateway_id. Remove VM attachments and forwarding rules before deletion." + networkBillingDescription, idField: "nat_gateway_id", list: true, billable: true, waitReady: true, importFields: []string{"vpc_id", "id"},
 		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "vpc_id": networkRequired(true), "name": networkOptionalString("NAT Gateway", true), "subnet_id": networkOptionalReference(), "reserved_public_ip_id": networkOptionalReference(), "public_ip_id": schema.StringAttribute{Computed: true}, "public_ip": schema.StringAttribute{Computed: true}, "status": schema.StringAttribute{Computed: true}, "site_id": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("name", "subnet_id", "reserved_public_ip_id"), responseFields: map[string]string{"name": "name", "subnet_id": "subnet_id", "public_ip_id": "public_ip_id", "public_ip": "public_ip", "status": "status", "site_id": "site_id", "reserved_public_ip_id": "public_ip_id"},
-		createPath: base, readPath: base, deletePath: func(v networkValues) string { return base(v) + "/" + v.segment("id") }}
+		createPath: base, readPath: base, deletePath: func(v networkValues) string { return base(v) + "/" + v.segment("id") },
+		beforeCreate: func(ctx context.Context, client *Client, v networkValues) error {
+			var gateways []vpcNATGatewayAPI
+			if err := client.do(ctx, http.MethodGet, base(v), nil, &gateways); err != nil {
+				return err
+			}
+			if gateways == nil {
+				return fmt.Errorf("API omitted NAT inventory; refusing creation")
+			}
+			if len(gateways) != 0 {
+				return fmt.Errorf("VPC already has a NAT gateway; reference the VPC-owned default or import an independently owned gateway instead of adopting it through create")
+			}
+			return nil
+		},
+		beforeDelete: func(ctx context.Context, client *Client, v networkValues) error {
+			return checkNATChildrenEmpty(ctx, client, v.str("vpc_id"), v.str("id"))
+		},
+	}
 }
 func NewNATPortForwardingRuleResource() resource.Resource {
 	base := func(v networkValues) string { return networkNATPath(v) + "/port-forwarding-rules" }

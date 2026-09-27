@@ -69,7 +69,7 @@ func (d *computePlansDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				Description: "Restrict plans to one placement site.",
 			},
 			"currency":         schema.StringAttribute{Optional: true, Computed: true, Validators: []validator.String{computeCurrencyValidator{}}, Description: "Three-letter uppercase catalog currency; defaults to INR. VM creation independently resolves the organization currency from billing."},
-			"billing_interval": schema.StringAttribute{Optional: true, Computed: true, Validators: []validator.String{computeOneOf("HOURLY", "MONTHLY")}, Description: "Catalog price interval; defaults to MONTHLY. VM resources currently use the monthly catalog."},
+			"billing_interval": schema.StringAttribute{Optional: true, Computed: true, Validators: []validator.String{computeOneOf("HOURLY", "MONTHLY")}, Description: "Catalog display interval; defaults to MONTHLY. VM resources explicitly select their own supported billing_interval."},
 			"plans": schema.ListNestedAttribute{
 				Computed: true,
 				NestedObject: schema.NestedAttributeObject{

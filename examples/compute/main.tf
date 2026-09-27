@@ -39,22 +39,24 @@ data "ibee_images" "cloud" { vm_type = "cloud" }
 data "ibee_images" "gpu" { vm_type = "gpu" }
 
 resource "ibee_cloud_vm" "app" {
-  name        = "terraform-app"
-  site_id     = var.site_id
-  plan_id     = var.cloud_plan_id
-  template_id = var.cloud_template_id
-  os_distro   = var.cloud_os_distro
-  ssh_key_ids = var.ssh_key_ids
-  tags        = ["terraform", "app"]
+  name             = "terraform-app"
+  site_id          = var.site_id
+  plan_id          = var.cloud_plan_id
+  template_id      = var.cloud_template_id
+  os_distro        = var.cloud_os_distro
+  billing_interval = "HOURLY"
+  ssh_key_ids      = var.ssh_key_ids
+  tags             = ["terraform", "app"]
 }
 resource "ibee_gpu_vm" "worker" {
-  name        = "terraform-gpu-worker"
-  site_id     = var.site_id
-  plan_id     = var.gpu_plan_id
-  template_id = var.gpu_template_id
-  os_distro   = var.gpu_os_distro
-  ssh_key_ids = var.ssh_key_ids
-  tags        = ["terraform", "worker"]
+  name             = "terraform-gpu-worker"
+  site_id          = var.site_id
+  plan_id          = var.gpu_plan_id
+  template_id      = var.gpu_template_id
+  os_distro        = var.gpu_os_distro
+  billing_interval = "HOURLY"
+  ssh_key_ids      = var.ssh_key_ids
+  tags             = ["terraform", "worker"]
 }
 
 # Existing volumes must be in the same workspace and a compatible site.

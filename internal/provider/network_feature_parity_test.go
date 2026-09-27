@@ -98,7 +98,7 @@ func TestVpcCustomDefaultSubnetCIDR(t *testing.T) {
 		if req.Method == "POST" {
 			json.NewDecoder(req.Body).Decode(&created)
 		}
-		fmt.Fprint(w, `{"vpc_id":"vpc","name":"app","site_id":"site","cidr":"10.144.0.0/22","description":"","status":"available","subnets":[{"subnet_id":"default","name":"default","cidr":"10.144.1.0/24"}]}`)
+		fmt.Fprint(w, `{"vpc_id":"vpc","name":"app","site_id":"site","cidr":"10.144.0.0/22","description":"","connectivity_type":"public","status":"available","subnets":[{"subnet_id":"default","name":"default","cidr":"10.144.1.0/24"}]}`)
 	})
 	m := vpcResourceModel{Name: types.StringValue("app"), SiteID: types.StringValue("site"), Cidr: types.StringValue("10.144.0.0/22"), Description: types.StringValue(""), AutoCidr: types.BoolValue(false), CreateDefaultSubnet: types.BoolValue(true), DefaultSubnetCidr: types.StringValue("10.144.1.0/24")}
 	sch := networkTestSchema(r)

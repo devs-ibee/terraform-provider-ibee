@@ -88,22 +88,23 @@ func retryableComputeRead(err error) bool {
 
 // computePlan mirrors the public plans response entries we consume.
 type computePlan struct {
-	PlanID            string         `json:"plan_id"`
-	Name              string         `json:"name"`
-	Code              string         `json:"code"`
-	Cpu               int64          `json:"cpu"`
-	RamMb             int64          `json:"ram_mb"`
-	DiskGb            int64          `json:"disk_gb"`
-	HourlyPriceMinor  *int64         `json:"hourly_price_minor"`
-	MonthlyPriceMinor *int64         `json:"monthly_price_minor"`
-	PricingStatus     string         `json:"pricing_status"`
-	BillingInterval   string         `json:"billing_interval"`
-	Currency          string         `json:"currency"`
-	Selectable        bool           `json:"selectable"`
-	GpuCount          int64          `json:"gpu_count"`
-	GpuModel          string         `json:"gpu_model"`
-	SiteID            string         `json:"site_id"`
-	BillingCatalog    map[string]any `json:"billing_catalog"`
+	PlanID                string         `json:"plan_id"`
+	Name                  string         `json:"name"`
+	Code                  string         `json:"code"`
+	Cpu                   int64          `json:"cpu"`
+	RamMb                 int64          `json:"ram_mb"`
+	DiskGb                int64          `json:"disk_gb"`
+	HourlyPriceMinor      *int64         `json:"hourly_price_minor"`
+	MonthlyPriceMinor     *int64         `json:"monthly_price_minor"`
+	PricingStatus         string         `json:"pricing_status"`
+	BillingInterval       string         `json:"billing_interval"`
+	Currency              string         `json:"currency"`
+	Selectable            bool           `json:"selectable"`
+	GpuCount              int64          `json:"gpu_count"`
+	GpuModel              string         `json:"gpu_model"`
+	SiteID                string         `json:"site_id"`
+	BillingCatalog        map[string]any `json:"billing_catalog"`
+	SelectedTermCostMinor *int64         `json:"-"`
 }
 
 func (c *Client) listComputePlans(ctx context.Context, vmType, siteID string) ([]computePlan, error) {
@@ -143,7 +144,11 @@ func (c *Client) findPlan(ctx context.Context, vmType, siteID, planID string) (*
 }
 
 func (c *Client) findPlanForCurrency(ctx context.Context, vmType, siteID, planID, currency string) (*computePlan, error) {
-	plans, err := c.listComputePlansFiltered(ctx, vmType, siteID, currency, "MONTHLY")
+	return c.findPlanForTerm(ctx, vmType, siteID, planID, currency, "MONTHLY")
+}
+
+func (c *Client) findPlanForTerm(ctx context.Context, vmType, siteID, planID, currency, interval string) (*computePlan, error) {
+	plans, err := c.listComputePlansFiltered(ctx, vmType, siteID, currency, interval)
 	if err != nil {
 		return nil, err
 	}

@@ -39,19 +39,24 @@ type vpcResourceModel struct {
 	DefaultSubnetID      types.String `tfsdk:"default_subnet_id"`
 	OwnedDefaultSubnetID types.String `tfsdk:"owned_default_subnet_id"`
 	DefaultSubnetCidr    types.String `tfsdk:"default_subnet_cidr"`
+	ConnectivityType     types.String `tfsdk:"connectivity_type"`
+	DefaultNATGatewayID  types.String `tfsdk:"default_nat_gateway_id"`
+	OwnedDefaultNATID    types.String `tfsdk:"owned_default_nat_gateway_id"`
 	Status               types.String `tfsdk:"status"`
 }
 
 // vpcAPI mirrors the relevant fields of the public API's Vpc object.
 type vpcAPI struct {
-	VpcID       string      `json:"vpc_id"`
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	SiteID      string      `json:"site_id"`
-	Description *string     `json:"description"`
-	Cidr        string      `json:"cidr"`
-	Status      string      `json:"status"`
-	Subnets     []subnetAPI `json:"subnets"`
+	VpcID            string             `json:"vpc_id"`
+	ID               string             `json:"id"`
+	Name             string             `json:"name"`
+	SiteID           string             `json:"site_id"`
+	Description      *string            `json:"description"`
+	Cidr             string             `json:"cidr"`
+	Status           string             `json:"status"`
+	Subnets          []subnetAPI        `json:"subnets"`
+	ConnectivityType *string            `json:"connectivity_type"`
+	NATGateways      []vpcNATGatewayAPI `json:"nat_gateways"`
 }
 
 func (v *vpcAPI) identifier() string {
@@ -68,7 +73,7 @@ func (r *vpcResource) Metadata(_ context.Context, req resource.MetadataRequest, 
 func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "An IBEE VPC — an isolated Layer 3 network in a workspace. " +
-			"Deletion removes only the default subnet created by this resource. Other subnets must be managed separately. Import does not adopt child resources.",
+			"Deletion removes only default children recorded from this resource's creation. Other children must be managed separately. Import does not adopt child ownership. Managed NAT is a compound VPC create: reference default_nat_gateway_id for forwarding rules; do not declare a second NAT resource for that gateway.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
@@ -85,6 +90,9 @@ func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				Computed: true,
 				Default:  stringdefault.StaticString(""),
 			},
+			"connectivity_type":            schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplaceIfConfigured()}, Description: "public preserves legacy dedicated-IP behavior; private requests private-only networking; nat_gateway creates a billable managed NAT together with the VPC. New resources default to public when omitted; imports retain their canonical mode when omitted. Private-only requires a deployment supporting the current portal contract. Explicit connectivity changes replace the VPC."},
+			"default_nat_gateway_id":       schema.StringAttribute{Computed: true, Description: "Managed NAT gateway ID returned by VPC creation/read. Forwarding rules can reference this directly. Informational for imports."},
+			"owned_default_nat_gateway_id": schema.StringAttribute{Computed: true, Description: "NAT gateway this VPC resource may delete; set only from its successful create response and empty on import. Failed-create candidates never establish ownership.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"cidr": schema.StringAttribute{
 				Optional:      true,
 				Computed:      true,
@@ -135,12 +143,20 @@ func (r *vpcResource) Create(ctx context.Context, req resource.CreateRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if plan.ConnectivityType.IsNull() || plan.ConnectivityType.IsUnknown() {
+		plan.ConnectivityType = types.StringValue("public")
+	}
+	if !validVpcConnectivity(plan.ConnectivityType.ValueString()) {
+		resp.Diagnostics.AddError("Invalid VPC connectivity", "connectivity_type must be public, private or nat_gateway")
+		return
+	}
 
 	body := map[string]any{
 		"name":                  plan.Name.ValueString(),
 		"site_id":               plan.SiteID.ValueString(),
 		"auto_cidr":             plan.AutoCidr.ValueBool(),
 		"create_default_subnet": plan.CreateDefaultSubnet.ValueBool(),
+		"connectivity_type":     plan.ConnectivityType.ValueString(),
 	}
 	if !plan.Description.IsNull() && !plan.Description.IsUnknown() {
 		body["description"] = plan.Description.ValueString()
@@ -157,8 +173,28 @@ func (r *vpcResource) Create(ctx context.Context, req resource.CreateRequest, re
 		}
 		body["default_subnet_cidr"] = plan.DefaultSubnetCidr.ValueString()
 	}
+	var before map[string]bool
+	if plan.ConnectivityType.ValueString() == "nat_gateway" {
+		if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
+			resp.Diagnostics.AddError("Managed NAT billing eligibility denied", err.Error())
+			return
+		}
+		var err error
+		before, err = r.vpcCreationInventory(ctx, plan)
+		if err != nil {
+			resp.Diagnostics.AddError("Cannot safely create managed NAT VPC", err.Error())
+			return
+		}
+	}
 	var out vpcAPI
 	if err := r.client.do(ctx, http.MethodPost, "/networking/vpcs", body, &out); err != nil {
+		if before != nil {
+			if recovered, recoverErr := r.reconcileVpcCreation(ctx, plan, before); recoverErr != nil {
+				resp.Diagnostics.AddError("VPC creation reconciliation failed", recoverErr.Error()+" Inspect test-owned resources before retrying; the compound operation can leave an error VPC.")
+			} else if recovered != nil {
+				resp.Diagnostics.AddError("Possible partial VPC creation requires reconciliation", "A new matching VPC was found with ID "+recovered.identifier()+". The failed response did not prove ownership, so it was not adopted into state and no children were claimed. Inspect it before retrying; if it belongs to this operation, import the VPC and each child separately for recovery or cleanup.")
+			}
+		}
 		resp.Diagnostics.AddError("Failed to create VPC", err.Error())
 		return
 	}
@@ -167,33 +203,22 @@ func (r *vpcResource) Create(ctx context.Context, req resource.CreateRequest, re
 		resp.Diagnostics.AddError("Invalid VPC response", "API omitted the VPC ID; inspect the portal before retrying.")
 		return
 	}
-	plan.ID = types.StringValue(out.identifier())
-	if out.Cidr != "" {
-		plan.Cidr = types.StringValue(out.Cidr)
-	} else if plan.Cidr.IsUnknown() {
-		plan.Cidr = types.StringNull()
-	}
-	plan.Status = types.StringValue(out.Status)
-	if out.Description != nil {
-		plan.Description = types.StringValue(*out.Description)
-	} else {
-		plan.Description = types.StringValue("")
-	}
-	plan.DefaultSubnetID = types.StringNull()
-	plan.OwnedDefaultSubnetID = types.StringNull()
-	if plan.CreateDefaultSubnet.ValueBool() {
-		if len(out.Subnets) == 1 && out.Subnets[0].identifier() != "" {
-			plan.DefaultSubnetID = types.StringValue(out.Subnets[0].identifier())
-			plan.OwnedDefaultSubnetID = plan.DefaultSubnetID
-		}
-	}
+	populateVpcCreatedState(&plan, out)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if out.ConnectivityType == nil || *out.ConnectivityType != plan.ConnectivityType.ValueString() {
+		resp.Diagnostics.AddError("Invalid VPC connectivity response", "The VPC ID was saved, but the API did not confirm the requested connectivity_type.")
+		return
+	}
 	if out.Cidr == "" {
 		resp.Diagnostics.AddError("Invalid VPC create response", "The VPC ID was saved, but the API omitted its CIDR.")
 		return
 	}
 	if plan.CreateDefaultSubnet.ValueBool() && plan.OwnedDefaultSubnetID.IsNull() {
 		resp.Diagnostics.AddError("Default subnet ownership could not be established", "The VPC ID was saved. The create response did not identify exactly one default subnet; import/manage the subnet separately before deletion.")
+		return
+	}
+	if plan.ConnectivityType.ValueString() == "nat_gateway" && plan.OwnedDefaultNATID.IsNull() {
+		resp.Diagnostics.AddError("Managed NAT ownership could not be established", "The VPC ID was saved, but creation did not identify exactly one managed NAT gateway. Reconcile children before retrying or destroying.")
 		return
 	}
 	if err := waitNetworkStatus(ctx, r.client, func(ctx context.Context) (string, error) {
@@ -205,7 +230,18 @@ func (r *vpcResource) Create(ctx context.Context, req resource.CreateRequest, re
 		if current.identifier() != plan.ID.ValueString() {
 			return "", fmt.Errorf("readiness response returned another VPC ID")
 		}
+		if current.ConnectivityType == nil || *current.ConnectivityType != plan.ConnectivityType.ValueString() {
+			return "", fmt.Errorf("readiness response did not confirm requested VPC connectivity")
+		}
 		plan.Status = types.StringValue(current.Status)
+		if current.Status == "available" && plan.OwnedDefaultNATID.ValueString() != "" {
+			for _, gateway := range current.NATGateways {
+				if gateway.ID == plan.OwnedDefaultNATID.ValueString() {
+					return gateway.Status, nil
+				}
+			}
+			return "", fmt.Errorf("readiness response omitted the owned NAT gateway")
+		}
 		return current.Status, nil
 	}); err != nil {
 		resp.Diagnostics.AddError("VPC readiness failed", err.Error())
@@ -248,6 +284,15 @@ func (r *vpcResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 	if out.Description == nil {
 		state.Description = types.StringValue("")
 	}
+	if out.ConnectivityType == nil || !validVpcConnectivity(*out.ConnectivityType) {
+		resp.Diagnostics.AddError("Invalid VPC response", "API omitted or returned unsupported connectivity_type")
+		return
+	}
+	state.ConnectivityType = types.StringValue(*out.ConnectivityType)
+	if err := refreshVpcNATOwnership(&state, out); err != nil {
+		resp.Diagnostics.AddError("Invalid VPC NAT response", err.Error())
+		return
+	}
 	// Preserve creation-time ownership. Refresh never adopts a subnet.
 	if !state.OwnedDefaultSubnetID.IsNull() {
 		if out.Subnets == nil {
@@ -289,6 +334,21 @@ func (r *vpcResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		resp.Diagnostics.AddError("Invalid VPC update response", "API omitted the VPC ID")
 		return
 	}
+	if out.Name == "" || out.SiteID == "" || out.Cidr == "" || out.ConnectivityType == nil || !validVpcConnectivity(*out.ConnectivityType) {
+		resp.Diagnostics.AddError("Invalid VPC update response", "API omitted canonical VPC fields")
+		return
+	}
+	plan.Name, plan.SiteID, plan.Cidr = types.StringValue(out.Name), types.StringValue(out.SiteID), types.StringValue(out.Cidr)
+	plan.ConnectivityType = types.StringValue(*out.ConnectivityType)
+	if out.Description != nil {
+		plan.Description = types.StringValue(*out.Description)
+	} else {
+		plan.Description = types.StringValue("")
+	}
+	if err := refreshVpcNATOwnership(&plan, out); err != nil {
+		resp.Diagnostics.AddError("Invalid VPC update response", err.Error())
+		return
+	}
 	plan.Status = types.StringValue(out.Status)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 
@@ -326,6 +386,10 @@ func (r *vpcResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 			resp.Diagnostics.AddError("VPC contains separately managed subnets", "Remove or import and destroy subnet "+child.identifier()+" before deleting the VPC. The service would otherwise cascade its deletion.")
 			return
 		}
+	}
+	if err := r.deleteOwnedVpcNAT(ctx, state); err != nil {
+		resp.Diagnostics.AddError("Cannot safely delete VPC NAT gateway", err.Error())
+		return
 	}
 	// Only the subnet explicitly returned by this resource's Create is owned.
 	// Imported and independently created subnets are never removed here.

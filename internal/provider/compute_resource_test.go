@@ -58,16 +58,31 @@ func computeNoErrors(t *testing.T, d diag.Diagnostics) {
 	}
 }
 func computeValidVMPlan() cloudVmModel {
-	return cloudVmModel{ID: types.StringUnknown(), Name: types.StringValue("vm"), SiteID: types.StringValue("site"), PlanID: types.StringValue("plan"), TemplateID: types.StringValue("image"), OsDistro: types.StringValue("ubuntu"), OsType: types.StringValue("linux"), Cpu: types.Int64Unknown(), RamMb: types.Int64Unknown(), DiskGb: types.Int64Unknown(), GpuCount: types.Int64Unknown(), GpuModel: types.StringUnknown(), Status: types.StringUnknown(), PublicIP: types.StringUnknown(), PrivateIP: types.StringUnknown(), PublicIPAction: types.StringValue("release"), SSHKeyIDs: types.SetValueMust(types.StringType, []attr.Value{types.StringValue("key-1")}), Tags: types.SetValueMust(types.StringType, []attr.Value{types.StringValue("web")})}
+	return cloudVmModel{ID: types.StringUnknown(), Name: types.StringValue("vm"), SiteID: types.StringValue("site"), PlanID: types.StringValue("plan"), BillingInterval: types.StringValue("HOURLY"), TemplateID: types.StringValue("image"), OsDistro: types.StringValue("ubuntu"), OsType: types.StringValue("linux"), Cpu: types.Int64Unknown(), RamMb: types.Int64Unknown(), DiskGb: types.Int64Unknown(), GpuCount: types.Int64Unknown(), GpuModel: types.StringUnknown(), Status: types.StringUnknown(), PublicIP: types.StringUnknown(), PrivateIP: types.StringUnknown(), PublicIPAction: types.StringValue("release"), SSHKeyIDs: types.SetValueMust(types.StringType, []attr.Value{types.StringValue("key-1")}), Tags: types.SetValueMust(types.StringType, []attr.Value{types.StringValue("web")})}
 }
 func computeCanonicalVM(kind string) map[string]any {
-	return map[string]any{"_id": "vm-1", "name": "vm", "site_id": "site", "plan_id": "plan", "template_id": "image", "os_distro": "ubuntu", "os_type": "linux", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "gpu_count": 1, "gpu_model": "A100", "status": "running", "public_ip": "192.0.2.1", "private_ip": "10.0.0.2", "ssh_key_ids": []string{"key-1"}, "tags": []string{"web"}, "data_volumes": []any{}}
+	return map[string]any{"_id": "vm-1", "name": "vm", "site_id": "site", "plan_id": "plan", "template_id": "image", "os_distro": "ubuntu", "os_type": "linux", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "gpu_count": 1, "gpu_model": "A100", "status": "running", "public_ip": "192.0.2.1", "private_ip": "10.0.0.2", "ssh_key_ids": []string{"key-1"}, "tags": []string{"web"}, "data_volumes": []any{}, "billing_catalog": computeTestSelectedBillingTerm("HOURLY")}
 }
 func computeEligibility(w http.ResponseWriter, allowed bool, sku string) {
 	computeJSON(w, map[string]any{"allowed": allowed, "organization_id": "org", "reason": "eligible", "billing_mode": "PREPAID", "billing_state": "CURRENT", "currency": "INR", "sku_code": sku, "evaluated_at": "2026-09-27T12:00:00Z"})
 }
+func computeTestBillingCatalog(sku string, hourly int64) map[string]any {
+	return map[string]any{"sku_code": sku, "billing_options": []any{
+		map[string]any{"billing_interval": "HOURLY", "committed": false, "commitment_period": "HOURLY", "unit_price_minor": hourly},
+		map[string]any{"billing_interval": "MONTHLY", "committed": true, "commitment_period": "MONTHLY", "commitment_months": 1, "committed_hours": 731, "unit_price_minor": int64(16), "price_unit": "HOUR"},
+	}}
+}
+func computeTestSelectedBillingTerm(interval string) map[string]any {
+	for _, raw := range computeTestBillingCatalog("SKU", 20)["billing_options"].([]any) {
+		term := raw.(map[string]any)
+		if term["billing_interval"] == interval {
+			return term
+		}
+	}
+	return map[string]any{"billing_interval": interval}
+}
 func computeCatalog(w http.ResponseWriter) {
-	computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "name": "Plan", "code": "SKU-1", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "gpu_count": 1, "gpu_model": "A100", "selectable": true, "pricing_status": "priced", "currency": "INR", "billing_interval": "MONTHLY", "hourly_price_minor": 20, "monthly_price_minor": 12000, "billing_catalog": map[string]any{"sku_code": "SKU-1"}}}})
+	computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "name": "Plan", "code": "SKU-1", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "gpu_count": 1, "gpu_model": "A100", "selectable": true, "pricing_status": "priced", "currency": "INR", "billing_interval": "MONTHLY", "hourly_price_minor": 20, "monthly_price_minor": 12000, "billing_catalog": computeTestBillingCatalog("SKU-1", 20)}}})
 }
 func TestComputeVMCreateBillingAndCanonicalState(t *testing.T) {
 	for _, kind := range []string{"cloud", "gpu"} {
@@ -85,7 +100,7 @@ func TestComputeVMCreateBillingAndCanonicalState(t *testing.T) {
 				case "/billing/resource-eligibility":
 					var b billingEligibilityRequest
 					_ = json.NewDecoder(req.Body).Decode(&b)
-					if b.SKUCode != "" && (b.SKUCode != "SKU-1" || b.EstimatedCostMinor == nil || *b.EstimatedCostMinor != 12000) {
+					if b.SKUCode != "" && (b.SKUCode != "SKU-1" || b.EstimatedCostMinor == nil || *b.EstimatedCostMinor != 20) {
 						t.Errorf("untrusted billing payload: %+v", b)
 					}
 					computeEligibility(w, true, "SKU-1")
@@ -469,7 +484,7 @@ func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
 					if scenario == "catalog mismatch" {
 						currency = "INR"
 					}
-					computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "code": "SKU-1", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "selectable": true, "pricing_status": "priced", "currency": currency, "billing_interval": "MONTHLY", "monthly_price_minor": 150, "billing_catalog": map[string]any{"sku_code": "SKU-1"}}}})
+					computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "code": "SKU-1", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "selectable": true, "pricing_status": "priced", "currency": currency, "billing_interval": "MONTHLY", "monthly_price_minor": 150, "billing_catalog": computeTestBillingCatalog("SKU-1", 150)}}})
 				case "/compute/cloud-vms":
 					creates++
 					computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op", Status: "accepted"})
