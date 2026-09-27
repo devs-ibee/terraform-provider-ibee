@@ -127,3 +127,11 @@ python3 scripts/dev_preflight.py
 ```
 
 This builds the provider and evaluates only billing eligibility and catalog data sources against `https://api.ibee.co.in/v1`. It reports decision/currency and catalog counts, creates no managed resources or payments, and deletes its temporary Terraform state on exit. A passing preflight is the first live check; provisioning tests still require a selected plan/site and spending limit.
+
+For production, save a production-scoped token and the intended production workspace in the ignored `.ibee-prod.json` using the same fields, then explicitly select the production endpoint:
+
+```sh
+python3 scripts/dev_preflight.py --environment production
+```
+
+This uses `https://api.ibee.ai/v1`, rejects development tokens before any request, and still evaluates data sources only. Development credits, credentials and workspace identifiers are not assumed to exist in production. Production lifecycle tests require a separately selected disposable workspace, budget and cleanup verification.
