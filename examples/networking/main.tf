@@ -12,8 +12,9 @@ terraform {
 provider "ibee" {}
 
 variable "site_id" {
-  description = "An available networking site ID from ibee_sites."
+  description = "Optional available site ID from ibee_network_sites; defaults to the first available networking site."
   type        = string
+  default     = null
 }
 variable "vm_id" {
   description = "Existing cloud/GPU VM ID in the same workspace and site."
@@ -24,10 +25,29 @@ variable "backend_ip" {
   type        = string
 }
 
+data "ibee_network_sites" "available" {
+  lifecycle {
+    postcondition {
+      condition = var.site_id == null ? length([
+        for site in self.sites : site.site_id if site.available
+        ]) > 0 : contains([
+        for site in self.sites : site.site_id if site.available
+      ], var.site_id)
+      error_message = "The networking service must report an available site. Choose an available ibee_network_sites entry; compute availability alone is insufficient."
+    }
+  }
+}
+
+locals {
+  network_site_id = var.site_id != null ? var.site_id : try(sort([
+    for site in data.ibee_network_sites.available.sites : site.site_id if site.available
+  ])[0], null)
+}
+
 # Keep subnet ownership explicit. Imported VPCs do not adopt child subnets.
 resource "ibee_vpc" "app" {
   name                  = "terraform-network"
-  site_id               = var.site_id
+  site_id               = local.network_site_id
   cidr                  = "10.144.0.0/22"
   create_default_subnet = false
 }
@@ -84,7 +104,7 @@ variable "public_vm_id" {
   type        = string
 }
 resource "ibee_reserved_ip" "public" {
-  site_id = var.site_id
+  site_id = local.network_site_id
   label   = "terraform-public-ip"
 }
 resource "ibee_reserved_ip_attachment" "public" {

@@ -171,6 +171,6 @@ func (p *ibeeProvider) Resources(_ context.Context) []func() resource.Resource {
 }
 func (p *ibeeProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewSitesDataSource, NewComputePlansDataSource, NewImagesDataSource, NewBillingEligibilityDataSource,
+		NewSitesDataSource, NewNetworkSitesDataSource, NewComputePlansDataSource, NewImagesDataSource, NewBillingEligibilityDataSource,
 	}
 }

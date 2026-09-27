@@ -41,4 +41,4 @@ The implementation is based on both the published contract and actual service so
 
 ## Validation boundary
 
-Unit tests and local real-Terraform tests use mock HTTP contracts. They do not prove current production/dev deployments expose those fields, enforce all billing modes, have capacity, or complete async operations. Live integration, payment workflows, Registry installation and release signing are deferred until explicitly scheduled after code review. No code has been pushed and no real resources or payments have been created by these tests.
+Unit tests and local real-Terraform tests use mock HTTP contracts. They do not prove current production/dev deployments expose those fields, enforce all billing modes, have capacity, or complete async operations. Partial development live checks and direct portal comparisons are recorded in [VALIDATION.md](VALIDATION.md). Code is pushed to GitHub. Payment workflows, Registry installation, release signing, and live lifecycle tests for remaining products are still unverified.

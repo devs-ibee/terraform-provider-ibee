@@ -2,7 +2,7 @@
 
 Manage IBEE infrastructure through the workspace-scoped public API, using the same service-side billing decisions as the portal and SDKs.
 
-**Status: implementation ready for development integration testing; not yet live-validated or published.** This repository contains 23 resources and 4 data sources. Product coverage, API dependencies, and remaining portal gaps are listed in [COVERAGE.md](COVERAGE.md). Nothing here automatically funds an account.
+**Status: partial development live validation completed; not yet published to the Terraform Registry.** This repository contains 23 resources and 5 data sources. Product coverage, API dependencies, and remaining portal gaps are listed in [COVERAGE.md](COVERAGE.md). Nothing here automatically funds an account.
 
 ## Local usage
 
@@ -76,7 +76,7 @@ The provider address retains this repository's existing `devs-ibee/ibee` namespa
 | Firewalls | Group, rule, VM attachment | [Networking](examples/networking/main.tf) |
 | Storage and secrets | Bucket, secret store, write-only secret | [Storage](examples/storage/main.tf) |
 
-Data sources: `ibee_sites`, `ibee_compute_plans`, `ibee_images`, `ibee_billing_eligibility`. Attribute documentation is generated in [docs](docs/index.md). Each example directory is an independent root configuration and requires environment-specific input values.
+Data sources: `ibee_sites` (compute), `ibee_network_sites` (networking availability), `ibee_compute_plans`, `ibee_images`, `ibee_billing_eligibility`. Attribute documentation is generated in [docs](docs/index.md). Each example directory is an independent root configuration and requires environment-specific input values.
 
 ## Billing and credits
 
