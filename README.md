@@ -1,12 +1,12 @@
 # Terraform Provider for IBEE
 
-Manage IBEE infrastructure through the workspace-scoped public API, using the same service-side billing decisions as the portal and SDKs.
+Manage IBEE infrastructure through the workspace-scoped public API, with service-side billing checks.
 
-**Status: partial development live validation completed; not yet published to the Terraform Registry.** This repository contains 23 resources and 5 data sources. Product coverage, API dependencies, and remaining portal gaps are listed in [COVERAGE.md](COVERAGE.md). Nothing here automatically funds an account.
+**Status: partial development live validation completed; not yet published to the Terraform Registry.** This repository contains 34 resources and 5 data sources, plus explicit actions for Terraform 1.14+. Product coverage and remaining portal gaps are listed in [COVERAGE.md](COVERAGE.md); exact live evidence is in [LIVE_PRODUCT_VALIDATION.md](LIVE_PRODUCT_VALIDATION.md). Nothing here automatically funds an account.
 
 ## Local usage
 
-Requirements: Go as specified in `go.mod`, Terraform **1.11+**, an IBEE API token with the relevant product permissions and `billing.read`, and a workspace ID.
+Requirements: Go as specified in `go.mod`, Terraform **1.11+** for resources (**1.14+** for actions), an IBEE API token with the relevant product permissions and `billing.read`, and a workspace ID.
 
 ```sh
 make build
@@ -74,9 +74,13 @@ The provider address retains this repository's existing `devs-ibee/ibee` namespa
 | Compute | Cloud/GPU VMs, cloud/GPU snapshots, cloud/GPU backup policies, cloud/GPU volume attachments | [Compute](examples/compute/main.tf) |
 | Networking | VPC, subnet, VM attachment, NAT gateway, port-forwarding rule, reserved IP and attachment, L4/L7 load balancers | [Networking](examples/networking/main.tf) |
 | Firewalls | Group, rule, VM attachment | [Networking](examples/networking/main.tf) |
-| Storage and secrets | Bucket, secret store, write-only secret | [Storage](examples/storage/main.tf) |
+| Object storage and secrets | Bucket, retention, CORS, expiration rules, notifications, scoped S3 credentials, secret store, write-only secret | [Storage](examples/storage/main.tf) |
+| Block storage | Standalone volumes, safe growth, storage-node attachments | [Block storage](examples/block-storage/main.tf) |
+| CDN | Distributions, HTTPS origins, SPA website configuration, custom domains | [CDN](examples/cdn/main.tf) |
 
 Data sources: `ibee_sites` (compute), `ibee_network_sites` (networking availability), `ibee_compute_plans`, `ibee_images`, `ibee_billing_eligibility`. Attribute documentation is generated in [docs](docs/index.md). Each example directory is an independent root configuration and requires environment-specific input values.
+
+Explicit operations use [Terraform actions](https://developer.hashicorp.com/terraform/language/invoke-actions), requiring Terraform 1.14+. See [action examples](examples/actions/main.tf). Action invocation is separate from an ordinary resource refresh. The product-by-product backend gaps are documented in [ALL_PRODUCTS_API_GAPS.md](ALL_PRODUCTS_API_GAPS.md).
 
 ## Billing and credits
 
@@ -88,10 +92,12 @@ For `initial_topup_required` or `insufficient_balance`, Terraform instructs the 
 
 ## Lifecycle behavior
 
-- VM configuration changes replace the VM; resizing and one-off restore/start/stop actions remain explicit API/CLI operations. Review replacement plans carefully.
+- VM configuration changes replace the VM. Review replacement plans carefully; destructive restore and rebuild operations are not ordinary resource updates.
 - Import uses stable public IDs. Association resources document composite IDs. Imported resources do not silently adopt unmanaged children.
-- VPC deletion owns only its recorded auto-created default subnet. Other subnets and attachments must be removed explicitly.
-- Bucket deletion is recursive at the API. The default guard requires both usage counters to be zero. This check is not atomic: stop writers before destruction. Apply `force_destroy=true` only to deliberately permit content deletion.
+- VPC deletion checks the subnet inventory and owns only its recorded auto-created default subnet. Other subnets and attachments must be removed explicitly. The inventory check is not atomic with deletion; prevent concurrent child creation during teardown.
+- Bucket deletion requires both usage counters to be zero by default. This check is not atomic: stop writers before destruction. `force_destroy=true` skips the local check; it does not purge objects or bypass backend retention/deletion rules.
+- Bucket retention cannot be cleared through the current API. Its default destroy guard fails; applying `retain_on_destroy=true` explicitly allows relinquishing management while the policy remains active.
+- Generated S3 credentials are sensitive but persisted in Terraform state; use an encrypted access-controlled backend. Imported credentials cannot recover their creation-only secret.
 - Secret values use Terraform write-only arguments with ephemeral sensitive inputs. They are excluded from plan/state; increment `value_wo_version` to rotate with check-and-set. Metadata reads currently require the value-read endpoint to obtain its version, so the token needs that permission. Avoid debug HTTP logging around secrets.
 - Secret deletion is a soft delete; history and its name remain. Destroying a store archives it. The default archive guard refuses active secrets; apply `force_archive=true` to explicitly archive them. Store/secret names may therefore remain unavailable after destroy.
 - Destroying backup policies disables future runs and retains recovery points, which may continue to incur storage charges. Detached block volumes and retained reserved IPs may also continue billing.

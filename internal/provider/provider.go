@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/terraform-plugin-framework/action"
 	"net"
 	"net/url"
 	"os"
@@ -155,22 +156,33 @@ func (p *ibeeProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	}
 	client.userAgent = "terraform-provider-ibee/" + p.version + " Terraform/" + req.TerraformVersion
 	resp.ResourceData = client
+	resp.ActionData = client
 	resp.DataSourceData = client
 }
 func (p *ibeeProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewVpcResource, NewVpcSubnetResource, NewVpcNodeAttachmentResource,
 		NewFirewallGroupResource, NewFirewallRuleResource, NewCloudVmResource,
+		NewBlockVolumeResource,
+		NewBlockVolumeAttachmentResource,
+		NewBucketCORSResource, NewBucketLifecycleResource, NewBucketNotificationsResource,
+		NewCDNDistributionResource, NewCDNOriginResource, NewCDNWebsiteResource, NewCDNDomainResource,
 		NewFirewallAttachmentResource, NewReservedIPResource, NewReservedIPAttachmentResource,
 		NewNATGatewayResource, NewNATPortForwardingRuleResource, NewL4LoadBalancerResource, NewL7LoadBalancerResource,
 		NewGpuVmResource, NewCloudVmSnapshotResource, NewGpuVmSnapshotResource,
 		NewCloudVmBackupPolicyResource, NewGpuVmBackupPolicyResource,
 		NewCloudVmVolumeAttachmentResource, NewGpuVmVolumeAttachmentResource,
-		NewBucketResource, NewSecretStoreResource, NewSecretResource,
+		NewBucketResource, NewBucketRetentionResource, NewS3CredentialResource, NewSecretStoreResource, NewSecretResource,
 	}
 }
 func (p *ibeeProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewSitesDataSource, NewNetworkSitesDataSource, NewComputePlansDataSource, NewImagesDataSource, NewBillingEligibilityDataSource,
+	}
+}
+
+func (p *ibeeProvider) Actions(_ context.Context) []func() action.Action {
+	return []func() action.Action{NewCDNPurgeAction, NewCDNVerifyDomainAction,
+		NewVmPowerAction,
 	}
 }

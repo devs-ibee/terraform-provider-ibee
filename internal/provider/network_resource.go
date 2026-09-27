@@ -54,7 +54,10 @@ type networkResource struct {
 	beforeDelete          func(context.Context, *Client, networkValues) error
 	validate              func(networkValues) error
 	deleteMethod          string
+	createMethod          string
+	updateMethod          string
 	createOnlyFields      map[string]bool
+	requestTransform      func(networkValues, map[string]any, bool) error
 }
 
 func (r *networkResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -107,6 +110,11 @@ func (r *networkResource) body(v networkValues, update bool) (map[string]any, er
 			return nil, fmt.Errorf("%s: %w", a, err)
 		}
 		b[j] = out
+	}
+	if r.requestTransform != nil {
+		if err := r.requestTransform(v, b, update); err != nil {
+			return nil, err
+		}
 	}
 	return b, nil
 }
@@ -382,7 +390,11 @@ func (r *networkResource) Create(ctx context.Context, req resource.CreateRequest
 		}
 	}
 	var out map[string]any
-	if err = r.client.do(ctx, http.MethodPost, r.createPath(v), b, &out); err != nil {
+	method := r.createMethod
+	if method == "" {
+		method = http.MethodPost
+	}
+	if err = r.client.do(ctx, method, r.createPath(v), b, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to create "+r.name, err.Error())
 		return
 	}
@@ -456,7 +468,11 @@ func (r *networkResource) Update(ctx context.Context, req resource.UpdateRequest
 			return
 		}
 	}
-	if err = r.client.do(ctx, http.MethodPatch, r.updatePath(v), b, nil); err != nil {
+	method := r.updateMethod
+	if method == "" {
+		method = http.MethodPatch
+	}
+	if err = r.client.do(ctx, method, r.updatePath(v), b, nil); err != nil {
 		resp.Diagnostics.AddError("Failed to update "+r.name, err.Error())
 		return
 	}

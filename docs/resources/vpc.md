@@ -18,12 +18,13 @@ An IBEE VPC — an isolated Layer 3 network in a workspace. Deletion removes onl
 | `auto_cidr` | `bool` | Optional, Defaulted |  |
 | `cidr` | `string` | Optional, Defaulted | RFC1918 IPv4 CIDR (/22–/28). Leave unset to auto-assign. |
 | `create_default_subnet` | `bool` | Optional, Defaulted |  |
+| `default_subnet_cidr` | `string` | Optional | Optional RFC1918 CIDR for the default subnet. Requires create_default_subnet=true. |
 | `default_subnet_id` | `string` | Read-only | Default subnet created with this VPC; never adopts an arbitrary existing subnet. |
 | `description` | `string` | Optional, Defaulted |  |
 | `id` | `string` | Read-only |  |
 | `name` | `string` | Required |  |
 | `owned_default_subnet_id` | `string` | Read-only | Subnet whose deletion is owned by this resource; empty for imports. |
-| `site_id` | `string` | Required | Network placement site (site_id from the ibee_sites data source). |
+| `site_id` | `string` | Required | Network placement site (site_id from the ibee_network_sites data source). |
 | `status` | `string` | Read-only |  |
 
 ## Import

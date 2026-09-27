@@ -17,8 +17,11 @@ An additional subnet inside an IBEE VPC.
 | --- | --- | --- | --- |
 | `auto_cidr` | `bool` | Optional, Defaulted |  |
 | `cidr` | `string` | Optional, Defaulted |  |
+| `dns` | `list(string)` | Optional, Defaulted | IPv4 DNS resolver addresses advertised to subnet members; updates in place. |
+| `gateway` | `string` | Read-only | Gateway IPv4 address returned by the networking service. |
 | `id` | `string` | Read-only |  |
 | `name` | `string` | Required |  |
+| `prefix_length` | `number` | Optional, Defaulted | Automatic subnet prefix, /22 through /29; inferred from CIDR when not configured. Do not configure together with cidr. |
 | `vpc_id` | `string` | Required |  |
 
 ## Import

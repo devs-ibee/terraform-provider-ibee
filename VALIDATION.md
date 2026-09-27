@@ -4,19 +4,23 @@ Validated on 2026-09-27 with Go 1.26.5 on macOS arm64. The automated suites belo
 
 | Check | Result |
 | --- | --- |
-| Full Go suite with race detector and real Terraform fixtures | 55 top-level tests passed |
-| Terraform 1.15.8 | All three CLI suites passed |
-| Terraform 1.11.4 (minimum supported) | All three CLI suites passed |
+| Full Go suite with race detector and real Terraform fixtures | 95 top-level tests passed |
+| Terraform 1.15.8 | All seven CLI suites passed |
+| Terraform 1.11.4 (minimum supported) | All seven resource CLI suites passed; native action invocations require 1.14+ |
 | Compute CLI lifecycle | All 8 cloud/GPU VM, snapshot, backup-policy and attachment resources |
 | Networking CLI lifecycle | All 12 VPC/subnet/attachment, firewall, NAT, reserved-IP and load-balancer resources |
-| Storage/secrets CLI lifecycle | Bucket, secret store, secret; write-only secret excluded from state |
+| Storage/secrets CLI lifecycle | Bucket, secret store, secret, CORS, lifecycle, notifications, scoped S3 credentials; write-only secret excluded from state |
+| Block-storage CLI lifecycle | Standalone volume create/import/grow and safe node attachment/detach |
+| CDN CLI lifecycle | Distribution, origin, SPA website and custom domain; alias resolution, CNAME output, import, update, drift and failure preservation |
+| Explicit actions | Real CLI invokes CDN purge and domain verification on Terraform 1.15.8; focused tests cover all cloud/GPU start/stop/reboot paths and failure handling |
+| Retention lifecycle | Focused tests cover set/read/import/update, malformed responses and explicit retain-on-destroy guard |
 | Data sources | Billing eligibility, compute sites, compute plans and images exercised through mock Terraform; networking sites tested with Go fixtures and live Terraform |
 | Lifecycle behavior | Create, no-op plan, import/no-op, supported updates, portal-style drift, and teardown while billing blocks purchases |
 | Negative cases | Billing denial/unavailability/malformed decisions, wrong tenant/SKU/estimate/currency, partial operations, authorization failures, missing projections, deletion ownership, secret CAS conflicts |
 | Static checks | `go vet`, Go formatting, Terraform formatting, `git diff --check` passed |
-| Documentation/examples | 29 schema pages generated; all 4 example root directories validated |
+| Documentation/examples | 43 schema pages generated; all 8 example roots validated on 1.15.8 (7 resource roots on 1.11.4) |
 | Packaging configuration | GoReleaser v2.18.2 `check` passed |
-| Unsigned snapshot packaging | 8 archives built: Linux, macOS, Windows, FreeBSD × amd64/arm64; archive and manifest checksums verified |
+| Unsigned snapshot packaging | Baseline 23-resource build: 8 archives built (Linux, macOS, Windows, FreeBSD × amd64/arm64), checksums verified. Expanded build has not been repackaged or published. |
 
 ## Reproduce
 
@@ -50,3 +54,10 @@ Used an authorized temporary development token and isolated Terraform state. Com
 | Cleanup | Terraform destroyed all four disposable resources. API lists confirmed zero VPCs and firewall groups; portal confirmed the VPC was absent. |
 
 The firewall creation transport failure remains a deployed reliability concern; success after reconciliation does not establish that every create request completes reliably. No paid VM/GPU, NAT, load-balancer, reserved-IP, storage or secret lifecycle was exercised in this live pass. No credits were added or payments submitted. Remaining public-API gaps are listed in COVERAGE.md.
+
+
+## Expanded product checks
+
+The expanded implementation has 34 resources, 5 data sources and 3 explicit actions. See [LIVE_PRODUCT_VALIDATION.md](LIVE_PRODUCT_VALIDATION.md) for a product-by-product evidence table. Existing bucket, CDN distribution and secret-store metadata each imported into isolated local state and produced no-change plans. They were not updated or deleted. Read-only live checks also reached bucket CORS/lifecycle/notification and CDN SPA/custom-domain routes.
+
+New paid lifecycle tests are pending a user-specified spending ceiling. Versioning, in-place VM resize/rebuild/restore, some networking topology choices and several portal products still have implementation or public-contract gaps; see [ALL_PRODUCTS_API_GAPS.md](ALL_PRODUCTS_API_GAPS.md), [NETWORK_FEATURE_MATRIX.md](NETWORK_FEATURE_MATRIX.md), and [STORAGE_FEATURE_MATRIX.md](STORAGE_FEATURE_MATRIX.md). This expansion is not certification of every portal feature.

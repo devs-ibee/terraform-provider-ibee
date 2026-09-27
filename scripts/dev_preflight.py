@@ -53,9 +53,15 @@ def main():
 provider "ibee" {}
 data "ibee_billing_eligibility" "account" {}
 data "ibee_sites" "available" {}
+data "ibee_network_sites" "available" {}
 data "ibee_images" "cloud" { vm_type = "cloud" }
+data "ibee_images" "gpu" { vm_type = "gpu" }
 data "ibee_compute_plans" "cloud" {
   vm_type = "cloud"
+  currency = data.ibee_billing_eligibility.account.currency
+}
+data "ibee_compute_plans" "gpu" {
+  vm_type = "gpu"
   currency = data.ibee_billing_eligibility.account.currency
 }
 output "preflight" {
@@ -64,8 +70,11 @@ output "preflight" {
     billing_reason = data.ibee_billing_eligibility.account.reason
     currency = data.ibee_billing_eligibility.account.currency
     site_count = length(data.ibee_sites.available.sites)
+    available_network_site_count = length([for site in data.ibee_network_sites.available.sites : site.site_id if site.available])
     image_count = length(data.ibee_images.cloud.images)
     plan_count = length(data.ibee_compute_plans.cloud.plans)
+    gpu_image_count = length(data.ibee_images.gpu.images)
+    gpu_plan_count = length(data.ibee_compute_plans.gpu.plans)
   }
 }
 ''')
