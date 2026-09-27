@@ -67,7 +67,7 @@ func (d *sitesDataSource) Configure(_ context.Context, req datasource.ConfigureR
 
 func (d *sitesDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var out struct {
-		Sites []struct {
+		Sites *[]struct {
 			SiteID    string `json:"site_id"`
 			Name      string `json:"name"`
 			Available *bool  `json:"available"`
@@ -78,8 +78,12 @@ func (d *sitesDataSource) Read(ctx context.Context, _ datasource.ReadRequest, re
 		return
 	}
 
-	var state sitesModel
-	for _, s := range out.Sites {
+	if out.Sites == nil {
+		resp.Diagnostics.AddError("Invalid site catalog", "API omitted sites array.")
+		return
+	}
+	state := sitesModel{Sites: make([]siteModel, 0, len(*out.Sites))}
+	for _, s := range *out.Sites {
 		m := siteModel{
 			SiteID: types.StringValue(s.SiteID),
 			Name:   types.StringValue(s.Name),

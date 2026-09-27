@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -104,6 +106,10 @@ func (r *firewallGroupResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	if out.identifier() == "" {
+		resp.Diagnostics.AddError("Invalid firewall group response", "API omitted firewall_group_id; inspect the portal before retrying.")
+		return
+	}
 	plan.ID = types.StringValue(out.identifier())
 	plan.Status = types.StringValue(out.Status)
 	if out.Description != nil {
@@ -123,7 +129,7 @@ func (r *firewallGroupResource) Read(ctx context.Context, req resource.ReadReque
 	}
 
 	var out firewallGroupAPI
-	err := r.client.do(ctx, http.MethodGet, "/networking/firewall-groups/"+state.ID.ValueString(), nil, &out)
+	err := r.client.do(ctx, http.MethodGet, "/networking/firewall-groups/"+url.PathEscape(state.ID.ValueString()), nil, &out)
 	if err != nil {
 		if IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -133,10 +139,16 @@ func (r *firewallGroupResource) Read(ctx context.Context, req resource.ReadReque
 		return
 	}
 
+	if out.identifier() != state.ID.ValueString() || out.Name == "" {
+		resp.Diagnostics.AddError("Invalid firewall group response", "API omitted required group fields")
+		return
+	}
 	state.Name = types.StringValue(out.Name)
 	state.Status = types.StringValue(out.Status)
 	if out.Description != nil {
 		state.Description = types.StringValue(*out.Description)
+	} else {
+		state.Description = types.StringNull()
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -158,8 +170,12 @@ func (r *firewallGroupResource) Delete(ctx context.Context, req resource.DeleteR
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	err := r.client.do(ctx, http.MethodDelete, "/networking/firewall-groups/"+state.ID.ValueString(), nil, nil)
+	err := r.client.do(ctx, http.MethodDelete, "/networking/firewall-groups/"+url.PathEscape(state.ID.ValueString()), nil, nil)
 	if err != nil && !IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to delete firewall group", err.Error())
 	}
+}
+
+func (r *firewallGroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

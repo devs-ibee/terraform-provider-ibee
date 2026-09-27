@@ -1,0 +1,29 @@
+name: Test
+on:
+  pull_request:
+  push:
+    branches: [main, master, dev]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        terraform: ['1.11.4', '1.15.8']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+      - run: test -z "$(gofmt -l main.go internal)"
+      - run: terraform fmt -check -recursive examples
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: IBEE_TF_TEST=1 go test -count=1 -run TestTerraformLifecycle -v ./internal/provider
+      - run: python3 scripts/generate_docs.py --check
