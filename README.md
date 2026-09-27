@@ -69,14 +69,16 @@ The provider address retains this repository's existing `devs-ibee/ibee` namespa
 
 ## Resources and examples
 
+The [examples index](examples/README.md) lists every currently implemented resource, data source, and action, with a per-product overview and notes about products without public API support.
+
 | Area | Implemented resources | Example |
 | --- | --- | --- |
-| Compute | Cloud/GPU VMs, cloud/GPU snapshots, cloud/GPU backup policies, cloud/GPU volume attachments | [Compute](examples/compute/main.tf) |
-| Networking | VPC, subnet, VM attachment, NAT gateway, port-forwarding rule, reserved IP and attachment, L4/L7 load balancers | [Networking](examples/networking/main.tf) |
-| Firewalls | Group, rule, VM attachment | [Networking](examples/networking/main.tf) |
-| Object storage and secrets | Bucket, retention, CORS, expiration rules, notifications, scoped S3 credentials, secret store, write-only secret | [Storage](examples/storage/main.tf) |
-| Block storage | Standalone volumes, safe growth, storage-node attachments | [Block storage](examples/block-storage/main.tf) |
-| CDN | Distributions, HTTPS origins, SPA website configuration, custom domains | [CDN](examples/cdn/main.tf) |
+| Compute | Cloud/GPU VMs, snapshots, backup policies, VM volume attachments | [Compute](examples/compute/main.tf) |
+| Networking | VPCs, subnets, VM attachments, port forwarding, reserved IPs, load balancers, firewalls | [Networking](examples/networking/main.tf) |
+| NAT gateways | VPC-owned default gateway and separately managed imported gateways | [Networking](examples/networking/main.tf), [NAT import](examples/nat-gateway-import/main.tf) |
+| Object storage and secrets | Buckets, retention, CORS, lifecycle, notifications, scoped S3 credentials, secret stores and write-only secrets | [Storage](examples/storage/main.tf), [Bucket configuration](examples/bucket-configuration/main.tf), [Retention](examples/bucket-retention/main.tf) |
+| Block storage | Standalone volumes and storage-node attachments | [Block volume](examples/block-storage/main.tf), [Storage-node attachment](examples/block-storage-node-attachment/main.tf) |
+| CDN | Distributions, custom origins, SPA website configuration, custom domains | [CDN](examples/cdn/main.tf), [Custom origin](examples/cdn-custom-origin/main.tf) |
 
 Data sources: `ibee_sites` (compute), `ibee_network_sites` (networking availability), `ibee_compute_plans`, `ibee_images`, `ibee_billing_eligibility`. Attribute documentation is generated in [docs](docs/index.md). Each example directory is an independent root configuration and requires environment-specific input values.
 
