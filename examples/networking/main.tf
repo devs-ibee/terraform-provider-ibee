@@ -50,33 +50,35 @@ resource "ibee_vpc" "app" {
   site_id               = local.network_site_id
   cidr                  = "10.144.0.0/22"
   create_default_subnet = false
+  # The API creates the managed NAT with this VPC. The VPC owns its cleanup.
+  # Use connectivity_type = "private" for private-only networking instead.
+  connectivity_type = "nat_gateway"
 }
 resource "ibee_vpc_subnet" "app" {
   vpc_id = ibee_vpc.app.id
   name   = "app"
   cidr   = "10.144.0.0/24"
 }
-resource "ibee_nat_gateway" "app" {
-  vpc_id    = ibee_vpc.app.id
-  subnet_id = ibee_vpc_subnet.app.id
-  name      = "app-egress"
-}
 resource "ibee_vpc_node_attachment" "app" {
   vpc_id       = ibee_vpc.app.id
   subnet_id    = ibee_vpc_subnet.app.id
   vm_id        = var.vm_id
   connectivity = "nat"
-  depends_on   = [ibee_nat_gateway.app]
 }
 resource "ibee_nat_port_forwarding_rule" "https" {
   vpc_id         = ibee_vpc.app.id
-  nat_gateway_id = ibee_nat_gateway.app.id
+  nat_gateway_id = ibee_vpc.app.default_nat_gateway_id
   name           = "https"
   protocol       = "tcp"
   external_port  = 443
   internal_ip    = ibee_vpc_node_attachment.app.private_ip
   internal_port  = 443
 }
+
+# Do not declare ibee_nat_gateway for the VPC-owned gateway above. For an
+# existing independently owned gateway, declare that resource separately and
+# import with vpc_id/nat_gateway_id. Importing a VPC does not adopt child cleanup;
+# import/destroy its NAT and subnet separately when recovering an existing VPC.
 
 resource "ibee_firewall_group" "app" {
   name        = "app-firewall"

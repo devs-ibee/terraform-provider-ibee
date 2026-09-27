@@ -15,7 +15,7 @@ Compute plans accepted by VM creation. Billing follows the plan automatically.
 
 | Attribute | Type | Behavior | Description |
 | --- | --- | --- | --- |
-| `billing_interval` | `string` | Optional, Defaulted | Catalog price interval; defaults to MONTHLY. VM resources currently use the monthly catalog. |
+| `billing_interval` | `string` | Optional, Defaulted | Catalog display interval; defaults to MONTHLY. VM resources explicitly select their own supported billing_interval. |
 | `currency` | `string` | Optional, Defaulted | Three-letter uppercase catalog currency; defaults to INR. VM creation independently resolves the organization currency from billing. |
 | `plans` | `list(object)` | Read-only |  |
 | `plans.billing_interval` | `string` | Read-only |  |

@@ -2,9 +2,29 @@
 
 Date: 2026-09-27. Target: authorized development API (`api.ibee.co.in`) and portal (`portal.ibee.co.in`), in the same development workspace. No customer IDs, credentials or billing balances are included here.
 
-**This is not a claim that every product or feature is production-ready.** Source-backed implementation, local mock lifecycle tests, read-only live checks and live mutations are separate evidence levels. No paid VM/GPU, volume, load balancer or reserved-IP provisioning was performed in the expansion pass. A spending ceiling is pending. No credits or payments were submitted.
+**This is not a claim that every product or feature is production-ready.** Source-backed implementation, local mock lifecycle tests, read-only live checks and live mutations are separate evidence levels. The original expansion pass was read-only except for networking. The subsequent authorized promotional-credit pass attempted disposable lifecycles; the current results below supersede pending-budget statements in earlier reports. No payments were submitted by Terraform.
 
-## Live evidence
+## Promotional-credit live pass
+
+| Area | Current outcome |
+| --- | --- |
+| Bucket, retention, CORS, lifecycle, notifications, S3 credential | Live control-plane lifecycle passed; see LIVE_STORAGE_RESULTS.md for exact operations and cleanup. This does not establish lifecycle expiration or notification delivery. |
+| Secret store and write-only secret | Live create/import/rotation/no-change and soft-delete/archive passed. |
+| S3 direct access | Scoped object_rw key received HTTP 403 AccessDenied on ListObjectsV2; data-plane round trip blocked. |
+| CDN distribution and website | Live create/import/update/no-change/purge and cleanup passed. Actual SPA fallback returned HTTP 200 and exact harmless test HTML through HTTPS. |
+| VPC/subnet | Live create/import/rename/DNS update/prefix replacement/no-change and cleanup passed. Explicit private-only create/import/update/cleanup also passed. Corrected compound NAT remains mock-tested, not live-applied; see LIVE_NETWORK_RESULTS.md. |
+| Cloud VM | Two accepted creates failed on missing Ubuntu/Debian backing image definitions. Both failed VMs were deleted. |
+| GPU VM | Explicit hourly precheck passed; create rejected by gateway monthly-based admission. No GPU accepted. |
+| Reserved IP | Creation rejected because site public IPv4 pool was exhausted; no reservation retained. |
+| Block storage | Public catalog discovery still404. After portal price and source-backed SKU review, 10 GB billing precheck passed; create returned HTTP400 because no selectable plan matched. No volume allocated. |
+| Load balancers | Live mutations not run because an authoritative test price could not be established. |
+| Remaining VM-dependent features | Blocked by unavailable disposable compute; mock tests do not substitute for live validation. |
+
+Provider corrections from this pass: explicit compute billing-term selection and VPC connectivity/compound-NAT ownership handling. See the individual reports for deployed backend blockers and test boundaries. No existing customer resources were changed. Final billing settlement is not established by a wallet snapshot.
+
+Reports: [compute](LIVE_COMPUTE_RESULTS.md), [networking](LIVE_NETWORK_RESULTS.md), [storage/secrets](LIVE_STORAGE_RESULTS.md), [CDN](LIVE_CDN_RESULTS.md).
+
+## Earlier read-only pass (historical)
 
 | Product/feature | Evidence | What remains |
 | --- | --- | --- |

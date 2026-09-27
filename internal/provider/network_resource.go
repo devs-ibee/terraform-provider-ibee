@@ -52,6 +52,7 @@ type networkResource struct {
 	createResultID        func(networkValues, map[string]any) (string, error)
 	readTransform         func(networkValues, map[string]any) (map[string]any, error)
 	beforeDelete          func(context.Context, *Client, networkValues) error
+	beforeCreate          func(context.Context, *Client, networkValues) error
 	validate              func(networkValues) error
 	deleteMethod          string
 	createMethod          string
@@ -386,6 +387,12 @@ func (r *networkResource) Create(ctx context.Context, req resource.CreateRequest
 	if r.billable && (r.name != "vpc_node_attachment" || v.str("connectivity") != "private") {
 		if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
 			resp.Diagnostics.AddError("Billing eligibility denied", err.Error())
+			return
+		}
+	}
+	if r.beforeCreate != nil {
+		if err := r.beforeCreate(ctx, r.client, v); err != nil {
+			resp.Diagnostics.AddError("Cannot safely create "+r.name, err.Error())
 			return
 		}
 	}

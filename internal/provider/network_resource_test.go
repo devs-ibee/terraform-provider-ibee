@@ -131,12 +131,16 @@ func TestNATBillingDenialPreventsCreate(t *testing.T) {
 }
 func TestNATFailedReadinessRetainsID(t *testing.T) {
 	r := NewNATGatewayResource().(*networkResource)
+	created := false
 	r.client = networkTestClient(func(w http.ResponseWriter, req *http.Request) {
 		switch {
 		case req.URL.Path == "/billing/resource-eligibility":
 			networkTestEligibility(w, true)
 		case req.Method == "POST":
+			created = true
 			fmt.Fprint(w, `{"nat_gateway_id":"nat-1"}`)
+		case !created:
+			fmt.Fprint(w, `[]`)
 		default:
 			fmt.Fprint(w, `[{"nat_gateway_id":"nat-1","name":"NAT Gateway","status":"error","error_message":"allocation failed","public_ip_id":"ip-1","public_ip":"203.0.113.5","site_id":"site","subnet_id":null}]`)
 		}
@@ -214,7 +218,7 @@ func TestVpcDeletionOwnsOnlyRecordedDefaultSubnet(t *testing.T) {
 					t.Fatal("unmanaged subnet touched")
 				}
 				if req.Method == http.MethodGet {
-					if owned == "" {
+					if owned == "" || strings.HasSuffix(req.URL.Path, "/nat-gateways") {
 						fmt.Fprint(w, `[]`)
 					} else {
 						fmt.Fprint(w, `[{"subnet_id":"owned"}]`)
@@ -237,7 +241,7 @@ func TestVpcDeletionOwnsOnlyRecordedDefaultSubnet(t *testing.T) {
 			if owned != "" {
 				want = append([]string{"DELETE /networking/vpcs/vpc/subnets/owned"}, want...)
 			}
-			want = append([]string{"GET /networking/vpcs/vpc/subnets"}, want...)
+			want = append([]string{"GET /networking/vpcs/vpc/subnets", "GET /networking/vpcs/vpc/nat-gateways"}, want...)
 			if !reflect.DeepEqual(paths, want) {
 				t.Fatalf("got %v want %v", paths, want)
 			}

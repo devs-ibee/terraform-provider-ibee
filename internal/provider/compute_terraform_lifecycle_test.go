@@ -122,6 +122,13 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	run(0, "validate", "-no-color")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	// Simulate pre-existing monthly purchases before importing. Omitted terms must
+	// preserve the canonical one-month commitment, rather than plan replacement.
+	f.mu.Lock()
+	for _, kind := range []string{"cloud", "gpu"} {
+		f.vms[kind]["billing_catalog"] = computeTestSelectedBillingTerm("MONTHLY")
+	}
+	f.mu.Unlock()
 	for _, kind := range []string{"cloud", "gpu"} {
 		for _, item := range []struct{ suffix, id string }{{"_vm", kind + "-vm-id"}, {"_vm_volume_attachment", kind + "-vm-id/" + kind + "-volume"}, {"_vm_snapshot", kind + "-snapshot-id"}, {"_vm_backup_policy", kind + "-vm-id"}} {
 			address := "ibee_" + kind + item.suffix + ".test"
@@ -129,6 +136,17 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 			run(0, "import", "-input=false", "-no-color", address, item.id)
 		}
 	}
+	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	// Only an explicit term change may replace either imported VM.
+	explicitHourly := strings.ReplaceAll(config, " tags = [\"terraform\"]", " tags = [\"terraform\"]\n billing_interval = \"HOURLY\"")
+	writeTestFile(t, filepath.Join(work, "main.tf"), explicitHourly)
+	replacement := run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	for _, kind := range []string{"cloud", "gpu"} {
+		if !strings.Contains(replacement, "ibee_"+kind+"_vm.test must be replaced") {
+			t.Fatalf("explicit hourly term did not replace imported monthly %s VM:\n%s", kind, replacement)
+		}
+	}
+	writeTestFile(t, filepath.Join(work, "main.tf"), config)
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	// Portal changes must appear in the next plan. A schedule update converges after apply.
 	f.mu.Lock()
@@ -190,7 +208,7 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			count = 1
 			model = "A100"
 		}
-		send(map[string]any{"plans": []any{map[string]any{"plan_id": kind + "-plan", "name": kind + " plan", "code": kind + "-sku", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "gpu_count": count, "gpu_model": model, "selectable": true, "pricing_status": "priced", "currency": "INR", "billing_interval": "MONTHLY", "hourly_price_minor": 20, "monthly_price_minor": 12000, "site_id": "site", "billing_catalog": map[string]any{"sku_code": kind + "-sku"}}}})
+		send(map[string]any{"plans": []any{map[string]any{"plan_id": kind + "-plan", "name": kind + " plan", "code": kind + "-sku", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "gpu_count": count, "gpu_model": model, "selectable": true, "pricing_status": "priced", "currency": "INR", "billing_interval": "MONTHLY", "hourly_price_minor": 20, "monthly_price_minor": 12000, "site_id": "site", "billing_catalog": computeTestBillingCatalog(kind+"-sku", 20)}}})
 		return
 	}
 	if p == "/compute/images" {

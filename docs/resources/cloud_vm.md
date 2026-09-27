@@ -15,6 +15,7 @@ A cloud VM priced from the public compute catalog. Configuration changes replace
 
 | Attribute | Type | Behavior | Description |
 | --- | --- | --- | --- |
+| `billing_interval` | `string` | Optional, Defaulted | Catalog billing term. Omission preserves an existing or imported VM's term and selects uncommitted HOURLY for a new VM. MONTHLY selects the advertised one-month commitment; deleting a VM does not cancel contractual charges. Explicit term changes replace the VM. |
 | `cpu` | `number` | Read-only |  |
 | `delete_public_ip_action` | `string` | Optional, Defaulted | release (default) or reserve the automatic public IP on destroy. Reserving an address may continue billing. |
 | `disk_gb` | `number` | Read-only |  |

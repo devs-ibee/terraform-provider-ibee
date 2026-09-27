@@ -4,7 +4,7 @@ Validated on 2026-09-27 with Go 1.26.5 on macOS arm64. The automated suites belo
 
 | Check | Result |
 | --- | --- |
-| Full Go suite with race detector and real Terraform fixtures | 95 top-level tests passed |
+| Full Go suite with race detector and real Terraform fixtures | 103 top-level tests passed |
 | Terraform 1.15.8 | All seven CLI suites passed |
 | Terraform 1.11.4 (minimum supported) | All seven resource CLI suites passed; native action invocations require 1.14+ |
 | Compute CLI lifecycle | All 8 cloud/GPU VM, snapshot, backup-policy and attachment resources |
@@ -39,7 +39,7 @@ goreleaser release --snapshot --clean --skip=publish,sign
 
 Live compatibility beyond the checks below, compute/GPU provisioning capacity, all portal billing/enforcement modes, payment workflows, GPG signing, and clean installation from a published Terraform Registry release. Those require the next development-workspace validation phase and the missing APIs described in [COVERAGE.md](COVERAGE.md). Mock lifecycle success is not certification of deployed service behavior.
 
-## Live development checks — 2026-09-27
+## Initial networking live pass — 2026-09-27 (historical)
 
 Used an authorized temporary development token and isolated Terraform state. Compared the resources directly in `portal.ibee.co.in` within the same workspace. Credentials and tenant identifiers are excluded from this report.
 
@@ -56,8 +56,14 @@ Used an authorized temporary development token and isolated Terraform state. Com
 The firewall creation transport failure remains a deployed reliability concern; success after reconciliation does not establish that every create request completes reliably. No paid VM/GPU, NAT, load-balancer, reserved-IP, storage or secret lifecycle was exercised in this live pass. No credits were added or payments submitted. Remaining public-API gaps are listed in COVERAGE.md.
 
 
-## Expanded product checks
+## Initial read-only expansion checks (historical)
 
 The expanded implementation has 34 resources, 5 data sources and 3 explicit actions. See [LIVE_PRODUCT_VALIDATION.md](LIVE_PRODUCT_VALIDATION.md) for a product-by-product evidence table. Existing bucket, CDN distribution and secret-store metadata each imported into isolated local state and produced no-change plans. They were not updated or deleted. Read-only live checks also reached bucket CORS/lifecycle/notification and CDN SPA/custom-domain routes.
 
-New paid lifecycle tests are pending a user-specified spending ceiling. Versioning, in-place VM resize/rebuild/restore, some networking topology choices and several portal products still have implementation or public-contract gaps; see [ALL_PRODUCTS_API_GAPS.md](ALL_PRODUCTS_API_GAPS.md), [NETWORK_FEATURE_MATRIX.md](NETWORK_FEATURE_MATRIX.md), and [STORAGE_FEATURE_MATRIX.md](STORAGE_FEATURE_MATRIX.md). This expansion is not certification of every portal feature.
+The later promotional-credit live pass is documented in LIVE_PRODUCT_VALIDATION.md and the four LIVE_*_RESULTS.md reports; it supersedes the earlier pending-budget status. Versioning, in-place VM resize/rebuild/restore, some networking topology choices and several portal products still have implementation or public-contract gaps; see [ALL_PRODUCTS_API_GAPS.md](ALL_PRODUCTS_API_GAPS.md), [NETWORK_FEATURE_MATRIX.md](NETWORK_FEATURE_MATRIX.md), and [STORAGE_FEATURE_MATRIX.md](STORAGE_FEATURE_MATRIX.md). This expansion is not certification of every portal feature.
+
+## Subsequent promotional-credit live pass
+
+Disposable storage, secrets, VPC/subnet and CDN control-plane lifecycles ran against the actual development API. CDN SPA delivery returned HTTP 200 with the exact uploaded test marker. Cloud image backing definitions, GPU admission term handling, public IPv4 capacity and direct S3 credential access blocked other tests. Those failures are not hidden by mock-suite success. Resource cleanup and intentional secret history/archive retention are documented per product.
+
+The pass also corrected explicit VM billing-term selection and VPC connectivity/compound-NAT ownership. See [LIVE_PRODUCT_VALIDATION.md](LIVE_PRODUCT_VALIDATION.md) for current evidence and [LIVE_COMPUTE_RESULTS.md](LIVE_COMPUTE_RESULTS.md), [LIVE_NETWORK_RESULTS.md](LIVE_NETWORK_RESULTS.md), [LIVE_STORAGE_RESULTS.md](LIVE_STORAGE_RESULTS.md), [LIVE_CDN_RESULTS.md](LIVE_CDN_RESULTS.md) for exact operations.
