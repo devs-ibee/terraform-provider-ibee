@@ -37,7 +37,7 @@ func (d *sitesDataSource) Metadata(_ context.Context, req datasource.MetadataReq
 
 func (d *sitesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Network placement sites accepted by VPC and VM creation.",
+		Description: "Compute placement sites for cloud and GPU VMs. For VPC and reserved-IP availability, use ibee_network_sites.",
 		Attributes: map[string]schema.Attribute{
 			"sites": schema.ListNestedAttribute{
 				Computed: true,
