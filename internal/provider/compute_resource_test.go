@@ -469,6 +469,10 @@ func TestComputeAttachmentProjectionRequired(t *testing.T) {
 func TestComputeAttachmentImportAndUnmountPolicy(t *testing.T) {
 	r := &vmVolumeAttachmentResource{vmType: "cloud"}
 	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/block-storage/volumes/vol-1" {
+			computeJSON(w, map[string]any{"id": "vol-1"}) // Legacy catalog omission remains importable.
+			return
+		}
 		computeJSON(w, map[string]any{"_id": "vm-1", "data_volumes": []any{map[string]any{"volume_id": "vol-1", "mode": "single-writer", "guest_device": "/dev/vdb"}}})
 	})
 	imp := resource.ImportStateResponse{State: computeState(t, r, nil)}
@@ -546,8 +550,15 @@ func TestComputeSnapshotFailureRetainsRecoverableIdentity(t *testing.T) {
 	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/billing/resource-eligibility":
-			computeEligibility(w, true, "")
+			computeEligibility(w, true, "SNAPSHOT-STD")
 		case "/compute/cloud-vms/vm-1/snapshots":
+			var body map[string]any
+			_ = json.NewDecoder(req.Body).Decode(&body)
+			if body["billing_catalog"] == nil {
+				t.Error("snapshot purchase omitted its catalog")
+				http.Error(w, "missing catalog", 422)
+				return
+			}
 			computeJSON(w, map[string]any{"snapshot_set_id": "snap", "status": "queued"})
 		case "/compute/cloud-vm-snapshots/snap":
 			computeJSON(w, map[string]any{"snapshot_set_id": "snap", "vm_id": "vm-1", "name": "snapshot", "capture_scope": "root_only", "status": "failed"})
@@ -556,6 +567,7 @@ func TestComputeSnapshotFailureRetainsRecoverableIdentity(t *testing.T) {
 		}
 	})
 	m := vmSnapshotModel{ID: types.StringUnknown(), VmID: types.StringValue("vm-1"), Name: types.StringValue("snapshot"), Description: types.StringNull(), Mode: types.StringValue("root_only"), SelectedDataVolumeIDs: types.SetValueMust(types.StringType, []attr.Value{}), Status: types.StringUnknown(), RecoveryPointID: types.StringUnknown()}
+	m.BillingCatalog = types.StringValue(`{"sku_id":"snapshot-sku","sku_code":"SNAPSHOT-STD","product_code":"snapshot_storage","currency":"INR"}`)
 	resp := resource.CreateResponse{State: computeState(t, r, nil)}
 	r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, m)}, &resp)
 	if !resp.Diagnostics.HasError() {

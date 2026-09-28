@@ -21,6 +21,14 @@ variable "gpu_os_distro" { type = string }
 variable "ssh_key_ids" { type = set(string) }
 variable "cloud_volume_id" { type = string }
 variable "gpu_volume_id" { type = string }
+variable "snapshot_billing_catalog" {
+  type        = any
+  description = "Canonical snapshot_storage Billing catalog object for this site and organization currency, obtained from an existing snapshot or IBEE. Do not invent IDs or prices."
+}
+variable "backup_billing_catalog" {
+  type        = any
+  description = "Canonical backup_storage Billing catalog object for this site and organization currency, obtained from an existing backup policy or IBEE. Do not invent IDs or prices."
+}
 variable "confirm_volumes_unmounted" {
   type        = bool
   default     = false
@@ -60,6 +68,8 @@ resource "ibee_gpu_vm" "worker" {
 }
 
 # Existing volumes must be in the same workspace and a compatible site.
+# billing_catalog is resolved from each volume's canonical catalog when omitted;
+# this requires block_storage.read. An explicit jsonencode(catalog) is also supported.
 # The provider supplies mount guidance; it does not execute commands in the guests.
 resource "ibee_cloud_vm_volume_attachment" "app_data" {
   vm_id             = ibee_cloud_vm.app.id
@@ -73,32 +83,38 @@ resource "ibee_gpu_vm_volume_attachment" "worker_data" {
 }
 
 resource "ibee_cloud_vm_snapshot" "app" {
-  vm_id      = ibee_cloud_vm.app.id
-  name       = "terraform-initial-app"
-  mode       = "all_attached"
-  depends_on = [ibee_cloud_vm_volume_attachment.app_data]
+  vm_id           = ibee_cloud_vm.app.id
+  name            = "terraform-initial-app"
+  mode            = "all_attached"
+  billing_catalog = jsonencode(var.snapshot_billing_catalog)
+  depends_on      = [ibee_cloud_vm_volume_attachment.app_data]
 }
 resource "ibee_gpu_vm_snapshot" "worker" {
-  vm_id      = ibee_gpu_vm.worker.id
-  name       = "terraform-initial-worker"
-  mode       = "all_attached"
-  depends_on = [ibee_gpu_vm_volume_attachment.worker_data]
+  vm_id           = ibee_gpu_vm.worker.id
+  name            = "terraform-initial-worker"
+  mode            = "all_attached"
+  billing_catalog = jsonencode(var.snapshot_billing_catalog)
+  depends_on      = [ibee_gpu_vm_volume_attachment.worker_data]
 }
 
 # Destroy disables schedules. Previously captured backups remain retained and billed.
+# New schedules default to daily at 12:00 UTC. Omitted schedule values preserve
+# an existing/imported policy, including historical hourly or 20:00 policies.
 resource "ibee_cloud_vm_backup_policy" "app" {
-  vm_id          = ibee_cloud_vm.app.id
-  frequency      = "daily"
-  timezone       = "UTC"
-  hour           = 20
-  retention_days = 7
+  vm_id           = ibee_cloud_vm.app.id
+  frequency       = "daily"
+  timezone        = "UTC"
+  hour            = 12
+  retention_days  = 7
+  billing_catalog = jsonencode(var.backup_billing_catalog)
 }
 resource "ibee_gpu_vm_backup_policy" "worker" {
-  vm_id          = ibee_gpu_vm.worker.id
-  frequency      = "weekly"
-  timezone       = "UTC"
-  day_of_week    = 6
-  retention_days = 14
+  vm_id           = ibee_gpu_vm.worker.id
+  frequency       = "weekly"
+  timezone        = "UTC"
+  day_of_week     = 6
+  retention_days  = 14
+  billing_catalog = jsonencode(var.backup_billing_catalog)
 }
 
 output "app_public_ip" { value = ibee_cloud_vm.app.public_ip }

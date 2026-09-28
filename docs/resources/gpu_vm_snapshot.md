@@ -15,6 +15,7 @@ An immutable VM snapshot. Creation waits for capture completion. Deletion remove
 
 | Attribute | Type | Behavior | Description |
 | --- | --- | --- | --- |
+| `billing_catalog` | `string` | Optional, Defaulted | Canonical snapshot_storage BillingCatalogSelection as JSON (use jsonencode). Supply sku_id and uppercase sku_code from an authoritative catalog, with matching product_code, site_id and currency when present. Required for new snapshots/backups; attachments resolve it from the volume when omitted. Prices are never invented. Omitted values preserve prior state. Legacy imports may omit this creation input. Adding a previously absent creation input only records configuration. Changing a known selection requires replacement. |
 | `description` | `string` | Optional |  |
 | `id` | `string` | Read-only |  |
 | `mode` | `string` | Optional, Defaulted |  |

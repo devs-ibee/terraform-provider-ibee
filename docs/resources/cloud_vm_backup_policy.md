@@ -15,17 +15,18 @@ Enables and manages automated VM backups. Destroy disables future backups and re
 
 | Attribute | Type | Behavior | Description |
 | --- | --- | --- | --- |
-| `day_of_week` | `number` | Optional | Required for weekly schedules: Monday=0 through Sunday=6. |
-| `frequency` | `string` | Optional, Defaulted |  |
+| `billing_catalog` | `string` | Optional, Defaulted | Canonical backup_storage BillingCatalogSelection as JSON (use jsonencode). Supply sku_id and uppercase sku_code from an authoritative catalog, with matching product_code, site_id and currency when present. Required for new snapshots/backups; attachments resolve it from the volume when omitted. Prices are never invented. Omitted values preserve prior state. Legacy imports may omit this creation input. Explicit changes are sent as a replacement backup catalog after eligibility checks. |
+| `day_of_week` | `number` | Optional, Defaulted | Only for weekly schedules: Monday=0 through Sunday=6. Required for new weekly schedules; omission preserves an existing weekly day. |
+| `frequency` | `string` | Optional, Defaulted | New schedules support daily (default) or weekly. An existing hourly schedule is preserved only while unchanged; explicitly select daily/weekly to migrate. |
 | `full_backup_interval_days` | `number` | Optional, Defaulted |  |
-| `hour` | `number` | Optional, Defaulted |  |
+| `hour` | `number` | Optional, Defaulted | Hour in the selected timezone. Defaults to 12 for new policies; omission preserves existing/imported hours, including the old default 20. |
 | `id` | `string` | Read-only | VM ID, used as the stable identity of its singleton policy. |
 | `incremental_enabled` | `bool` | Optional, Defaulted |  |
 | `minute` | `number` | Optional, Defaulted |  |
 | `next_run_at` | `string` | Read-only |  |
 | `policy_id` | `string` | Read-only |  |
 | `retention_days` | `number` | Optional, Defaulted |  |
-| `timezone` | `string` | Optional, Defaulted |  |
+| `timezone` | `string` | Optional, Defaulted | Defaults to UTC for new policies; omission preserves an existing timezone. |
 | `vm_id` | `string` | Required |  |
 | `window_minutes` | `number` | Optional, Defaulted |  |
 
