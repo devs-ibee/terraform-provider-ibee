@@ -6,6 +6,8 @@ Manage IBEE infrastructure through the workspace-scoped public API, with service
 
 Latest production readiness and SDK/CLI parity: [CROSS_CLIENT_RESULTS.md](CROSS_CLIENT_RESULTS.md). Full portal feature parity is not yet certified.
 
+The September 29 SDK/CLI alignment changes and backup-schedule migration policy are documented in [PARITY_FIXES.md](PARITY_FIXES.md). These fixes do not replace live release validation.
+
 ## Local usage
 
 Requirements: Go as specified in `go.mod`, Terraform **1.11+** for resources (**1.14+** for actions), an IBEE API token with the relevant product permissions and `billing.read`, and a workspace ID.
@@ -92,6 +94,8 @@ Billable creates perform a fresh `POST /billing/resource-eligibility` before the
 
 A denied, unavailable, malformed, or mismatched billing decision stops the purchase. Refresh, import, and destruction are not blocked by this creation preflight. A public API 403 is an error; only a resource-specific 404 removes it from state.
 
+Cloud/GPU snapshots and backup enablement require an explicit canonical `billing_catalog` JSON selection. VM-volume attachments accept the same input or resolve it from the actual block volume. Supply authoritative SKU identifiers, not copied example prices. Missing or mismatched catalogs fail before purchase; the backend remains responsible for final pricing and admission. See the compute example and migration notes.
+
 For `initial_topup_required` or `insufficient_balance`, Terraform instructs the user to use **Add Credits** in the organization's portal Billing page, wait for confirmed payment, and rerun apply. The public contract currently exposes no supported checkout/payment-status or wallet-management API. Credit purchases, manual grants, credit-limit changes, and payment confirmations are not simulated as Terraform resources.
 
 ## Lifecycle behavior
@@ -105,6 +109,9 @@ For `initial_topup_required` or `insufficient_balance`, Terraform instructs the 
 - Secret values use Terraform write-only arguments with ephemeral sensitive inputs. They are excluded from plan/state; increment `value_wo_version` to rotate with check-and-set. Metadata reads currently require the value-read endpoint to obtain its version, so the token needs that permission. Avoid debug HTTP logging around secrets.
 - Secret deletion is a soft delete; history and its name remain. Destroying a store archives it. The default archive guard refuses active secrets; apply `force_archive=true` to explicitly archive them. Store/secret names may therefore remain unavailable after destroy.
 - Destroying backup policies disables future runs and retains recovery points, which may continue to incur storage charges. Detached block volumes and retained reserved IPs may also continue billing.
+- New backup schedules default to daily at 12:00 UTC. Omitted schedule fields preserve existing/imported values, including the former 20:00 default. Legacy hourly schedules can remain unchanged; new or changed schedules must use daily/weekly. Weekly schedules require a day. See [migration guidance](PARITY_FIXES.md#backup-schedule-compatibility).
+- VM power actions require stopped for start and running for stop/reboot, after case/whitespace normalization. They reject unknown or transitional states before mutation; backend enforcement remains necessary for concurrent changes. The CLI enables equivalent checks by default; SDK callers opt in.
+- Gateway, product and FastAPI error envelopes retain lifecycle, token, scope and billing diagnostics. Authorization failures are not treated as deletion or retried. Secret-resource diagnostics use static guidance without echoing response bodies.
 - Volume detach requires an explicit `confirm_unmounted` acknowledgement after unmounting inside the guest. The provider never forces detach.
 - GET requests and requests carrying a documented idempotency key retry bounded transient HTTP responses. Mutations without such a key and ambiguous transport failures are not blindly replayed. Inspect the portal after an ambiguous create before retrying.
 
@@ -118,7 +125,7 @@ make docs              # regenerate Registry pages and validate examples
 make check             # format, vet, tests, generated docs and examples
 ```
 
-The Terraform lifecycle test builds the real provider and uses isolated temporary state, a loopback API, and fixture credentials. It covers create, unchanged second plan, import, update, drift, billing-denied create, destroy while purchases are blocked, and write-only secret state protection. It never uses a live IBEE account. CI runs against Terraform 1.11.4 and 1.15.8.
+The Terraform lifecycle test builds the real provider and uses isolated temporary state, a loopback API, and fixture credentials. It covers create, unchanged second plan, import, update, drift, billing-denied create, destroy while purchases are blocked, and write-only secret state protection. It never uses a live IBEE account. CI runs against Terraform 1.11.4 and 1.15.8; the power-action invocation fixture runs on 1.15+ and explicitly skips older versions.
 
 Completed local checks are recorded in [VALIDATION.md](VALIDATION.md). Mock tests establish provider behavior, not deployed API compatibility. Follow [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the deferred development-workspace test and publication steps. The release workflow is configured to prepare a signed **draft** release only when a version tag is deliberately pushed.
 

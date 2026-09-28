@@ -110,17 +110,27 @@ resource "ibee_%[1]s_vm_volume_attachment" "test" {
 resource "ibee_%[1]s_vm_snapshot" "test" {
  vm_id = ibee_%[1]s_vm.test.id
  name = "%[1]s-snapshot"
+ billing_catalog = jsonencode({ sku_id = "snapshot-sku", sku_code = "SNAPSHOT-STD", product_code = "snapshot_storage", site_id = "site", currency = "INR" })
  depends_on = [ibee_%[1]s_vm_volume_attachment.test]
 }
 resource "ibee_%[1]s_vm_backup_policy" "test" {
  vm_id = ibee_%[1]s_vm.test.id
  retention_days = 7
+ billing_catalog = jsonencode({ sku_id = "backup-sku", sku_code = "BACKUP-STD", product_code = "backup_storage", site_id = "site", currency = "INR" })
 }
 `, kind)
 	}
 	writeTestFile(t, filepath.Join(work, "main.tf"), config)
 	run(0, "validate", "-no-color")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
+	f.mu.Lock()
+	for kind, policy := range f.policies {
+		schedule := policy["schedule"].(map[string]any)
+		if schedule["hour"] != float64(12) || schedule["frequency"] != "daily" || schedule["timezone"] != "UTC" {
+			t.Errorf("%s new policy did not use SDK defaults: %v", kind, schedule)
+		}
+	}
+	f.mu.Unlock()
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	// The production-shaped hourly response (absent/null commitment_period)
 	// must also import and leave both cloud and GPU VM plans unchanged.
@@ -135,6 +145,11 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	f.mu.Lock()
 	for _, kind := range []string{"cloud", "gpu"} {
 		f.vms[kind]["billing_catalog"] = computeTestSelectedBillingTerm("MONTHLY")
+		// Old defaults and legacy hourly schedules must survive import/upgrade.
+		f.policies[kind]["schedule"].(map[string]any)["hour"] = 20
+		if kind == "gpu" {
+			f.policies[kind]["schedule"].(map[string]any)["frequency"] = "hourly"
+		}
 	}
 	f.mu.Unlock()
 	for _, kind := range []string{"cloud", "gpu"} {
@@ -145,6 +160,8 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 		}
 	}
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	// Even explicit legacy frequency is safe if unchanged. New hourly schedules
+	// and edits to existing hourly schedules are covered by focused schedule tests.
 	// Only an explicit term change may replace either imported VM.
 	explicitHourly := strings.ReplaceAll(config, " tags = [\"terraform\"]", " tags = [\"terraform\"]\n billing_interval = \"HOURLY\"")
 	writeTestFile(t, filepath.Join(work, "main.tf"), explicitHourly)
@@ -164,9 +181,15 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	f.mu.Lock()
 	f.vms["cloud"]["name"] = "cloud-vm"
 	f.policies["cloud"]["retention_days"] = 14
+	f.policies["gpu"]["retention_days"] = 14
 	f.mu.Unlock()
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	f.mu.Lock()
+	if f.policies["gpu"]["schedule"].(map[string]any)["frequency"] != "hourly" || f.policies["gpu"]["schedule"].(map[string]any)["hour"] != 20 {
+		t.Error("retention-only update altered the imported hourly schedule")
+	}
+	f.mu.Unlock()
 	// Cleanup does not make a purchase-admission call, even after billing blocks creation.
 	f.mu.Lock()
 	f.allowed = false
@@ -244,6 +267,10 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		vmBase := "/compute/" + kind + "-vms"
 		vmPath := vmBase + "/" + kind + "-vm-id"
 		snapshotPath := "/compute/" + kind + "-vm-snapshots/" + kind + "-snapshot-id"
+		if p == "/block-storage/volumes/"+kind+"-volume" && r.Method == "GET" {
+			send(map[string]any{"id": kind + "-volume", "site_id": "site", "metadata": map[string]any{"billing_catalog": map[string]any{"sku_id": "block-sku", "sku_code": "BLOCK-STD", "product_code": "block_storage", "site_id": "site", "currency": "INR"}}})
+			return
+		}
 		if p == vmBase && r.Method == "POST" {
 			b := body()
 			catalog, ok := b["billing_catalog"].(map[string]any)
@@ -293,6 +320,9 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		}
 		if p == vmPath+"/actions/attach-volume" {
 			b := body()
+			if !computeFixtureCatalog(w, b, "block_storage", "BLOCK-STD") {
+				return
+			}
 			f.vms[kind]["data_volumes"] = []any{map[string]any{"volume_id": b["volume_id"], "mode": b["mode"], "guest_device": "/dev/vdb", "mount_instructions": "Mount the volume"}}
 			send(operationAccepted{VmID: kind + "-vm-id", OperationID: kind + "-attach", Status: "accepted"})
 			return
@@ -309,7 +339,11 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		}
 		if p == vmPath+"/snapshots" && r.Method == "POST" {
 			b := body()
+			if !computeFixtureCatalog(w, b, "snapshot_storage", "SNAPSHOT-STD") {
+				return
+			}
 			s := map[string]any{"snapshot_set_id": kind + "-snapshot-id", "vm_id": kind + "-vm-id", "name": b["name"], "capture_scope": b["mode"], "description": b["description"], "status": "succeeded", "recovery_point_id": "rp-" + kind}
+			s["billing_catalog"] = b["billing_catalog"]
 			f.snapshots[kind] = s
 			send(s)
 			return
@@ -332,6 +366,9 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			action := strings.TrimPrefix(p, vmPath+"/backups/")
 			if action == "enable" {
 				b := body()
+				if !computeFixtureCatalog(w, b, "backup_storage", "BACKUP-STD") {
+					return
+				}
 				b["vm_id"] = kind + "-vm-id"
 				b["policy_id"] = kind + "-policy"
 				b["enabled"] = true

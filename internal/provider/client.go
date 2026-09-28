@@ -37,17 +37,23 @@ func NewClient(endpoint, token, workspaceID string) *Client {
 }
 
 type apiError struct {
-	Status    int
-	Body      string
-	Code      string
-	Reason    string
-	RequestID string
+	Status             int
+	Body               string
+	Code               string
+	Reason             string
+	RequiredScope      string
+	BillingSKUCode     string
+	AdmissionContextID string
+	RequestID          string
 }
 
 func (e *apiError) Error() string {
 	message := fmt.Sprintf("IBEE API returned HTTP %d: %s", e.Status, e.Body)
 	if e.RequestID != "" {
 		message += " (request " + e.RequestID + ")"
+	}
+	if guidance := e.guidance(); guidance != "" {
+		message += ". " + guidance
 	}
 	return message
 }
@@ -146,35 +152,7 @@ func (c *Client) doH(ctx context.Context, method, requestPath string, headers ma
 			continue
 		}
 		if res.StatusCode < 200 || res.StatusCode > 299 {
-			message := string(data)
-			if c.token != "" {
-				message = strings.ReplaceAll(message, c.token, "[REDACTED]")
-			}
-			if len(message) > 1024 {
-				message = message[:1024]
-			}
-			apiErr := &apiError{Status: res.StatusCode, Body: message, RequestID: res.Header.Get("X-Request-Id")}
-			var envelope struct {
-				Detail json.RawMessage `json:"detail"`
-				Code   string          `json:"code"`
-				Reason string          `json:"reason"`
-			}
-			if json.Unmarshal(data, &envelope) == nil {
-				apiErr.Code, apiErr.Reason = envelope.Code, envelope.Reason
-				var detail struct {
-					Code   string `json:"code"`
-					Reason string `json:"reason"`
-				}
-				if json.Unmarshal(envelope.Detail, &detail) == nil {
-					if detail.Code != "" {
-						apiErr.Code = detail.Code
-					}
-					if detail.Reason != "" {
-						apiErr.Reason = detail.Reason
-					}
-				}
-			}
-			return apiErr
+			return parseAPIError(res.StatusCode, data, res.Header.Get("X-Request-Id"), c.token)
 		}
 		if out != nil {
 			if len(bytes.TrimSpace(data)) == 0 {

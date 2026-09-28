@@ -7,7 +7,7 @@ fmt:
 test:
 	go test -race ./...
 test-terraform:
-	IBEE_TF_TEST=1 go test -count=1 -run TestTerraformLifecycle -v ./internal/provider
+	IBEE_TF_TEST=1 go test -count=1 -run TestTerraform -v ./internal/provider
 vet:
 	go vet ./...
 docs:
