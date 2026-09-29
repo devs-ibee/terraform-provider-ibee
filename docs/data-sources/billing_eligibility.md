@@ -23,6 +23,7 @@ Read the organization's current billing admission decision. Requires billing.rea
 | `effective_balance_minor` | `number` | Read-only, Sensitive | Effective prepaid balance, if returned, in currency minor units. |
 | `estimated_cost_minor` | `number` | Optional | Optional nonnegative estimated cost in currency minor units. An estimate is advisory, not an override of backend pricing. |
 | `evaluated_at` | `string` | Read-only | Server evaluation timestamp. |
+| `operation` | `string` | Optional | Explicit diagnostic operation, such as REVOKE_CREDENTIAL or SECURITY_RECOVERY. Passed to Billing; omitted uses the server default. allowed=false is returned as data. |
 | `organization_id` | `string` | Read-only | Organization resolved by the public gateway. |
 | `reason` | `string` | Read-only | Machine-readable reason for the decision. |
 | `sku_code` | `string` | Optional | Optional active catalog SKU to evaluate. Omit for an account-status check. |

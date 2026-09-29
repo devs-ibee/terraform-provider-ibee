@@ -197,10 +197,6 @@ func (r *vmVolumeAttachmentResource) Create(ctx context.Context, req resource.Cr
 		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid attachment billing catalog", err.Error())
 		return
 	}
-	if err := admitRecoveryCatalog(ctx, r.client, catalog); err != nil {
-		resp.Diagnostics.AddError("Volume attachment billing eligibility denied", err.Error())
-		return
-	}
 	var accepted operationAccepted
 	if err := r.client.doH(ctx, http.MethodPost, r.route(m.VmID.ValueString())+"/actions/attach-volume", map[string]string{"X-Idempotency-Key": idempotencyKey()}, map[string]any{"volume_id": m.VolumeID.ValueString(), "mode": m.Mode.ValueString(), "requested_by": "terraform", "billing_catalog": catalog}, &accepted); err != nil {
 		resp.Diagnostics.AddError("Failed to attach volume", err.Error())
