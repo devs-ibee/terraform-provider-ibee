@@ -163,7 +163,7 @@ resource "ibee_secret" "test" {
 	writeTestFile(t, filepath.Join(work, "denied.tf"), "resource \"ibee_bucket\" \"denied\" {\n name = \"denied-bucket\"\n region = \"fixture-region\"\n}\n")
 	output := run(1, "apply", "-auto-approve", "-input=false", "-no-color")
 	if !strings.Contains(output, "billing_denied") {
-		t.Fatal("billing denial omitted recovery instruction")
+		t.Fatal("billing denial did not surface the upstream billing_denied error")
 	}
 	gateway.mu.Lock()
 	after := gateway.bucketCreates

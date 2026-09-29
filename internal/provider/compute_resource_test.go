@@ -609,7 +609,7 @@ func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
 				}
 			} else if scenario == "upstream denial" {
 				if !resp.Diagnostics.HasError() || creates != 1 || admissions != 0 || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "adm_upstream") {
-					t.Fatal("upstream denial must be preserved after account eligibility")
+					t.Fatal("upstream denial must be preserved without a local eligibility check")
 				}
 			} else if !resp.Diagnostics.HasError() || creates != 1 || admissions != 0 {
 				t.Fatal("upstream currency denial must propagate from create")

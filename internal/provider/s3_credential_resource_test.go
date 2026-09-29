@@ -39,7 +39,7 @@ func TestS3CredentialLifecycleAndScopedDrift(t *testing.T) {
 				t.Errorf("scope changed during creation: %v", body)
 			}
 			if billingCalls != 0 {
-				t.Error("creation did not follow admission")
+				t.Error("creation consulted billing eligibility before the mutation")
 			}
 			created = true
 			out := s3TestMetadata("active")

@@ -102,7 +102,7 @@ All mutations are sent to the upstream API without a hidden eligibility query, l
 
 Cloud/GPU snapshots and backup enablement require an explicit canonical `billing_catalog` JSON selection. VM-volume attachments accept the same input or resolve it from the actual block volume. Supply authoritative SKU identifiers, not copied example prices. Missing or mismatched catalogs fail before purchase; the backend remains responsible for final pricing and admission. See the compute example and migration notes.
 
-For `initial_topup_required` or `insufficient_balance`, Terraform instructs the user to use **Add Credits** in the organization's portal Billing page, wait for confirmed payment, and rerun apply. The public contract currently exposes no supported checkout/payment-status or wallet-management API. Credit purchases, manual grants, credit-limit changes, and payment confirmations are not simulated as Terraform resources.
+When the API answers a mutation with HTTP 402 `billing_denied`, the provider surfaces that response as the typed upstream error, preserving the machine-readable reason (for example `initial_topup_required` or `insufficient_balance`) and any `admission_context_id`. The provider gives no funding guidance of its own: it does not name a currency, a minimum top-up, or a credit purchase flow, and it does not evaluate the denial locally. The public contract currently exposes no supported checkout/payment-status or wallet-management API. Credit purchases, manual grants, credit-limit changes, and payment confirmations are not simulated as Terraform resources.
 
 ## Lifecycle behavior
 
