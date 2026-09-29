@@ -101,7 +101,7 @@ func TestComputeVMCreateBillingAndCanonicalState(t *testing.T) {
 				case "/billing/resource-eligibility":
 					var b billingEligibilityRequest
 					_ = json.NewDecoder(req.Body).Decode(&b)
-					if b.SKUCode != "" && (b.SKUCode != "SKU-1" || b.EstimatedCostMinor == nil || *b.EstimatedCostMinor != 20) {
+					if b.SKUCode != "" || b.EstimatedCostMinor != nil {
 						t.Errorf("untrusted billing payload: %+v", b)
 					}
 					computeEligibility(w, true, "SKU-1")
@@ -135,7 +135,7 @@ func TestComputeVMCreateBillingAndCanonicalState(t *testing.T) {
 			if got.ID.ValueString() != "vm-1" || got.Status.ValueString() != "running" || got.Cpu.ValueInt64() != 4 || got.PublicIP.ValueString() != "192.0.2.1" {
 				t.Fatalf("bad canonical state: %+v", got)
 			}
-			if len(calls) != 6 || calls[0] != "POST /billing/resource-eligibility" || calls[2] != "POST /billing/resource-eligibility" {
+			if len(calls) != 5 || calls[0] != "POST /billing/resource-eligibility" || calls[2] != "POST /compute/"+kind+"-vms" {
 				t.Fatal(calls)
 			}
 		})
@@ -153,14 +153,8 @@ func TestComputeVMCreateUsesConfiguredCatalogInterval(t *testing.T) {
 					case "/billing/resource-eligibility":
 						var b billingEligibilityRequest
 						_ = json.NewDecoder(req.Body).Decode(&b)
-						if b.SKUCode != "" {
-							want := int64(20)
-							if interval == "MONTHLY" {
-								want = 16 * 731
-							}
-							if b.EstimatedCostMinor == nil || *b.EstimatedCostMinor != want {
-								t.Errorf("wrong %s admission estimate: %+v", interval, b)
-							}
+						if b.SKUCode != "" || b.EstimatedCostMinor != nil {
+							t.Errorf("client estimated %s admission: %+v", interval, b)
 						}
 						computeEligibility(w, true, "SKU-1")
 					case "/compute/plans":
@@ -373,8 +367,11 @@ func TestComputePlanInvalidCatalogIsRejected(t *testing.T) {
 	}
 	p.Selectable = true
 	p.HourlyPriceMinor = nil
-	if p.validate("cloud") == nil {
-		t.Fatal("unknown price accepted as zero")
+	if err := p.validate("cloud"); err != nil {
+		t.Fatal("headline display price must not decide admission", err)
+	}
+	if p.selectBillingTerm("HOURLY") == nil {
+		t.Fatal("missing canonical term accepted")
 	}
 }
 func computeBackupModel() vmBackupPolicyModel {
@@ -581,7 +578,7 @@ func TestComputeSnapshotFailureRetainsRecoverableIdentity(t *testing.T) {
 }
 
 func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
-	for _, scenario := range []string{"USD success", "catalog mismatch", "admission mismatch"} {
+	for _, scenario := range []string{"USD success", "catalog mismatch", "upstream denial"} {
 		t.Run(scenario, func(t *testing.T) {
 			r := &cloudVmResource{vmType: "cloud"}
 			admissions, creates := 0, 0
@@ -592,11 +589,8 @@ func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
 					var b billingEligibilityRequest
 					_ = json.NewDecoder(req.Body).Decode(&b)
 					currency := "USD"
-					if scenario == "admission mismatch" && b.SKUCode != "" {
-						currency = "INR"
-					}
-					if b.SKUCode != "" && (b.EstimatedCostMinor == nil || *b.EstimatedCostMinor != 150) {
-						t.Fatalf("expected USD catalog minor units, got %+v", b)
+					if b.SKUCode != "" || b.EstimatedCostMinor != nil {
+						t.Fatalf("provider must not calculate affordability: %+v", b)
 					}
 					computeJSON(w, map[string]any{"allowed": true, "organization_id": "org", "reason": "eligible", "billing_mode": "PREPAID", "billing_state": "CURRENT", "currency": currency, "sku_code": b.SKUCode, "estimated_cost_minor": b.EstimatedCostMinor, "evaluated_at": "2026-09-27T00:00:00Z"})
 				case "/compute/plans":
@@ -610,6 +604,11 @@ func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
 					computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "code": "SKU-1", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "selectable": true, "pricing_status": "priced", "currency": currency, "billing_interval": "MONTHLY", "monthly_price_minor": 150, "billing_catalog": computeTestBillingCatalog("SKU-1", 150)}}})
 				case "/compute/cloud-vms":
 					creates++
+					if scenario == "upstream denial" {
+						w.WriteHeader(http.StatusPaymentRequired)
+						computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance", "admission_context_id": "adm_upstream"})
+						return
+					}
 					computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op", Status: "accepted"})
 				case "/compute/operations/op":
 					computeJSON(w, map[string]any{"status": "succeeded"})
@@ -623,8 +622,12 @@ func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
 			r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, computeValidVMPlan())}, &resp)
 			if scenario == "USD success" {
 				computeNoErrors(t, resp.Diagnostics)
-				if creates != 1 || admissions != 2 {
-					t.Fatal("expected currency lookup and fresh purchase check")
+				if creates != 1 || admissions != 1 {
+					t.Fatal("expected upstream account/currency check and one create")
+				}
+			} else if scenario == "upstream denial" {
+				if !resp.Diagnostics.HasError() || creates != 1 || admissions != 1 || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "adm_upstream") {
+					t.Fatal("upstream denial must be preserved after account eligibility")
 				}
 			} else if !resp.Diagnostics.HasError() || creates != 0 {
 				t.Fatal("currency mismatch must prevent creation")

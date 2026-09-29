@@ -2,6 +2,12 @@
 
 Manage IBEE infrastructure through the workspace-scoped public API, with service-side billing checks.
 
+VM creation checks Billing account status and currency, then forwards the selected
+canonical catalog term. The provider does not calculate a VM affordability estimate:
+the upstream catalog quote and Billing decide admission on the create request.
+An allowed account-status check is not purchase approval. Server denials remain
+errors and no automatic create retry is made.
+
 **Status: partial development live validation completed; not yet published to the Terraform Registry.** This repository contains 34 resources and 5 data sources, plus explicit actions for Terraform 1.14+. Product coverage and remaining portal gaps are listed in [COVERAGE.md](COVERAGE.md); exact live evidence is in [LIVE_PRODUCT_VALIDATION.md](LIVE_PRODUCT_VALIDATION.md). Nothing here automatically funds an account.
 
 Latest production readiness and SDK/CLI parity: [CROSS_CLIENT_RESULTS.md](CROSS_CLIENT_RESULTS.md). Full portal feature parity is not yet certified.

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -168,10 +167,8 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.requireBillingEligibilityForCurrency(ctx, p.Code, p.estimatedCost(), p.Currency); err != nil {
-		resp.Diagnostics.AddError("VM billing eligibility denied", err.Error())
-		return
-	}
+	// The account check supplies currency and upstream status. The create path
+	// resolves the selected-term quote and obtains Billing's cost decision.
 	body := map[string]any{"name": plan.Name.ValueString(), "site_id": plan.SiteID.ValueString(), "os_distro": plan.OsDistro.ValueString(), "os_type": plan.OsType.ValueString(), "template_id": plan.TemplateID.ValueString(), "cpu": p.Cpu, "ram_mb": p.RamMb, "disk_gb": p.DiskGb, "plan_id": p.PlanID, "ssh_key_ids": keys, "tags": tags}
 	// This catalog extension is exposed by public_compute_catalog.py; older OpenAPI revisions omit it.
 	if len(p.BillingCatalog) > 0 {
@@ -233,23 +230,7 @@ func (p *computePlan) validate(vmType string) error {
 	if vmType == "gpu" && (p.GpuCount < 1 || p.GpuModel == "") {
 		return fmt.Errorf("plan %q has no GPU model/count", p.PlanID)
 	}
-	if p.estimatedCost() == nil || *p.estimatedCost() < 0 {
-		return fmt.Errorf("plan %q has no trusted price for billing interval %q", p.PlanID, p.BillingInterval)
-	}
 	return nil
-}
-func (p *computePlan) estimatedCost() *int64 {
-	if p.SelectedTermCostMinor != nil {
-		return p.SelectedTermCostMinor
-	}
-	switch strings.ToLower(p.BillingInterval) {
-	case "hourly":
-		return p.HourlyPriceMinor
-	case "monthly":
-		return p.MonthlyPriceMinor
-	default:
-		return nil
-	}
 }
 func (r *cloudVmResource) refresh(ctx context.Context, state *cloudVmModel) error {
 	var vm cloudVmAPI
