@@ -110,10 +110,6 @@ func (r *secretStoreResource) Create(ctx context.Context, req resource.CreateReq
 	}
 	// No public secret-manager catalog/quote is available. Server-side pricing,
 	// entitlement and quota admission remain authoritative.
-	if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-		resp.Diagnostics.AddError("Secret store billing eligibility failed", err.Error())
-		return
-	}
 	var out secretStoreAPI
 	if err := r.client.do(ctx, http.MethodPost, "/secret-store/stores", map[string]any{"name": plan.Name.ValueString(), "description": plan.Description.ValueString()}, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to create secret store", err.Error())

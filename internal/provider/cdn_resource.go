@@ -29,7 +29,7 @@ func NewCDNDistributionResource() resource.Resource {
 		requestFields: networkIdentityFields("name", "origin_type", "origin_id", "cache_policy", "enabled"), responseFields: networkIdentityFields("name", "origin_type", "origin_id", "cache_policy", "enabled", "status", "default_domain", "default_url"),
 		createOnlyFields: map[string]bool{"origin_type": true, "origin_id": true},
 		createPath:       networkPath(base), readPath: func(v networkValues) string { return base + "/" + v.segment("id") }, updatePath: func(v networkValues) string { return base + "/" + v.segment("id") }, deletePath: func(v networkValues) string { return base + "/" + v.segment("id") },
-		idField: "id", importFields: []string{"id"}, billable: true, waitDelete: true,
+		idField: "id", importFields: []string{"id"}, waitDelete: true,
 	}
 	r.responseFields["canonical_origin_id"] = "canonical_origin_id"
 	r.validate = func(v networkValues) error {
@@ -117,17 +117,6 @@ func (r *cdnDistributionResource) Create(ctx context.Context, req resource.Creat
 	resp.Diagnostics.Append(r.set(ctx, &resp.State, v)...)
 }
 func (r *cdnDistributionResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan types.Object
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if networkObject(plan)["enabled"].(types.Bool).ValueBool() {
-		if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-			resp.Diagnostics.AddError("Billing eligibility denied", err.Error())
-			return
-		}
-	}
 	r.networkResource.Update(ctx, req, resp)
 	if resp.Diagnostics.HasError() {
 		return
@@ -150,7 +139,7 @@ func NewCDNOriginResource() resource.Resource {
 	r := &networkResource{name: "cdn_origin", description: "An HTTPS custom origin for IBEE CDN. Terraform manages origin configuration, not the remote origin server. Remove dependent distributions before deleting the origin.",
 		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "name": networkRequired(false), "origin_url": networkRequired(false), "default_url": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("name", "origin_url"), responseFields: networkIdentityFields("name", "origin_url", "default_url"),
-		createPath: networkPath(base), readPath: func(v networkValues) string { return base + "/" + v.segment("id") }, updatePath: func(v networkValues) string { return base + "/" + v.segment("id") }, deletePath: func(v networkValues) string { return base + "/" + v.segment("id") }, idField: "id", importFields: []string{"id"}, billable: true, waitDelete: true,
+		createPath: networkPath(base), readPath: func(v networkValues) string { return base + "/" + v.segment("id") }, updatePath: func(v networkValues) string { return base + "/" + v.segment("id") }, deletePath: func(v networkValues) string { return base + "/" + v.segment("id") }, idField: "id", importFields: []string{"id"}, waitDelete: true,
 	}
 	r.validate = func(v networkValues) error {
 		u, e := url.Parse(v.str("origin_url"))
@@ -173,7 +162,7 @@ func NewCDNWebsiteResource() resource.Resource {
 		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "distribution_id": networkRequired(true), "index_document": networkOptionalString("index.html", false), "enabled": schema.BoolAttribute{Computed: true}},
 		requestFields: networkIdentityFields("index_document"), responseFields: networkIdentityFields("distribution_id", "index_document", "enabled"),
 		createPath: item, readPath: item, updatePath: item, deletePath: item, createMethod: http.MethodPut, updateMethod: http.MethodPut,
-		idField: "distribution_id", readIdentity: "distribution_id", importFields: []string{"distribution_id"}, billable: true, waitDelete: true,
+		idField: "distribution_id", readIdentity: "distribution_id", importFields: []string{"distribution_id"}, waitDelete: true,
 	}
 	r.validate = func(v networkValues) error {
 		key := v.str("index_document")
@@ -216,7 +205,7 @@ func NewCDNDomainResource() resource.Resource {
 	r := &networkResource{name: "cdn_domain", description: "A custom domain associated with a CDN distribution. DNS ownership validation and TLS issuance remain asynchronous; this resource reports their status without claiming the domain is ready. Set the required CNAME at your DNS provider. Import using DISTRIBUTION_ID/DOMAIN. Destroy removes the association, not DNS records.",
 		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "distribution_id": networkRequired(true), "domain": networkRequired(true), "status": schema.StringAttribute{Computed: true}, "cname_name": schema.StringAttribute{Computed: true}, "cname_target": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("domain"), responseFields: networkIdentityFields("domain", "status", "cname_name", "cname_target"),
-		createPath: base, readPath: item, deletePath: item, idField: "domain", readIdentity: "domain", importFields: []string{"distribution_id", "domain"}, billable: true, waitDelete: true,
+		createPath: base, readPath: item, deletePath: item, idField: "domain", readIdentity: "domain", importFields: []string{"distribution_id", "domain"}, waitDelete: true,
 	}
 	r.validate = func(v networkValues) error {
 		d := v.str("domain")

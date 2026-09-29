@@ -40,7 +40,7 @@ func (p *ibeeProvider) Metadata(_ context.Context, _ provider.MetadataRequest, r
 	resp.Version = p.version
 }
 func (p *ibeeProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
-	resp.Schema = schema.Schema{Description: "Manage IBEE resources through the workspace-scoped public API. Purchase admission uses the organization's billing service; deletion and refresh remain available when billing blocks purchases.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "Manage IBEE resources through the workspace-scoped public API. Billing and lifecycle decisions are authoritative upstream for every mutation. Reads and cleanup remain subject to service-owned authorization.", Attributes: map[string]schema.Attribute{
 		"endpoint":          schema.StringAttribute{Optional: true, Description: "Public API base URL. Precedence: explicit value, IBEE_ENDPOINT, IBEE_BASE_URL, IBEE_ENV (dev/development uses https://api.ibee.co.in/v1; prod/production or unset uses https://api.ibee.ai/v1). HTTPS is required except for local test servers."},
 		"token":             schema.StringAttribute{Optional: true, Sensitive: true, Description: "IBEE API token. Falls back to IBEE_TOKEN. Prefer the environment variable to avoid saving a token in configuration."},
 		"workspace_id":      schema.StringAttribute{Optional: true, Description: "Workspace identifier attached to every API request. Falls back to IBEE_WORKSPACE_ID."},

@@ -91,7 +91,7 @@ func TestBucketLifecycle(t *testing.T) {
 			if body["name"] != "assets" || body["region"] != "in-south-2" || body["is_public"] != false {
 				t.Errorf("unexpected create: %v", body)
 			}
-			if billingCalls != 1 {
+			if billingCalls != 0 {
 				t.Error("create did not follow billing admission")
 			}
 			created = true
@@ -146,7 +146,7 @@ func TestBucketLifecycle(t *testing.T) {
 	remove := resource.DeleteResponse{State: read.State}
 	r.Delete(storageTestContext, resource.DeleteRequest{State: read.State}, &remove)
 	storageTestCheck(t, remove.Diagnostics)
-	if !deleted || billingCalls != 1 {
+	if !deleted || billingCalls != 0 {
 		t.Fatalf("delete=%v billing calls=%d", deleted, billingCalls)
 	}
 }
@@ -219,12 +219,11 @@ func TestBucketReadDoesNotForgetOnForbiddenOrMalformed(t *testing.T) {
 
 func TestStorageBillingDenialPreventsCreates(t *testing.T) {
 	client := storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path != "/billing/resource-eligibility" {
-			t.Errorf("purchase despite denied billing: %s", req.URL)
-			http.Error(w, "unexpected", 500)
-			return
+		if req.URL.Path == "/billing/resource-eligibility" {
+			t.Errorf("automatic write queried billing: %s", req.URL)
 		}
-		storageTestBilling(w, false)
+		w.WriteHeader(http.StatusPaymentRequired)
+		fmt.Fprint(w, `{"error":"billing_denied","billing_reason":"insufficient_balance"}`)
 	})
 	for _, tc := range []struct {
 		name     string

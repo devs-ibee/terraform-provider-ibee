@@ -184,7 +184,7 @@ func TestComputeBackupScheduleUpdateCompatibility(t *testing.T) {
 					return
 				}
 				computeNoErrors(t, resp.Diagnostics)
-				if patches != 1 || (admissions == 1) != (scenario == "explicit catalog change") {
+				if patches != 1 || admissions != 0 {
 					t.Fatalf("patches=%d admissions=%d", patches, admissions)
 				}
 			})

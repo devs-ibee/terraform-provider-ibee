@@ -134,10 +134,6 @@ func (r *blockVolumeAttachmentResource) Create(ctx context.Context, req resource
 		resp.Diagnostics.AddError("Block volume is already attached", "Import using "+m.VolumeID.ValueString()+"/"+m.NodeName.ValueString()+" before managing this attachment.")
 		return
 	}
-	if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-		resp.Diagnostics.AddError("Block attachment billing eligibility denied", err.Error())
-		return
-	}
 	key := idempotencyKey()
 	body := map[string]any{"node_name": m.NodeName.ValueString(), "mode": m.Mode.ValueString(), "vm_type": probe.VmType.ValueString(), "idempotency_key": key}
 	if !m.VmID.IsNull() && !m.VmID.IsUnknown() {

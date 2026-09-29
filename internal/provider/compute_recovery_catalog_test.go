@@ -344,7 +344,8 @@ func TestComputeRecoveryCatalogRejectsBeforeMutation(t *testing.T) {
 						}
 						if req.Method != "GET" {
 							mutations++
-							http.Error(w, "must not mutate", 500)
+							w.WriteHeader(http.StatusPaymentRequired)
+							computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance"})
 							return
 						}
 						if strings.HasPrefix(req.URL.Path, "/block-storage/") {
@@ -357,7 +358,11 @@ func TestComputeRecoveryCatalogRejectsBeforeMutation(t *testing.T) {
 					model = recoveryTestSetCatalog(model, value)
 					resp := resource.CreateResponse{State: computeState(t, r, nil)}
 					r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, model)}, &resp)
-					if !resp.Diagnostics.HasError() || mutations != 0 {
+					wantMutations := 0
+					if scenario == "currency mismatch" || scenario == "denied" {
+						wantMutations = 1
+					}
+					if !resp.Diagnostics.HasError() || mutations != wantMutations {
 						t.Fatalf("invalid catalog accepted: mutations=%d diagnostics=%v", mutations, resp.Diagnostics)
 					}
 				})

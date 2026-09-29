@@ -162,7 +162,7 @@ resource "ibee_secret" "test" {
 	gateway.mu.Unlock()
 	writeTestFile(t, filepath.Join(work, "denied.tf"), "resource \"ibee_bucket\" \"denied\" {\n name = \"denied-bucket\"\n region = \"fixture-region\"\n}\n")
 	output := run(1, "apply", "-auto-approve", "-input=false", "-no-color")
-	if !strings.Contains(output, "Add Credits") {
+	if !strings.Contains(output, "billing_denied") {
 		t.Fatal("billing denial omitted recovery instruction")
 	}
 	gateway.mu.Lock()
@@ -224,6 +224,11 @@ func (f *terraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		send(map[string]any{"organization_id": "org-fixture", "allowed": f.allowed, "reason": reason, "billing_mode": "PREPAID", "billing_state": "CURRENT", "currency": "INR", "evaluated_at": "2026-09-27T00:00:00Z"})
 	case path == "/object-storage/buckets" && r.Method == "POST":
+		if !f.allowed {
+			w.WriteHeader(http.StatusPaymentRequired)
+			send(map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance"})
+			return
+		}
 		f.bucketCreates++
 		b := body()
 		f.bucket = map[string]any{"name": b["name"], "region": b["region"], "is_public": b["is_public"], "bucket_lock_enabled": b["object_lock_enabled"], "status": "active", "plan": "storage", "site_id": "site-1", "object_count": 0, "total_size": 0}

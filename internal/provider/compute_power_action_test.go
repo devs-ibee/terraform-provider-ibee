@@ -85,10 +85,7 @@ func TestVmPowerAction(t *testing.T) {
 				}}
 				a.Invoke(context.Background(), action.InvokeRequest{Config: powerActionConfig(t, a, vmType, operation)}, &resp)
 				computeNoErrors(t, resp.Diagnostics)
-				wantAdmission := 1
-				if operation == "stop" {
-					wantAdmission = 0
-				}
+				wantAdmission := 0
 				if calls != 1 || admissions != wantAdmission || reads != 2 {
 					t.Fatal("invalid lifecycle", calls, admissions, reads)
 				}
@@ -107,7 +104,7 @@ func TestVmPowerActionRefusesUnsafeResponses(t *testing.T) {
 		}{
 			{"invalid operation", "Invalid VM power action", false},
 			{"wrong VM", "Invalid VM response", false},
-			{"denied", "VM power billing eligibility denied", false},
+			{"denied", "VM power request failed", true},
 			{"wrong accepted VM", "Invalid VM power response", true},
 			{"missing operation", "Invalid VM power response", true},
 			{"failed operation", "VM power operation did not complete", true},
@@ -154,6 +151,11 @@ func TestVmPowerActionRefusesUnsafeResponses(t *testing.T) {
 						blockEligibility(w, scenario != "denied", "INR")
 					case endpoint + "/actions/start":
 						mutated = true
+						if scenario == "denied" {
+							w.WriteHeader(http.StatusPaymentRequired)
+							computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance"})
+							return
+						}
 						op := operationAccepted{VmID: "vm", OperationID: "op"}
 						if scenario == "wrong accepted VM" {
 							op.VmID = "another"
@@ -277,10 +279,7 @@ func TestVmPowerActionWaitsForOperationAndCanonicalState(t *testing.T) {
 				var resp action.InvokeResponse
 				a.Invoke(context.Background(), action.InvokeRequest{Config: powerActionConfig(t, a, vmType, operation)}, &resp)
 				computeNoErrors(t, resp.Diagnostics)
-				wantAdmissions := 1
-				if operation == "stop" {
-					wantAdmissions = 0
-				}
+				wantAdmissions := 0
 				if reads != 3 || polls != 2 || posts != 1 || admissions != wantAdmissions {
 					t.Fatalf("reads=%d polls=%d posts=%d admissions=%d", reads, polls, posts, admissions)
 				}
