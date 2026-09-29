@@ -25,5 +25,5 @@ jobs:
       - run: terraform fmt -check -recursive examples
       - run: go vet ./...
       - run: go test -race ./...
-      - run: IBEE_TF_TEST=1 go test -count=1 -run TestTerraformLifecycle -v ./internal/provider
+      - run: IBEE_TF_TEST=1 go test -count=1 -run TestTerraform -v ./internal/provider
       - run: python3 scripts/generate_docs.py --check

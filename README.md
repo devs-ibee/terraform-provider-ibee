@@ -4,6 +4,10 @@ Manage IBEE infrastructure through the workspace-scoped public API, with service
 
 **Status: partial development live validation completed; not yet published to the Terraform Registry.** This repository contains 34 resources and 5 data sources, plus explicit actions for Terraform 1.14+. Product coverage and remaining portal gaps are listed in [COVERAGE.md](COVERAGE.md); exact live evidence is in [LIVE_PRODUCT_VALIDATION.md](LIVE_PRODUCT_VALIDATION.md). Nothing here automatically funds an account.
 
+Latest production readiness and SDK/CLI parity: [CROSS_CLIENT_RESULTS.md](CROSS_CLIENT_RESULTS.md). Full portal feature parity is not yet certified.
+
+The September 29 SDK/CLI alignment changes and backup-schedule migration policy are documented in [PARITY_FIXES.md](PARITY_FIXES.md). These fixes do not replace live release validation.
+
 ## Local usage
 
 Requirements: Go as specified in `go.mod`, Terraform **1.11+** for resources (**1.14+** for actions), an IBEE API token with the relevant product permissions and `billing.read`, and a workspace ID.
@@ -69,14 +73,16 @@ The provider address retains this repository's existing `devs-ibee/ibee` namespa
 
 ## Resources and examples
 
+The [examples index](examples/README.md) lists every currently implemented resource, data source, and action, with a per-product overview and notes about products without public API support.
+
 | Area | Implemented resources | Example |
 | --- | --- | --- |
-| Compute | Cloud/GPU VMs, cloud/GPU snapshots, cloud/GPU backup policies, cloud/GPU volume attachments | [Compute](examples/compute/main.tf) |
-| Networking | VPC, subnet, VM attachment, NAT gateway, port-forwarding rule, reserved IP and attachment, L4/L7 load balancers | [Networking](examples/networking/main.tf) |
-| Firewalls | Group, rule, VM attachment | [Networking](examples/networking/main.tf) |
-| Object storage and secrets | Bucket, retention, CORS, expiration rules, notifications, scoped S3 credentials, secret store, write-only secret | [Storage](examples/storage/main.tf) |
-| Block storage | Standalone volumes, safe growth, storage-node attachments | [Block storage](examples/block-storage/main.tf) |
-| CDN | Distributions, HTTPS origins, SPA website configuration, custom domains | [CDN](examples/cdn/main.tf) |
+| Compute | Cloud/GPU VMs, snapshots, backup policies, VM volume attachments | [Compute](examples/compute/main.tf) |
+| Networking | VPCs, subnets, VM attachments, port forwarding, reserved IPs, load balancers, firewalls | [Networking](examples/networking/main.tf) |
+| NAT gateways | VPC-owned default gateway and separately managed imported gateways | [Networking](examples/networking/main.tf), [NAT import](examples/nat-gateway-import/main.tf) |
+| Object storage and secrets | Buckets, retention, CORS, lifecycle, notifications, scoped S3 credentials, secret stores and write-only secrets | [Storage](examples/storage/main.tf), [Bucket configuration](examples/bucket-configuration/main.tf), [Retention](examples/bucket-retention/main.tf) |
+| Block storage | Standalone volumes and storage-node attachments | [Block volume](examples/block-storage/main.tf), [Storage-node attachment](examples/block-storage-node-attachment/main.tf) |
+| CDN | Distributions, custom origins, SPA website configuration, custom domains | [CDN](examples/cdn/main.tf), [Custom origin](examples/cdn-custom-origin/main.tf) |
 
 Data sources: `ibee_sites` (compute), `ibee_network_sites` (networking availability), `ibee_compute_plans`, `ibee_images`, `ibee_billing_eligibility`. Attribute documentation is generated in [docs](docs/index.md). Each example directory is an independent root configuration and requires environment-specific input values.
 
@@ -87,6 +93,8 @@ Explicit operations use [Terraform actions](https://developer.hashicorp.com/terr
 Billable creates perform a fresh `POST /billing/resource-eligibility` before the product request. VM purchases resolve the organization currency from billing and select an advertised billing option. For new VMs, omitted `billing_interval` selects `HOURLY` (uncommitted); omission preserves the canonical term of an existing/imported VM. Explicit `MONTHLY` requires a catalog-defined one-month commitment. The selected term is sent in `billing_catalog`, its trusted price is checked before purchase, and the currency is verified again in the final admission decision. Refresh/import require the API to return the selected billing interval; legacy VMs without that projection need backend reconciliation. Where the public API provides no catalog/quote, the check verifies account admission only; product services must enforce actual pricing, entitlements, add-ons, quotas, and concurrent affordability. The provider cannot reserve funds or replace server enforcement.
 
 A denied, unavailable, malformed, or mismatched billing decision stops the purchase. Refresh, import, and destruction are not blocked by this creation preflight. A public API 403 is an error; only a resource-specific 404 removes it from state.
+
+Cloud/GPU snapshots and backup enablement require an explicit canonical `billing_catalog` JSON selection. VM-volume attachments accept the same input or resolve it from the actual block volume. Supply authoritative SKU identifiers, not copied example prices. Missing or mismatched catalogs fail before purchase; the backend remains responsible for final pricing and admission. See the compute example and migration notes.
 
 For `initial_topup_required` or `insufficient_balance`, Terraform instructs the user to use **Add Credits** in the organization's portal Billing page, wait for confirmed payment, and rerun apply. The public contract currently exposes no supported checkout/payment-status or wallet-management API. Credit purchases, manual grants, credit-limit changes, and payment confirmations are not simulated as Terraform resources.
 
@@ -101,6 +109,9 @@ For `initial_topup_required` or `insufficient_balance`, Terraform instructs the 
 - Secret values use Terraform write-only arguments with ephemeral sensitive inputs. They are excluded from plan/state; increment `value_wo_version` to rotate with check-and-set. Metadata reads currently require the value-read endpoint to obtain its version, so the token needs that permission. Avoid debug HTTP logging around secrets.
 - Secret deletion is a soft delete; history and its name remain. Destroying a store archives it. The default archive guard refuses active secrets; apply `force_archive=true` to explicitly archive them. Store/secret names may therefore remain unavailable after destroy.
 - Destroying backup policies disables future runs and retains recovery points, which may continue to incur storage charges. Detached block volumes and retained reserved IPs may also continue billing.
+- New backup schedules default to daily at 12:00 UTC. Omitted schedule fields preserve existing/imported values, including the former 20:00 default. Legacy hourly schedules can remain unchanged; new or changed schedules must use daily/weekly. Weekly schedules require a day. See [migration guidance](PARITY_FIXES.md#backup-schedule-compatibility).
+- VM power actions require stopped for start and running for stop/reboot, after case/whitespace normalization. They reject unknown or transitional states before mutation; backend enforcement remains necessary for concurrent changes. The CLI enables equivalent checks by default; SDK callers opt in.
+- Gateway, product and FastAPI error envelopes retain lifecycle, token, scope and billing diagnostics. Authorization failures are not treated as deletion or retried. Secret-resource diagnostics use static guidance without echoing response bodies.
 - Volume detach requires an explicit `confirm_unmounted` acknowledgement after unmounting inside the guest. The provider never forces detach.
 - GET requests and requests carrying a documented idempotency key retry bounded transient HTTP responses. Mutations without such a key and ambiguous transport failures are not blindly replayed. Inspect the portal after an ambiguous create before retrying.
 
@@ -114,7 +125,7 @@ make docs              # regenerate Registry pages and validate examples
 make check             # format, vet, tests, generated docs and examples
 ```
 
-The Terraform lifecycle test builds the real provider and uses isolated temporary state, a loopback API, and fixture credentials. It covers create, unchanged second plan, import, update, drift, billing-denied create, destroy while purchases are blocked, and write-only secret state protection. It never uses a live IBEE account. CI runs against Terraform 1.11.4 and 1.15.8.
+The Terraform lifecycle test builds the real provider and uses isolated temporary state, a loopback API, and fixture credentials. It covers create, unchanged second plan, import, update, drift, billing-denied create, destroy while purchases are blocked, and write-only secret state protection. It never uses a live IBEE account. CI runs against Terraform 1.11.4 and 1.15.8; the power-action invocation fixture runs on 1.15+ and explicitly skips older versions.
 
 Completed local checks are recorded in [VALIDATION.md](VALIDATION.md). Mock tests establish provider behavior, not deployed API compatibility. Follow [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the deferred development-workspace test and publication steps. The release workflow is configured to prepare a signed **draft** release only when a version tag is deliberately pushed.
 
@@ -127,3 +138,11 @@ python3 scripts/dev_preflight.py
 ```
 
 This builds the provider and evaluates only billing eligibility and catalog data sources against `https://api.ibee.co.in/v1`. It reports decision/currency and catalog counts, creates no managed resources or payments, and deletes its temporary Terraform state on exit. A passing preflight is the first live check; provisioning tests still require a selected plan/site and spending limit.
+
+For production, save a production-scoped token and the intended production workspace in the ignored `.ibee-prod.json` using the same fields, then explicitly select the production endpoint:
+
+```sh
+python3 scripts/dev_preflight.py --environment production
+```
+
+This uses `https://api.ibee.ai/v1`, rejects development tokens before any request, and still evaluates data sources only. Development credits, credentials and workspace identifiers are not assumed to exist in production. Production lifecycle tests require a separately selected disposable workspace, budget and cleanup verification.

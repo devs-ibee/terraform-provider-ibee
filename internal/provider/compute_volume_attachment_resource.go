@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -32,10 +33,11 @@ func NewGpuVmVolumeAttachmentResource() resource.Resource {
 var _ resource.ResourceWithImportState = (*vmVolumeAttachmentResource)(nil)
 
 type vmDataVolume struct {
-	VolumeID          string  `json:"volume_id"`
-	Mode              string  `json:"mode"`
-	GuestDevice       *string `json:"guest_device"`
-	MountInstructions *string `json:"mount_instructions"`
+	VolumeID          string          `json:"volume_id"`
+	Mode              string          `json:"mode"`
+	GuestDevice       *string         `json:"guest_device"`
+	MountInstructions *string         `json:"mount_instructions"`
+	BillingCatalog    recoveryCatalog `json:"billing_catalog"`
 }
 type vmVolumeAttachmentModel struct {
 	ID                types.String `tfsdk:"id"`
@@ -45,6 +47,7 @@ type vmVolumeAttachmentModel struct {
 	ConfirmUnmounted  types.Bool   `tfsdk:"confirm_unmounted"`
 	GuestDevice       types.String `tfsdk:"guest_device"`
 	MountInstructions types.String `tfsdk:"mount_instructions"`
+	BillingCatalog    types.String `tfsdk:"billing_catalog"`
 }
 
 func (r *vmVolumeAttachmentResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -53,7 +56,8 @@ func (r *vmVolumeAttachmentResource) Metadata(_ context.Context, req resource.Me
 func (r *vmVolumeAttachmentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{Description: "Attaches an existing block volume to a VM. Destroy detaches the volume without deleting it. The guest must be unmounted before destruction. Import using VM_ID/VOLUME_ID. Read requires the backend VM data_volumes projection.", Attributes: map[string]schema.Attribute{
-		"id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}}, "vm_id": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}}, "volume_id": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}}, "mode": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("single-writer"), PlanModifiers: replace, Validators: []validator.String{computeOneOf("single-writer", "multi-writer")}}, "confirm_unmounted": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Explicit acknowledgement passed to detach. Set true only after unmounting the volume inside the guest. Forced detach is never used."}, "guest_device": schema.StringAttribute{Computed: true}, "mount_instructions": schema.StringAttribute{Computed: true},
+		"billing_catalog": recoveryCatalogAttribute("block_storage", true),
+		"id":              schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}}, "vm_id": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}}, "volume_id": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}}, "mode": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("single-writer"), PlanModifiers: replace, Validators: []validator.String{computeOneOf("single-writer", "multi-writer")}}, "confirm_unmounted": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Explicit acknowledgement passed to detach. Set true only after unmounting the volume inside the guest. Forced detach is never used."}, "guest_device": schema.StringAttribute{Computed: true}, "mount_instructions": schema.StringAttribute{Computed: true},
 	}}
 }
 func (r *vmVolumeAttachmentResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -70,7 +74,63 @@ func (r *vmVolumeAttachmentResource) Configure(_ context.Context, req resource.C
 func (r *vmVolumeAttachmentResource) route(vmID string) string {
 	return "/compute/" + r.vmType + "-vms/" + url.PathEscape(vmID)
 }
+
+// The volume is the authoritative source, not a compute plan or a fabricated
+// generic storage SKU. Keep this projection local to compute attachment billing.
+func (r *vmVolumeAttachmentResource) volumeCatalog(ctx context.Context, volumeID string) (map[string]any, string, error) {
+	var volume struct {
+		ID             string          `json:"id"`
+		SiteID         string          `json:"site_id"`
+		BillingCatalog recoveryCatalog `json:"billing_catalog"`
+		Metadata       struct {
+			BillingCatalog recoveryCatalog `json:"billing_catalog"`
+		} `json:"metadata"`
+	}
+	if err := r.client.do(ctx, http.MethodGet, blockVolumePath(volumeID), nil, &volume); err != nil {
+		// A volume catalog lookup failing (including 404) is not proof that the
+		// VM attachment disappeared. Do not expose IsNotFound to Read/Delete.
+		return nil, "", fmt.Errorf("failed to read volume billing catalog: %s", err)
+	}
+	if volume.ID != volumeID {
+		return nil, "", fmt.Errorf("volume catalog response identity does not match volume_id")
+	}
+	if volume.BillingCatalog == nil {
+		volume.BillingCatalog = volume.Metadata.BillingCatalog
+	}
+	return volume.BillingCatalog, volume.SiteID, nil
+}
+
+func (r *vmVolumeAttachmentResource) purchaseCatalog(ctx context.Context, m *vmVolumeAttachmentModel) (map[string]any, error) {
+	if m.BillingCatalog.IsNull() || m.BillingCatalog.IsUnknown() {
+		catalog, site, err := r.volumeCatalog(ctx, m.VolumeID.ValueString())
+		if err != nil {
+			return nil, err
+		}
+		if catalog == nil {
+			return nil, fmt.Errorf("volume has no canonical billing_catalog; explicitly supply its block_storage catalog before attaching")
+		}
+		// Check the volume placement independently of optional catalog metadata.
+		var vm cloudVmAPI
+		if err := r.client.do(ctx, http.MethodGet, r.route(m.VmID.ValueString()), nil, &vm); err != nil {
+			return nil, err
+		}
+		if vm.identifier() != m.VmID.ValueString() || vm.SiteID == nil || site == "" || *vm.SiteID != site {
+			return nil, fmt.Errorf("volume and VM must expose matching sites before resolving the attachment catalog")
+		}
+		encoded, err := json.Marshal(catalog)
+		if err != nil {
+			return nil, fmt.Errorf("invalid volume billing catalog response")
+		}
+		m.BillingCatalog = types.StringValue(string(encoded))
+	}
+	return prepareRecoveryCatalog(ctx, r.client, r.vmType, m.VmID.ValueString(), m.BillingCatalog, "block_storage")
+}
+
 func (r *vmVolumeAttachmentResource) refresh(ctx context.Context, m *vmVolumeAttachmentModel) (bool, error) {
+	return r.refreshWithCatalog(ctx, m, true)
+}
+
+func (r *vmVolumeAttachmentResource) refreshWithCatalog(ctx context.Context, m *vmVolumeAttachmentModel, loadCatalog bool) (bool, error) {
 	var vm cloudVmAPI
 	if err := r.client.do(ctx, http.MethodGet, r.route(m.VmID.ValueString()), nil, &vm); err != nil {
 		return false, err
@@ -85,6 +145,17 @@ func (r *vmVolumeAttachmentResource) refresh(ctx context.Context, m *vmVolumeAtt
 		if v.VolumeID == m.VolumeID.ValueString() {
 			if v.Mode == "" {
 				return false, fmt.Errorf("volume attachment response has no mode")
+			}
+			catalog := v.BillingCatalog
+			if loadCatalog && catalog == nil && (m.BillingCatalog.IsNull() || m.BillingCatalog.IsUnknown()) {
+				var err error
+				catalog, _, err = r.volumeCatalog(ctx, m.VolumeID.ValueString())
+				if err != nil {
+					return false, err
+				}
+			}
+			if err := hydrateRecoveryCatalog(&m.BillingCatalog, catalog); err != nil {
+				return false, err
 			}
 			m.ID = types.StringValue(m.VmID.ValueString() + "/" + m.VolumeID.ValueString())
 			m.Mode = types.StringValue(v.Mode)
@@ -104,8 +175,15 @@ func (r *vmVolumeAttachmentResource) Create(ctx context.Context, req resource.Cr
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Reject malformed explicit inputs before making any API call.
+	if !m.BillingCatalog.IsNull() && !m.BillingCatalog.IsUnknown() {
+		if _, err := parseRecoveryCatalog(m.BillingCatalog, "block_storage"); err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid attachment billing catalog", err.Error())
+			return
+		}
+	}
 	probe := m
-	found, err := r.refresh(ctx, &probe)
+	found, err := r.refreshWithCatalog(ctx, &probe, false)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to inspect volume attachments", err.Error())
 		return
@@ -114,12 +192,17 @@ func (r *vmVolumeAttachmentResource) Create(ctx context.Context, req resource.Cr
 		resp.Diagnostics.AddError("Volume is already attached", "Import this attachment using "+m.VmID.ValueString()+"/"+m.VolumeID.ValueString()+" before managing it.")
 		return
 	}
-	if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
+	catalog, err := r.purchaseCatalog(ctx, &m)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid attachment billing catalog", err.Error())
+		return
+	}
+	if err := admitRecoveryCatalog(ctx, r.client, catalog); err != nil {
 		resp.Diagnostics.AddError("Volume attachment billing eligibility denied", err.Error())
 		return
 	}
 	var accepted operationAccepted
-	if err := r.client.doH(ctx, http.MethodPost, r.route(m.VmID.ValueString())+"/actions/attach-volume", map[string]string{"X-Idempotency-Key": idempotencyKey()}, map[string]any{"volume_id": m.VolumeID.ValueString(), "mode": m.Mode.ValueString(), "requested_by": "terraform"}, &accepted); err != nil {
+	if err := r.client.doH(ctx, http.MethodPost, r.route(m.VmID.ValueString())+"/actions/attach-volume", map[string]string{"X-Idempotency-Key": idempotencyKey()}, map[string]any{"volume_id": m.VolumeID.ValueString(), "mode": m.Mode.ValueString(), "requested_by": "terraform", "billing_catalog": catalog}, &accepted); err != nil {
 		resp.Diagnostics.AddError("Failed to attach volume", err.Error())
 		return
 	}
@@ -189,7 +272,7 @@ func (r *vmVolumeAttachmentResource) Delete(ctx context.Context, req resource.De
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	found, err := r.refresh(ctx, &m)
+	found, err := r.refreshWithCatalog(ctx, &m, false)
 	if IsNotFound(err) || (err == nil && !found) {
 		return
 	}
@@ -214,7 +297,7 @@ func (r *vmVolumeAttachmentResource) Delete(ctx context.Context, req resource.De
 		resp.Diagnostics.AddError("Volume detach did not complete", err.Error())
 		return
 	}
-	found, err = r.refresh(ctx, &m)
+	found, err = r.refreshWithCatalog(ctx, &m, false)
 	if IsNotFound(err) {
 		return
 	}

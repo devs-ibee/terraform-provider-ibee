@@ -34,7 +34,7 @@ func (computeBillingIntervalDefault) PlanModifyString(_ context.Context, req pla
 type computeBillingTerm struct {
 	BillingInterval  string   `json:"billing_interval"`
 	Committed        *bool    `json:"committed"`
-	CommitmentPeriod string   `json:"commitment_period"`
+	CommitmentPeriod *string  `json:"commitment_period"`
 	CommitmentMonths *int64   `json:"commitment_months"`
 	CommittedHours   *int64   `json:"committed_hours"`
 	UnitPriceMinor   *int64   `json:"unit_price_minor"`
@@ -82,7 +82,7 @@ func (p *computePlan) selectBillingTerm(interval string) error {
 	}
 	catalog["billing_interval"] = term.BillingInterval
 	catalog["committed"] = *term.Committed
-	catalog["commitment_period"] = term.CommitmentPeriod
+	catalog["commitment_period"] = *term.CommitmentPeriod
 	catalog["unit_price_minor"] = *term.UnitPriceMinor
 	if term.CommitmentMonths != nil {
 		catalog["commitment_months"] = *term.CommitmentMonths
@@ -102,10 +102,22 @@ func (p *computePlan) selectBillingTerm(interval string) error {
 	return nil
 }
 
-// The same selected-contract validation is used on creation and canonical reads.
-// In particular MONTHLY is not enough to distinguish a one-, three- or six-month term.
+// Canonical VM reads can omit/null the period for explicitly uncommitted hourly
+// usage. The backend stores billing_catalog as an opaque dict, and the portal
+// normalizes a missing period from the interval. Limit that compatibility rule
+// to hourly reads; never infer a monthly commitment or relax purchase selection.
+func (term computeBillingTerm) validateCanonical() error {
+	if term.CommitmentPeriod == nil && term.BillingInterval == "HOURLY" && term.Committed != nil && !*term.Committed {
+		period := "HOURLY"
+		term.CommitmentPeriod = &period
+	}
+	_, err := term.periodCost()
+	return err
+}
+
+// MONTHLY alone cannot distinguish a one-, three- or six-month commitment.
 func (term computeBillingTerm) periodCost() (int64, error) {
-	if term.Committed == nil || term.UnitPriceMinor == nil || *term.UnitPriceMinor < 0 || term.CommitmentPeriod != term.BillingInterval {
+	if term.Committed == nil || term.UnitPriceMinor == nil || *term.UnitPriceMinor < 0 || term.CommitmentPeriod == nil || *term.CommitmentPeriod != term.BillingInterval {
 		return 0, fmt.Errorf("incomplete or inconsistent %s billing terms", term.BillingInterval)
 	}
 	cost := *term.UnitPriceMinor

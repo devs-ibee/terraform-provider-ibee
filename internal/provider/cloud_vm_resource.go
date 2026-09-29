@@ -269,7 +269,7 @@ func (r *cloudVmResource) refresh(ctx context.Context, state *cloudVmModel) erro
 	if vm.BillingCatalog == nil || (vm.BillingCatalog.BillingInterval != "HOURLY" && vm.BillingCatalog.BillingInterval != "MONTHLY") {
 		return fmt.Errorf("VM read must expose selected billing_catalog.billing_interval for safe billing-term refresh/import; an unselected legacy catalog cannot establish contractual intent")
 	}
-	if _, err := vm.BillingCatalog.periodCost(); err != nil {
+	if err := vm.BillingCatalog.validateCanonical(); err != nil {
 		return fmt.Errorf("unsupported canonical VM billing commitment: %w", err)
 	}
 	state.BillingInterval = types.StringValue(vm.BillingCatalog.BillingInterval)
