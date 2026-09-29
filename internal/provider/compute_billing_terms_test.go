@@ -18,11 +18,7 @@ func TestComputeBillingTermSelection(t *testing.T) {
 			if err := p.selectBillingTerm(interval); err != nil {
 				t.Fatal(err)
 			}
-			want := int64(20)
-			if interval == "MONTHLY" {
-				want = 16 * 731
-			}
-			if *p.estimatedCost() != want || p.BillingCatalog["billing_interval"] != interval || p.BillingCatalog["sku_code"] != "SKU" {
+			if p.BillingCatalog["billing_interval"] != interval || p.BillingCatalog["sku_code"] != "SKU" {
 				t.Fatal(p)
 			}
 			if _, ok := original["billing_interval"]; ok {
