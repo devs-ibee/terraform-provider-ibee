@@ -280,7 +280,7 @@ action "ibee_cdn_verify_domain" "test" {
 	config(true, "media", "https://new-origin.fixture.example/assets", "home.html")
 	denied := run(1, "apply", "-auto-approve", "-input=false", "-no-color")
 	if !strings.Contains(denied, "billing_denied") {
-		t.Fatal("denied CDN enable lacks billing recovery message")
+		t.Fatal("denied CDN enable did not surface the upstream billing_denied error")
 	}
 	f.mu.Lock()
 	if f.distributions["custom-distribution"]["enabled"] != false {

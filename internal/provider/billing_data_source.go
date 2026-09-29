@@ -54,7 +54,7 @@ func (d *billingEligibilityDataSource) Metadata(_ context.Context, req datasourc
 	resp.TypeName = req.ProviderTypeName + "_billing_eligibility"
 }
 func (d *billingEligibilityDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
-	resp.Schema = schema.Schema{Description: "Read the organization's current billing admission decision. Requires billing.read. This does not reserve funds, purchase credits, or guarantee later provisioning; creates check again and the backend remains authoritative.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "Read the organization's current billing admission decision. Requires billing.read. This does not reserve funds, purchase credits, or guarantee later provisioning; mutations never consult this result, and the backend remains authoritative.", Attributes: map[string]schema.Attribute{
 		"sku_code":                schema.StringAttribute{Optional: true, Description: "Optional active catalog SKU to evaluate. Omit for an account-status check."},
 		"operation":               schema.StringAttribute{Optional: true, Description: "Explicit diagnostic operation, such as REVOKE_CREDENTIAL or SECURITY_RECOVERY. Passed to Billing; omitted uses the server default. allowed=false is returned as data."},
 		"estimated_cost_minor":    schema.Int64Attribute{Optional: true, Description: "Optional nonnegative estimated cost in currency minor units. An estimate is advisory, not an override of backend pricing."},
