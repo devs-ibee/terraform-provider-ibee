@@ -26,6 +26,8 @@ This is the implementation status after the 2026-09-27 source review and develop
 
 ## Deployed blockers found during live tests
 
+Current production evidence is in [CROSS_CLIENT_RESULTS.md](CROSS_CLIENT_RESULTS.md): 15/34 resource lifecycle passes, 4 blocked and 15 not production lifecycle tested. Cloud VM canonical readback is repaired. GPU and block writes returned empty HTTP 403; snapshots/backups require billing catalogs unavailable through the public API; S3 TLS remains blocked. SDK/CLI coverage is separately tracked in [CLIENT_PARITY_AUDIT.md](CLIENT_PARITY_AUDIT.md).
+
 The current development pass exposed missing cloud-image backing resources, gateway GPU admission using monthly rather than selected hourly terms, exhausted public IPv4 capacity, block catalog/site/size disagreement, and S3 AccessDenied for a correctly scoped generated key. Missing custom-origin routes and unavailable load-balancer quotes also limit testing. Exact evidence and cleanup are linked from [LIVE_PRODUCT_VALIDATION.md](LIVE_PRODUCT_VALIDATION.md).
 
 Only INR pricing was exercised live. Reviewed catalog code can stamp a requested currency without verifying the underlying price currency, so non-INR pricing needs backend validation; the provider's response-currency consistency check alone cannot establish the actual denomination.

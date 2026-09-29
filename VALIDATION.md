@@ -1,5 +1,7 @@
 # Validation results
 
+Latest production and cross-client results: [CROSS_CLIENT_RESULTS.md](CROSS_CLIENT_RESULTS.md). On 2026-09-28 the expanded 106-test provider suite passed, including all seven Terraform CLI fixtures, and the revised compute fixture passed on 1.11.4 and 1.15.8. The tables below retain the earlier validation record.
+
 Validated on 2026-09-27 with Go 1.26.5 on macOS arm64. The automated suites below use isolated local HTTP fixtures. The separate live development checks are documented below. Code has been pushed to GitHub; no release or payment was initiated.
 
 | Check | Result |

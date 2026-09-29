@@ -62,8 +62,20 @@ func (a *vmPowerAction) Invoke(ctx context.Context, req action.InvokeRequest, re
 		resp.Diagnostics.AddError("Failed to inspect VM", err.Error())
 		return
 	}
-	if current.identifier() != vmID || current.Status == "" {
+	status := strings.ToLower(strings.TrimSpace(current.Status))
+	if current.identifier() != vmID || status == "" {
 		resp.Diagnostics.AddError("Invalid VM response", "VM read omitted its status or returned a different identity.")
+		return
+	}
+	// Match the SDK's enabled state checks (also enabled by default in the CLI).
+	// Check before billing admission: even a read-only billing POST is unnecessary
+	// when this non-forced operation cannot be performed from the current state.
+	required := "running"
+	if operation == "start" {
+		required = "stopped"
+	}
+	if status != required {
+		resp.Diagnostics.AddError("Invalid VM power state", fmt.Sprintf("Cannot %s %s VM %q from status %q; this operation requires %q.", operation, vmType, vmID, current.Status, required))
 		return
 	}
 	if operation != "stop" {
@@ -106,11 +118,11 @@ func (a *vmPowerAction) Invoke(ctx context.Context, req action.InvokeRequest, re
 			return
 		}
 		if err == nil {
-			if vm.identifier() != vmID || vm.Status == "" {
+			status := strings.ToLower(strings.TrimSpace(vm.Status))
+			if vm.identifier() != vmID || status == "" {
 				resp.Diagnostics.AddError("Invalid VM response", "VM read omitted its status or returned a different identity.")
 				return
 			}
-			status := strings.ToLower(vm.Status)
 			if status == wanted {
 				if resp.SendProgress != nil {
 					resp.SendProgress(action.InvokeProgressEvent{Message: "VM is " + wanted + "."})

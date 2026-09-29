@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -138,6 +139,116 @@ func TestComputeVMCreateBillingAndCanonicalState(t *testing.T) {
 				t.Fatal(calls)
 			}
 		})
+	}
+}
+
+func TestComputeVMCreateUsesConfiguredCatalogInterval(t *testing.T) {
+	for _, kind := range []string{"cloud", "gpu"} {
+		for _, interval := range []string{"HOURLY", "MONTHLY"} {
+			t.Run(kind+"/"+interval, func(t *testing.T) {
+				r := &cloudVmResource{vmType: kind}
+				catalogReads, creates := 0, 0
+				r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+					switch req.URL.Path {
+					case "/billing/resource-eligibility":
+						var b billingEligibilityRequest
+						_ = json.NewDecoder(req.Body).Decode(&b)
+						if b.SKUCode != "" {
+							want := int64(20)
+							if interval == "MONTHLY" {
+								want = 16 * 731
+							}
+							if b.EstimatedCostMinor == nil || *b.EstimatedCostMinor != want {
+								t.Errorf("wrong %s admission estimate: %+v", interval, b)
+							}
+						}
+						computeEligibility(w, true, "SKU-1")
+					case "/compute/plans":
+						catalogReads++
+						query := req.URL.Query()
+						if query.Get("billing_interval") != interval || query.Get("vm_type") != kind || query.Get("site_id") != "site" || query.Get("currency") != "INR" {
+							t.Errorf("catalog query does not match VM purchase: %v", query)
+							http.Error(w, "no selectable plan for the requested interval", 400)
+							return
+						}
+						computeCatalog(w)
+					case "/compute/" + kind + "-vms":
+						creates++
+						var b struct {
+							Catalog computeBillingTerm `json:"billing_catalog"`
+						}
+						if err := json.NewDecoder(req.Body).Decode(&b); err != nil {
+							t.Fatal(err)
+						}
+						if b.Catalog.BillingInterval != interval || b.Catalog.Committed == nil || *b.Catalog.Committed != (interval == "MONTHLY") {
+							t.Errorf("wrong selected create term: %+v", b.Catalog)
+						}
+						computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op-1", Status: "accepted"})
+					case "/compute/operations/op-1":
+						computeJSON(w, map[string]any{"status": "succeeded"})
+					case "/compute/" + kind + "-vms/vm-1":
+						v := computeCanonicalVM(kind)
+						v["billing_catalog"] = computeTestSelectedBillingTerm(interval)
+						computeJSON(w, v)
+					default:
+						t.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+						w.WriteHeader(500)
+					}
+				})
+				plan := computeValidVMPlan()
+				plan.BillingInterval = types.StringValue(interval)
+				resp := resource.CreateResponse{State: computeState(t, r, nil)}
+				r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, plan)}, &resp)
+				computeNoErrors(t, resp.Diagnostics)
+				if catalogReads != 1 || creates != 1 {
+					t.Fatalf("catalog reads=%d creates=%d", catalogReads, creates)
+				}
+			})
+		}
+	}
+}
+
+func TestComputePlansDataSourceBillingIntervalSelection(t *testing.T) {
+	for _, kind := range []string{"cloud", "gpu"} {
+		for _, configured := range []string{"", "HOURLY", "MONTHLY"} {
+			t.Run(kind+"/"+configured, func(t *testing.T) {
+				want := configured
+				if want == "" {
+					want = "HOURLY"
+				}
+				d := &computePlansDataSource{}
+				d.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+					query := req.URL.Query()
+					if req.Method != "GET" || req.URL.Path != "/compute/plans" || query.Get("vm_type") != kind || query.Get("billing_interval") != want || query.Get("site_id") != "site" || query.Get("currency") != "INR" {
+						t.Errorf("incorrect catalog query: %s %s", req.Method, req.URL)
+					}
+					// An hourly-only GPU can carry display prices but remain unpriced
+					// and unselectable for monthly discovery, as observed in production.
+					selectable := query.Get("billing_interval") == "HOURLY"
+					status := "unpriced"
+					if selectable {
+						status = "priced"
+					}
+					computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "billing_interval": query.Get("billing_interval"), "hourly_price_minor": 3014, "selectable": selectable, "pricing_status": status}}})
+				})
+				var schema datasource.SchemaResponse
+				d.Schema(context.Background(), datasource.SchemaRequest{}, &schema)
+				cfg := computePlansModel{VmType: types.StringValue(kind), SiteID: types.StringValue("site"), Currency: types.StringNull(), BillingInterval: types.StringNull()}
+				if configured != "" {
+					cfg.BillingInterval = types.StringValue(configured)
+				}
+				state := tfsdk.State{Schema: schema.Schema}
+				computeNoErrors(t, state.Set(context.Background(), cfg))
+				resp := datasource.ReadResponse{State: state}
+				d.Read(context.Background(), datasource.ReadRequest{Config: tfsdk.Config{Schema: schema.Schema, Raw: state.Raw}}, &resp)
+				computeNoErrors(t, resp.Diagnostics)
+				var got computePlansModel
+				computeNoErrors(t, resp.State.Get(context.Background(), &got))
+				if got.BillingInterval.ValueString() != want || len(got.Plans) != 1 || got.Plans[0].Selectable.ValueBool() != (want == "HOURLY") || got.Plans[0].BillingInterval.ValueString() != want {
+					t.Fatalf("catalog interval/availability was lost: %+v", got)
+				}
+			})
+		}
 	}
 }
 func TestComputeVMDeniedEligibilityNeverCreates(t *testing.T) {
@@ -358,6 +469,10 @@ func TestComputeAttachmentProjectionRequired(t *testing.T) {
 func TestComputeAttachmentImportAndUnmountPolicy(t *testing.T) {
 	r := &vmVolumeAttachmentResource{vmType: "cloud"}
 	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/block-storage/volumes/vol-1" {
+			computeJSON(w, map[string]any{"id": "vol-1"}) // Legacy catalog omission remains importable.
+			return
+		}
 		computeJSON(w, map[string]any{"_id": "vm-1", "data_volumes": []any{map[string]any{"volume_id": "vol-1", "mode": "single-writer", "guest_device": "/dev/vdb"}}})
 	})
 	imp := resource.ImportStateResponse{State: computeState(t, r, nil)}
@@ -435,8 +550,15 @@ func TestComputeSnapshotFailureRetainsRecoverableIdentity(t *testing.T) {
 	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/billing/resource-eligibility":
-			computeEligibility(w, true, "")
+			computeEligibility(w, true, "SNAPSHOT-STD")
 		case "/compute/cloud-vms/vm-1/snapshots":
+			var body map[string]any
+			_ = json.NewDecoder(req.Body).Decode(&body)
+			if body["billing_catalog"] == nil {
+				t.Error("snapshot purchase omitted its catalog")
+				http.Error(w, "missing catalog", 422)
+				return
+			}
 			computeJSON(w, map[string]any{"snapshot_set_id": "snap", "status": "queued"})
 		case "/compute/cloud-vm-snapshots/snap":
 			computeJSON(w, map[string]any{"snapshot_set_id": "snap", "vm_id": "vm-1", "name": "snapshot", "capture_scope": "root_only", "status": "failed"})
@@ -445,6 +567,7 @@ func TestComputeSnapshotFailureRetainsRecoverableIdentity(t *testing.T) {
 		}
 	})
 	m := vmSnapshotModel{ID: types.StringUnknown(), VmID: types.StringValue("vm-1"), Name: types.StringValue("snapshot"), Description: types.StringNull(), Mode: types.StringValue("root_only"), SelectedDataVolumeIDs: types.SetValueMust(types.StringType, []attr.Value{}), Status: types.StringUnknown(), RecoveryPointID: types.StringUnknown()}
+	m.BillingCatalog = types.StringValue(`{"sku_id":"snapshot-sku","sku_code":"SNAPSHOT-STD","product_code":"snapshot_storage","currency":"INR"}`)
 	resp := resource.CreateResponse{State: computeState(t, r, nil)}
 	r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, m)}, &resp)
 	if !resp.Diagnostics.HasError() {

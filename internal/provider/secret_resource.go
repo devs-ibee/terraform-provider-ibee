@@ -150,7 +150,11 @@ func (out secretAPI) apply(state *secretResourceModel) error {
 func secretSafeError(err error) string {
 	var apiErr *apiError
 	if errors.As(err, &apiErr) {
-		return fmt.Sprintf("Secret API request failed with HTTP %d. Response details are omitted to protect secret data.", apiErr.Status)
+		message := fmt.Sprintf("Secret API request failed with HTTP %d. Response details are omitted to protect secret data.", apiErr.Status)
+		if guidance := apiErr.guidance(); guidance != "" {
+			message += " " + guidance
+		}
+		return message
 	}
 	if errors.Is(err, context.Canceled) {
 		return "Secret API request was cancelled."

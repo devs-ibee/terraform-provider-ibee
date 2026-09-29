@@ -38,15 +38,17 @@ type vmSnapshotModel struct {
 	SelectedDataVolumeIDs types.Set    `tfsdk:"selected_data_volume_ids"`
 	Status                types.String `tfsdk:"status"`
 	RecoveryPointID       types.String `tfsdk:"recovery_point_id"`
+	BillingCatalog        types.String `tfsdk:"billing_catalog"`
 }
 type vmSnapshotAPI struct {
-	ID              string  `json:"snapshot_set_id"`
-	VmID            string  `json:"vm_id"`
-	Name            string  `json:"name"`
-	Description     *string `json:"description"`
-	Mode            string  `json:"capture_scope"`
-	Status          string  `json:"status"`
-	RecoveryPointID string  `json:"recovery_point_id"`
+	ID              string          `json:"snapshot_set_id"`
+	VmID            string          `json:"vm_id"`
+	Name            string          `json:"name"`
+	Description     *string         `json:"description"`
+	Mode            string          `json:"capture_scope"`
+	Status          string          `json:"status"`
+	RecoveryPointID string          `json:"recovery_point_id"`
+	BillingCatalog  recoveryCatalog `json:"billing_catalog"`
 	VolumeManifest  []struct {
 		SourceVolumeID string `json:"source_volume_id"`
 		Role           string `json:"role"`
@@ -62,6 +64,7 @@ func (r *vmSnapshotResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		"id":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 		"vm_id": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}}, "name": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}},
 		"description":              schema.StringAttribute{Optional: true, PlanModifiers: replace},
+		"billing_catalog":          recoveryCatalogAttribute("snapshot_storage", true),
 		"mode":                     schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("all_attached"), PlanModifiers: replace, Validators: []validator.String{computeOneOf("root_only", "all_attached", "selective")}},
 		"selected_data_volume_ids": schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{})), PlanModifiers: []planmodifier.Set{setplanmodifier.RequiresReplace()}, Description: "Required for selective mode; otherwise must be empty."},
 		"status":                   schema.StringAttribute{Computed: true}, "recovery_point_id": schema.StringAttribute{Computed: true},
@@ -98,6 +101,9 @@ func (r *vmSnapshotResource) route(id string) string {
 func (r *vmSnapshotResource) hydrate(ctx context.Context, m *vmSnapshotModel, s vmSnapshotAPI) error {
 	if s.ID == "" || s.VmID == "" || s.Name == "" || s.Status == "" || s.Mode == "" {
 		return fmt.Errorf("incomplete snapshot response")
+	}
+	if err := hydrateRecoveryCatalog(&m.BillingCatalog, s.BillingCatalog); err != nil {
+		return err
 	}
 	m.ID = types.StringValue(s.ID)
 	m.VmID = types.StringValue(s.VmID)
@@ -148,11 +154,16 @@ func (r *vmSnapshotResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
+	catalog, err := prepareRecoveryCatalog(ctx, r.client, r.vmType, m.VmID.ValueString(), m.BillingCatalog, "snapshot_storage")
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid snapshot billing catalog", err.Error())
+		return
+	}
+	if err := admitRecoveryCatalog(ctx, r.client, catalog); err != nil {
 		resp.Diagnostics.AddError("Snapshot billing eligibility denied", err.Error())
 		return
 	}
-	body := map[string]any{"name": m.Name.ValueString(), "mode": m.Mode.ValueString(), "selected_data_volume_ids": volumes, "requested_by": "terraform"}
+	body := map[string]any{"name": m.Name.ValueString(), "mode": m.Mode.ValueString(), "selected_data_volume_ids": volumes, "requested_by": "terraform", "billing_catalog": catalog}
 	if !m.Description.IsNull() {
 		body["description"] = m.Description.ValueString()
 	}
@@ -222,8 +233,24 @@ func (r *vmSnapshotResource) Read(ctx context.Context, req resource.ReadRequest,
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
-func (r *vmSnapshotResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Snapshot replacement required", "Snapshot configuration is immutable.")
+func (r *vmSnapshotResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	// Only a legacy import's previously absent purchase input or JSON formatting
+	// can change in place. This records configuration without making a purchase.
+	var m, old vmSnapshotModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &m)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &old)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !old.BillingCatalog.IsNull() && !recoveryCatalogSelectionUnchanged(old.BillingCatalog, m.BillingCatalog) {
+		resp.Diagnostics.AddError("Snapshot replacement required", "Snapshot billing catalog is immutable.")
+		return
+	}
+	if err := r.refresh(ctx, &m); err != nil {
+		resp.Diagnostics.AddError("Failed to refresh snapshot", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
 func (r *vmSnapshotResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var m vmSnapshotModel
