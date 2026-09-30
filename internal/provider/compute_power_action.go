@@ -78,12 +78,6 @@ func (a *vmPowerAction) Invoke(ctx context.Context, req action.InvokeRequest, re
 		resp.Diagnostics.AddError("Invalid VM power state", fmt.Sprintf("Cannot %s %s VM %q from status %q; this operation requires %q.", operation, vmType, vmID, current.Status, required))
 		return
 	}
-	if operation != "stop" {
-		if err := a.client.requireBillingEligibility(ctx, "", nil); err != nil {
-			resp.Diagnostics.AddError("VM power billing eligibility denied", err.Error())
-			return
-		}
-	}
 	key := m.IdempotencyKey.ValueString()
 	if key == "" {
 		key = idempotencyKey()

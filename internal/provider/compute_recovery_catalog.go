@@ -39,7 +39,7 @@ func (c *recoveryCatalog) UnmarshalJSON(raw []byte) error {
 // These are purchase inputs, not a price quote. Preserve the complete canonical
 // object, including optional pricing/term metadata; never synthesize a SKU or rate.
 func recoveryCatalogAttribute(product string, immutable bool) schema.StringAttribute {
-	behavior := "Explicit changes are sent as a replacement backup catalog after eligibility checks."
+	behavior := "Explicit changes are sent as a replacement backup catalog after structural catalog checks; upstream decides admission."
 	if immutable {
 		behavior = "Adding a previously absent creation input only records configuration. Changing a known selection requires replacement."
 	}
@@ -280,11 +280,6 @@ func prepareRecoveryCatalog(ctx context.Context, client *Client, kind, vmID stri
 		}
 	}
 	return catalog, nil
-}
-
-func admitRecoveryCatalog(ctx context.Context, client *Client, catalog map[string]any) error {
-	currency, _ := catalog["currency"].(string)
-	return client.requireBillingEligibilityForCurrency(ctx, catalog["sku_code"].(string), nil, currency)
 }
 
 // A read projection may omit the historical catalog. Preserve recorded inputs;

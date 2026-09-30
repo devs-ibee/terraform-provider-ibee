@@ -98,7 +98,7 @@ func TestBlockVolumeLifecycleAndImport(t *testing.T) {
 	if got.SKUCode.ValueString() != "BLOCK-STD" || got.AllowOnlineResize.ValueBool() {
 		t.Fatal(got)
 	}
-	if admissions != 1 {
+	if admissions != 0 {
 		t.Fatal("import must not check billing")
 	}
 	plan := got
@@ -107,7 +107,7 @@ func TestBlockVolumeLifecycleAndImport(t *testing.T) {
 	r.Update(context.Background(), resource.UpdateRequest{Plan: computePlanState(t, r, plan), State: read.State}, &updated)
 	computeNoErrors(t, updated.Diagnostics)
 	computeNoErrors(t, updated.State.Get(context.Background(), &got))
-	if got.SizeGb.ValueInt64() != 200 || resizes != 1 || admissions != 2 {
+	if got.SizeGb.ValueInt64() != 200 || resizes != 1 || admissions != 0 {
 		t.Fatal("resize did not converge")
 	}
 	volume["attachments"] = []any{map[string]any{"node_name": "node", "mode": "single-writer"}}
@@ -121,7 +121,7 @@ func TestBlockVolumeLifecycleAndImport(t *testing.T) {
 	deleted := resource.DeleteResponse{}
 	r.Delete(context.Background(), resource.DeleteRequest{State: updated.State}, &deleted)
 	computeNoErrors(t, deleted.Diagnostics)
-	if volume != nil || deletes != 1 || creates != 1 || admissions != 2 {
+	if volume != nil || deletes != 1 || creates != 1 || admissions != 0 {
 		t.Fatalf("unexpected lifecycle counters: %d %d %d %d", creates, resizes, deletes, admissions)
 	}
 }
@@ -130,14 +130,15 @@ func TestBlockVolumeCreateDenialAndCurrency(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			r := &blockVolumeResource{}
 			r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				if req.URL.Path != "/billing/resource-eligibility" {
-					t.Fatal("create reached product API despite admission block")
+				if req.URL.Path == "/billing/resource-eligibility" {
+					t.Fatal("automatic write must not query eligibility")
 				}
+				w.WriteHeader(http.StatusPaymentRequired)
 				currency := "INR"
 				if scenario == "wrong currency" {
 					currency = "USD"
 				}
-				blockEligibility(w, scenario != "denied", currency)
+				computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": scenario, "currency": currency})
 			})
 			resp := resource.CreateResponse{State: computeState(t, r, nil)}
 			r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, blockVolumeTestPlan())}, &resp)

@@ -16,7 +16,7 @@ func TestBillingAdmissionFailsClosed(t *testing.T) {
 		want   string
 	}{
 		{"allowed", func(d map[string]any) {}, ""},
-		{"denied", func(d map[string]any) { d["allowed"] = false; d["reason"] = "initial_topup_required" }, "Add Credits"},
+		{"denied", func(d map[string]any) { d["allowed"] = false; d["reason"] = "initial_topup_required" }, ""},
 		{"missing-allowed", func(d map[string]any) { delete(d, "allowed") }, "incomplete"},
 		{"missing-reason", func(d map[string]any) { delete(d, "reason") }, "incomplete"},
 		{"wrong-organization", func(d map[string]any) { d["organization_id"] = "other" }, "organization_id"},
@@ -44,7 +44,10 @@ func TestBillingAdmissionFailsClosed(t *testing.T) {
 			c.organizationID = "org-1"
 			cost := int64(100)
 			for i := 0; i < 2; i++ {
-				err := c.requireBillingEligibility(context.Background(), "plan-1", &cost)
+				decision, err := c.checkBillingEligibility(context.Background(), billingEligibilityRequest{SKUCode: "plan-1", EstimatedCostMinor: &cost})
+				if tc.name == "denied" && (decision == nil || *decision.Allowed) {
+					t.Fatal("denial must remain data")
+				}
 				if tc.want == "" {
 					if err != nil {
 						t.Fatal(err)
@@ -63,7 +66,7 @@ func TestBillingUnavailableDoesNotAuthorize(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(403) }))
 	defer s.Close()
 	c := NewClient(s.URL, "token", "workspace")
-	if err := c.requireBillingEligibility(context.Background(), "", nil); err == nil || !strings.Contains(err.Error(), "billing.read") {
+	if _, err := c.checkBillingEligibility(context.Background(), billingEligibilityRequest{}); err == nil || !strings.Contains(err.Error(), "billing.read") {
 		t.Fatalf("expected actionable denial: %v", err)
 	}
 	cost := int64(-1)
@@ -79,10 +82,8 @@ func TestBillingRejectsCatalogCurrencyMismatch(t *testing.T) {
 	defer s.Close()
 	c := NewClient(s.URL, "token", "workspace")
 	cost := int64(100)
-	if err := c.requireBillingEligibilityForCurrency(context.Background(), "plan-1", &cost, "INR"); err == nil || !strings.Contains(err.Error(), "currency") {
-		t.Fatalf("wrong currency accepted: %v", err)
-	}
-	if err := c.requireBillingEligibilityForCurrency(context.Background(), "plan-1", &cost, "USD"); err != nil {
-		t.Fatal(err)
+	decision, err := c.checkBillingEligibility(context.Background(), billingEligibilityRequest{SKUCode: "plan-1", EstimatedCostMinor: &cost})
+	if err != nil || decision.Currency != "USD" {
+		t.Fatalf("upstream currency lost: %v %v", decision, err)
 	}
 }

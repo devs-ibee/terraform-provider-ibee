@@ -190,10 +190,6 @@ func (r *secretResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Invalid secret value", err.Error())
 		return
 	}
-	if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-		resp.Diagnostics.AddError("Secret billing eligibility failed", err.Error())
-		return
-	}
 	var out secretAPI
 	if err := r.client.do(ctx, http.MethodPost, secretStorePath(plan.StoreID.ValueString())+"/secrets", map[string]any{"secret_name": plan.SecretName.ValueString(), "value": value}, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to create secret", secretSafeError(err))

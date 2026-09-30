@@ -16,7 +16,7 @@ The September 29 SDK/CLI alignment changes and backup-schedule migration policy 
 
 ## Local usage
 
-Requirements: Go as specified in `go.mod`, Terraform **1.11+** for resources (**1.14+** for actions), an IBEE API token with the relevant product permissions and `billing.read`, and a workspace ID.
+Requirements: Go as specified in `go.mod`, Terraform **1.11+** for resources (**1.14+** for actions), an IBEE API token with relevant product permissions, and a workspace ID. `billing.read` is needed only for the explicit eligibility data source.
 
 ```sh
 make build
@@ -96,13 +96,13 @@ Explicit operations use [Terraform actions](https://developer.hashicorp.com/terr
 
 ## Billing and credits
 
-Billable creates perform a fresh `POST /billing/resource-eligibility` before the product request. VM purchases resolve the organization currency from billing and select an advertised billing option. For new VMs, omitted `billing_interval` selects `HOURLY` (uncommitted); omission preserves the canonical term of an existing/imported VM. Explicit `MONTHLY` requires a catalog-defined one-month commitment. The selected term is sent in `billing_catalog`, its trusted price is checked before purchase, and the currency is verified again in the final admission decision. Refresh/import require the API to return the selected billing interval; legacy VMs without that projection need backend reconciliation. Where the public API provides no catalog/quote, the check verifies account admission only; product services must enforce actual pricing, entitlements, add-ons, quotas, and concurrent affordability. The provider cannot reserve funds or replace server enforcement.
+All mutations are sent to the upstream API without a hidden eligibility query, local affordability check, or estimated price. Billing and lifecycle admission is authoritative at the mutation endpoint, including recovery, cleanup, and revocation. The provider preserves catalog structure, selected terms, tenant identity, resource state, and security checks. Cloud/GPU creates use the workspace-scoped catalog and forward the selected billing term; the server resolves currency and pricing.
 
-A denied, unavailable, malformed, or mismatched billing decision stops the purchase. Refresh, import, and destruction are not blocked by this creation preflight. A public API 403 is an error; only a resource-specific 404 removes it from state.
+`ibee_billing_eligibility` is an explicit diagnostic data source requiring `billing.read`. It returns `allowed=false` as data and accepts `operation`, including `REVOKE_CREDENTIAL` and `SECURITY_RECOVERY`. Its result is never automatically used to veto writes. Product permissions alone suffice when no diagnostic data source is requested. Upstream denial, suspension, restriction, and revoked-token errors propagate. Only a resource-specific 404 removes a resource from state; service-owned lifecycle checks may deny reads or cleanup.
 
 Cloud/GPU snapshots and backup enablement require an explicit canonical `billing_catalog` JSON selection. VM-volume attachments accept the same input or resolve it from the actual block volume. Supply authoritative SKU identifiers, not copied example prices. Missing or mismatched catalogs fail before purchase; the backend remains responsible for final pricing and admission. See the compute example and migration notes.
 
-For `initial_topup_required` or `insufficient_balance`, Terraform instructs the user to use **Add Credits** in the organization's portal Billing page, wait for confirmed payment, and rerun apply. The public contract currently exposes no supported checkout/payment-status or wallet-management API. Credit purchases, manual grants, credit-limit changes, and payment confirmations are not simulated as Terraform resources.
+When the API answers a mutation with HTTP 402 `billing_denied`, the provider surfaces that response as the typed upstream error, preserving the machine-readable reason (for example `initial_topup_required` or `insufficient_balance`) and any `admission_context_id`. The provider gives no funding guidance of its own: it does not name a currency, a minimum top-up, or a credit purchase flow, and it does not evaluate the denial locally. The public contract currently exposes no supported checkout/payment-status or wallet-management API. Credit purchases, manual grants, credit-limit changes, and payment confirmations are not simulated as Terraform resources.
 
 ## Lifecycle behavior
 
