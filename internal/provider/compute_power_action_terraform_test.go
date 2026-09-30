@@ -153,7 +153,7 @@ action "ibee_vm_power" "%[1]s_%[2]s" {
 			{"reboot transitional", "reboot", "rebooting", "Invalid VM power state", false},
 			{"unknown", "start", "unknown", "Invalid VM power state", false},
 			{"missing status", "start", "", "Invalid VM response", false},
-			{"billing denied", "start", "stopped", "VM power billing eligibility denied", false},
+			{"billing denied", "start", "stopped", "VM power request failed", false},
 		} {
 			t.Run(vmType+"/"+tc.name, func(t *testing.T) {
 				fixture.mu.Lock()
@@ -170,10 +170,8 @@ action "ibee_vm_power" "%[1]s_%[2]s" {
 				}
 				endpoint := "/compute/" + vmType + "-vms/" + vmType + "-vm"
 				wantRequests := []string{"GET " + endpoint}
-				if tc.diagnostic == "" || tc.diagnostic == "VM power billing eligibility denied" {
-					if tc.operation != "stop" {
-						wantRequests = append(wantRequests, "POST /billing/resource-eligibility")
-					}
+				if tc.diagnostic == "VM power request failed" {
+					wantRequests = append(wantRequests, "POST "+endpoint+"/actions/"+tc.operation)
 				}
 				if tc.diagnostic == "" {
 					wantRequests = append(wantRequests, "POST "+endpoint+"/actions/"+tc.operation, "GET /compute/operations/power-op", "GET "+endpoint)
@@ -212,6 +210,11 @@ func (f *powerActionTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.R
 	case "POST /billing/resource-eligibility":
 		blockEligibility(w, f.allowed, "INR")
 	case "POST " + endpoint + "/actions/" + f.operation:
+		if !f.allowed && f.operation != "stop" {
+			w.WriteHeader(http.StatusPaymentRequired)
+			computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance"})
+			return
+		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["force"] != false || body["requested_by"] != "terraform" || r.Header.Get("X-Idempotency-Key") != "fixture-"+f.vmType+"-"+f.operation {
 			http.Error(w, "unsafe power request or changed idempotency key", http.StatusBadRequest)

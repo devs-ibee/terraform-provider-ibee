@@ -60,7 +60,7 @@ func (r *vmSnapshotResource) Metadata(_ context.Context, req resource.MetadataRe
 }
 func (r *vmSnapshotResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
-	resp.Schema = schema.Schema{Description: "An immutable VM snapshot. Creation waits for capture completion. Deletion removes this recovery point; restoring is an explicit operation outside this resource. Billing eligibility checks account admission; no public snapshot price quote is available.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "An immutable VM snapshot. Creation waits for capture completion. Deletion removes this recovery point; restoring is an explicit operation outside this resource. The upstream mutation decides billing and lifecycle admission.", Attributes: map[string]schema.Attribute{
 		"id":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 		"vm_id": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}}, "name": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}},
 		"description":              schema.StringAttribute{Optional: true, PlanModifiers: replace},
@@ -157,10 +157,6 @@ func (r *vmSnapshotResource) Create(ctx context.Context, req resource.CreateRequ
 	catalog, err := prepareRecoveryCatalog(ctx, r.client, r.vmType, m.VmID.ValueString(), m.BillingCatalog, "snapshot_storage")
 	if err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid snapshot billing catalog", err.Error())
-		return
-	}
-	if err := admitRecoveryCatalog(ctx, r.client, catalog); err != nil {
-		resp.Diagnostics.AddError("Snapshot billing eligibility denied", err.Error())
 		return
 	}
 	body := map[string]any{"name": m.Name.ValueString(), "mode": m.Mode.ValueString(), "selected_data_volume_ids": volumes, "requested_by": "terraform", "billing_catalog": catalog}

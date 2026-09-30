@@ -139,16 +139,9 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	account, err := r.client.checkBillingEligibility(ctx, billingEligibilityRequest{})
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to resolve billing currency", err.Error())
-		return
-	}
-	if err := billingAdmissionError(account); err != nil {
-		resp.Diagnostics.AddError("VM billing eligibility denied", err.Error())
-		return
-	}
-	p, err := r.client.findPlanForTerm(ctx, r.kind(), plan.SiteID.ValueString(), plan.PlanID.ValueString(), account.Currency, plan.BillingInterval.ValueString())
+	// Resolve canonical catalog terms in the configured workspace. The mutation
+	// obtains the authoritative quote and Billing decision upstream.
+	p, err := r.client.findPlanForTerm(ctx, r.kind(), plan.SiteID.ValueString(), plan.PlanID.ValueString(), "", plan.BillingInterval.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to resolve compute plan", err.Error())
 		return
@@ -167,8 +160,6 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// The account check supplies currency and upstream status. The create path
-	// resolves the selected-term quote and obtains Billing's cost decision.
 	body := map[string]any{"name": plan.Name.ValueString(), "site_id": plan.SiteID.ValueString(), "os_distro": plan.OsDistro.ValueString(), "os_type": plan.OsType.ValueString(), "template_id": plan.TemplateID.ValueString(), "cpu": p.Cpu, "ram_mb": p.RamMb, "disk_gb": p.DiskGb, "plan_id": p.PlanID, "ssh_key_ids": keys, "tags": tags}
 	// This catalog extension is exposed by public_compute_catalog.py; older OpenAPI revisions omit it.
 	if len(p.BillingCatalog) > 0 {

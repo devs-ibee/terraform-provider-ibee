@@ -133,10 +133,6 @@ func (r *bucketResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	// The published contract has no storage catalog/quote. This is account
 	// admission only; the product service must enforce actual usage pricing.
-	if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-		resp.Diagnostics.AddError("Bucket billing eligibility failed", err.Error())
-		return
-	}
 	body := map[string]any{"name": plan.Name.ValueString(), "region": plan.Region.ValueString(), "is_public": plan.IsPublic.ValueBool(), "object_lock_enabled": plan.ObjectLockEnabled.ValueBool()}
 	var out bucketAPI
 	if err := r.client.do(ctx, http.MethodPost, "/object-storage/buckets", body, &out); err != nil {

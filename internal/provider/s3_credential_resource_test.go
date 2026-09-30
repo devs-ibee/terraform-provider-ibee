@@ -38,8 +38,8 @@ func TestS3CredentialLifecycleAndScopedDrift(t *testing.T) {
 			if body["permission_type"] != "object_ro" || body["bucket_scope"] != "specific" || len(body["allowed_buckets"].([]any)) != 1 {
 				t.Errorf("scope changed during creation: %v", body)
 			}
-			if billingCalls != 1 {
-				t.Error("creation did not follow admission")
+			if billingCalls != 0 {
+				t.Error("creation consulted billing eligibility before the mutation")
 			}
 			created = true
 			out := s3TestMetadata("active")
@@ -84,7 +84,7 @@ func TestS3CredentialLifecycleAndScopedDrift(t *testing.T) {
 	remove := resource.DeleteResponse{State: read.State}
 	r.Delete(storageTestContext, resource.DeleteRequest{State: read.State}, &remove)
 	storageTestCheck(t, remove.Diagnostics)
-	if !revoked || billingCalls != 1 {
+	if !revoked || billingCalls != 0 {
 		t.Fatal("revocation missing or checked purchase admission")
 	}
 }
@@ -183,6 +183,11 @@ func TestS3CredentialCreateErrorRedactionAndPartialRecovery(t *testing.T) {
 					return
 				}
 				creates++
+				if kind == "billing-denied" {
+					w.WriteHeader(http.StatusPaymentRequired)
+					fmt.Fprint(w, `{"error":"billing_denied","billing_reason":"insufficient_balance"}`)
+					return
+				}
 				if kind == "error" {
 					w.WriteHeader(400)
 					fmt.Fprint(w, `{"detail":"private-generated-value"}`)
@@ -208,7 +213,7 @@ func TestS3CredentialCreateErrorRedactionAndPartialRecovery(t *testing.T) {
 					t.Fatal("missing one-time secret lost recoverable key ID")
 				}
 			}
-			if kind == "billing-denied" && creates != 0 {
+			if kind == "billing-denied" && creates != 1 {
 				t.Fatal("denied purchase reached credential API")
 			}
 		})
