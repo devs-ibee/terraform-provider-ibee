@@ -26,7 +26,5 @@ func NewVpcNodeAttachmentResource() resource.Resource {
 			}
 			return nil
 		},
-		// A public-IP allocation is a potential purchase; perform account preflight.
-		billable: true,
 	}
 }

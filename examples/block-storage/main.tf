@@ -36,8 +36,8 @@ resource "ibee_block_volume" "data" {
 
 # Import existing storage with:
 # terraform import ibee_block_volume.data VOLUME_ID
-# Purchases currently require an INR organization because the public facade
-# selects an INR catalog. The service computes authoritative SKU pricing.
+# Currency and pricing are resolved upstream; the provider applies no
+# currency check of its own. The service computes authoritative SKU pricing.
 # Detach every attachment before destroying a volume. Deletion is never forced.
 
 output "volume_id" {

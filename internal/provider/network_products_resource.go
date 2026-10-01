@@ -17,7 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-const networkBillingDescription = " Before purchase the provider checks account billing status. This API exposes no catalog SKU or quote; product pricing, affordability, entitlement and quota enforcement remain authoritative on the server."
+const networkBillingDescription = " Mutations use upstream billing and lifecycle admission without client eligibility probes. Pricing, affordability, entitlement and quota enforcement remain authoritative on the server."
 
 func networkOptionalString(def string, replace bool) schema.StringAttribute {
 	a := schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(def)}
@@ -39,7 +39,7 @@ func networkReservedPath(v networkValues) string {
 }
 
 func NewReservedIPResource() resource.Resource {
-	r := &networkResource{name: "reserved_ip", description: "An independently reserved public IP. Attachments are managed separately. Import using the public IP ID." + networkBillingDescription, billable: true, idField: "public_ip_id", importFields: []string{"id"},
+	r := &networkResource{name: "reserved_ip", description: "An independently reserved public IP. Attachments are managed separately. Import using the public IP ID." + networkBillingDescription, idField: "public_ip_id", importFields: []string{"id"},
 		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "site_id": networkRequired(true), "label": networkOptionalString("", false), "reverse_dns": networkOptionalString("", false), "address": schema.StringAttribute{Computed: true}, "status": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("site_id", "label", "reverse_dns"), responseFields: networkIdentityFields("site_id", "label", "reverse_dns", "address", "status"), createOnlyFields: map[string]bool{"site_id": true},
 		createPath: networkPath("/networking/reserved-ips"), readPath: networkReservedPath, updatePath: networkReservedPath, deletePath: networkReservedPath}
@@ -62,10 +62,6 @@ func (r *reservedIPResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 	v := networkObject(object)
-	if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-		resp.Diagnostics.AddError("Billing eligibility denied", err.Error())
-		return
-	}
 	var out map[string]any
 	body := map[string]any{"site_id": v.str("site_id"), "label": v.str("label")}
 	if err := r.client.do(ctx, http.MethodPost, "/networking/reserved-ips", body, &out); err != nil {
@@ -169,7 +165,7 @@ func NewFirewallAttachmentResource() resource.Resource {
 }
 func NewNATGatewayResource() resource.Resource {
 	base := func(v networkValues) string { return networkVpcPath(v) + "/nat-gateways" }
-	return &networkResource{name: "nat_gateway", description: "A separately managed NAT gateway. Current deployments require a nat_gateway VPC, whose creation already creates a gateway: normally use ibee_vpc.default_nat_gateway_id directly. Use this resource to import an existing gateway or recreate one after explicit removal; creation refuses to adopt an existing gateway. Do not manage the same gateway here and as a VPC-owned default. Import as vpc_id/nat_gateway_id. Remove VM attachments and forwarding rules before deletion." + networkBillingDescription, idField: "nat_gateway_id", list: true, billable: true, waitReady: true, importFields: []string{"vpc_id", "id"},
+	return &networkResource{name: "nat_gateway", description: "A separately managed NAT gateway. Current deployments require a nat_gateway VPC, whose creation already creates a gateway: normally use ibee_vpc.default_nat_gateway_id directly. Use this resource to import an existing gateway or recreate one after explicit removal; creation refuses to adopt an existing gateway. Do not manage the same gateway here and as a VPC-owned default. Import as vpc_id/nat_gateway_id. Remove VM attachments and forwarding rules before deletion." + networkBillingDescription, idField: "nat_gateway_id", list: true, waitReady: true, importFields: []string{"vpc_id", "id"},
 		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "vpc_id": networkRequired(true), "name": networkOptionalString("NAT Gateway", true), "subnet_id": networkOptionalReference(), "reserved_public_ip_id": networkOptionalReference(), "public_ip_id": schema.StringAttribute{Computed: true}, "public_ip": schema.StringAttribute{Computed: true}, "status": schema.StringAttribute{Computed: true}, "site_id": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("name", "subnet_id", "reserved_public_ip_id"), responseFields: map[string]string{"name": "name", "subnet_id": "subnet_id", "public_ip_id": "public_ip_id", "public_ip": "public_ip", "status": "status", "site_id": "site_id", "reserved_public_ip_id": "public_ip_id"},
 		createPath: base, readPath: base, deletePath: func(v networkValues) string { return base(v) + "/" + v.segment("id") },
@@ -233,7 +229,7 @@ func newNetworkLB(layer string) resource.Resource {
 		response["rules"] = "rules"
 	}
 	return &networkResource{name: "load_balancer_" + layer, description: "An IBEE " + layer + " load balancer. Import using the load balancer ID. Supports readable backend and routing-rule fields. HTTPS uses managed TLS termination and tls_passthrough uses passthrough TLS. Certificate material and routing-policy configuration cannot be refreshed through the public read contract." + networkBillingDescription,
-		attributes: attrs, requestFields: request, responseFields: response, createOnlyFields: map[string]bool{"protocol": true}, idField: "lb_id", importFields: []string{"id"}, billable: true, waitReady: true, waitDelete: true,
+		attributes: attrs, requestFields: request, responseFields: response, createOnlyFields: map[string]bool{"protocol": true}, idField: "lb_id", importFields: []string{"id"}, waitReady: true, waitDelete: true,
 		createPath: networkPath(base + "/" + layer), readPath: func(v networkValues) string { return base + "/" + v.segment("id") }, updatePath: func(v networkValues) string { return base + "/" + layer + "/" + v.segment("id") }, deletePath: func(v networkValues) string { return base + "/" + v.segment("id") },
 		requestTransform: func(v networkValues, body map[string]any, update bool) error {
 			if !update {

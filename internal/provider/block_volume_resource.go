@@ -82,7 +82,7 @@ func (r *blockVolumeResource) Metadata(_ context.Context, req resource.MetadataR
 }
 func (r *blockVolumeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
-	resp.Schema = schema.Schema{Description: "A standalone block-storage volume. Size increases resize the existing volume; decreases replace it. Destroy refuses attached volumes and never forces detachment. SKU admission uses the server catalog without a client-invented price. The current public block-storage catalog is INR-only, so purchases require an INR organization. Import using the volume ID.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "A standalone block-storage volume. Size increases resize the existing volume; decreases replace it. Destroy refuses attached volumes and never forces detachment. SKU admission uses the server catalog without a client-invented price. Currency and pricing are resolved upstream. Import using the volume ID.", Attributes: map[string]schema.Attribute{
 		"id":       schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 		"name":     schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}},
 		"site_id":  schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}},
@@ -225,10 +225,6 @@ func (r *blockVolumeResource) Create(ctx context.Context, req resource.CreateReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.requireBillingEligibilityForCurrency(ctx, m.SKUCode.ValueString(), nil, "INR"); err != nil {
-		resp.Diagnostics.AddError("Block-volume billing eligibility denied", err.Error())
-		return
-	}
 	key := idempotencyKey()
 	body := map[string]any{"name": m.Name.ValueString(), "site_id": m.SiteID.ValueString(), "sku_code": m.SKUCode.ValueString(), "size_gb": m.SizeGb.ValueInt64(), "volume_class": m.VolumeClass.ValueString(), "volume_kind": "product", "vm_type": m.VmType.ValueString(), "delete_on_termination": false, "idempotency_key": key}
 	var accepted blockVolumeActionAPI
@@ -296,10 +292,6 @@ func (r *blockVolumeResource) Update(ctx context.Context, req resource.UpdateReq
 	ctx, cancel := context.WithTimeout(ctx, r.client.computeTimeout())
 	defer cancel()
 	if m.SizeGb.ValueInt64() > old.SizeGb.ValueInt64() {
-		if err := r.client.requireBillingEligibilityForCurrency(ctx, m.SKUCode.ValueString(), nil, "INR"); err != nil {
-			resp.Diagnostics.AddError("Block-volume resize billing eligibility denied", err.Error())
-			return
-		}
 		key := idempotencyKey()
 		var accepted blockVolumeActionAPI
 		err := r.client.doH(ctx, http.MethodPost, blockVolumePath(m.ID.ValueString())+"/resize", map[string]string{"X-Idempotency-Key": key}, map[string]any{"new_size_gb": m.SizeGb.ValueInt64(), "allow_online": m.AllowOnlineResize.ValueBool(), "idempotency_key": key}, &accepted)

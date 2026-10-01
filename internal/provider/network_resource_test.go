@@ -118,14 +118,19 @@ func TestNATBillingDenialPreventsCreate(t *testing.T) {
 			networkTestEligibility(w, false)
 			return
 		}
+		if req.Method == http.MethodGet {
+			json.NewEncoder(w).Encode([]any{})
+			return
+		}
 		creates++
-		t.Error("billing-denied operation reached product API")
+		w.WriteHeader(http.StatusPaymentRequired)
+		json.NewEncoder(w).Encode(map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance"})
 	})
 	v := networkTestValues(t, r, map[string]any{"vpc_id": "vpc", "name": "NAT Gateway"})
 	s := networkTestSchema(r)
 	resp := resource.CreateResponse{State: tfsdk.State{Schema: s}}
 	r.Create(context.Background(), resource.CreateRequest{Plan: networkTestPlan(t, s, types.ObjectValueMust(r.attributeTypes(), v))}, &resp)
-	if !resp.Diagnostics.HasError() || creates != 0 {
+	if !resp.Diagnostics.HasError() || creates != 1 {
 		t.Fatalf("create count=%d diagnostics=%v", creates, resp.Diagnostics)
 	}
 }

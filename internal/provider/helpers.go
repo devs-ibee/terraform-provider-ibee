@@ -88,23 +88,22 @@ func retryableComputeRead(err error) bool {
 
 // computePlan mirrors the public plans response entries we consume.
 type computePlan struct {
-	PlanID                string         `json:"plan_id"`
-	Name                  string         `json:"name"`
-	Code                  string         `json:"code"`
-	Cpu                   int64          `json:"cpu"`
-	RamMb                 int64          `json:"ram_mb"`
-	DiskGb                int64          `json:"disk_gb"`
-	HourlyPriceMinor      *int64         `json:"hourly_price_minor"`
-	MonthlyPriceMinor     *int64         `json:"monthly_price_minor"`
-	PricingStatus         string         `json:"pricing_status"`
-	BillingInterval       string         `json:"billing_interval"`
-	Currency              string         `json:"currency"`
-	Selectable            bool           `json:"selectable"`
-	GpuCount              int64          `json:"gpu_count"`
-	GpuModel              string         `json:"gpu_model"`
-	SiteID                string         `json:"site_id"`
-	BillingCatalog        map[string]any `json:"billing_catalog"`
-	SelectedTermCostMinor *int64         `json:"-"`
+	PlanID            string         `json:"plan_id"`
+	Name              string         `json:"name"`
+	Code              string         `json:"code"`
+	Cpu               int64          `json:"cpu"`
+	RamMb             int64          `json:"ram_mb"`
+	DiskGb            int64          `json:"disk_gb"`
+	HourlyPriceMinor  *int64         `json:"hourly_price_minor"`
+	MonthlyPriceMinor *int64         `json:"monthly_price_minor"`
+	PricingStatus     string         `json:"pricing_status"`
+	BillingInterval   string         `json:"billing_interval"`
+	Currency          string         `json:"currency"`
+	Selectable        bool           `json:"selectable"`
+	GpuCount          int64          `json:"gpu_count"`
+	GpuModel          string         `json:"gpu_model"`
+	SiteID            string         `json:"site_id"`
+	BillingCatalog    map[string]any `json:"billing_catalog"`
 }
 
 func (c *Client) listComputePlans(ctx context.Context, vmType, siteID string) ([]computePlan, error) {

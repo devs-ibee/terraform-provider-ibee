@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -69,8 +68,7 @@ func (p *computePlan) selectBillingTerm(interval string) error {
 		return fmt.Errorf("plan %q does not advertise a canonical %s billing option", p.PlanID, interval)
 	}
 	term := *selected
-	cost, err := term.periodCost()
-	if err != nil {
+	if err := term.validateSelection(); err != nil {
 		return fmt.Errorf("plan %q: %w", p.PlanID, err)
 	}
 	catalog := make(map[string]any, len(p.BillingCatalog)+8)
@@ -98,7 +96,6 @@ func (p *computePlan) selectBillingTerm(interval string) error {
 	}
 	p.BillingCatalog = catalog
 	p.BillingInterval = interval
-	p.SelectedTermCostMinor = &cost
 	return nil
 }
 
@@ -111,40 +108,34 @@ func (term computeBillingTerm) validateCanonical() error {
 		period := "HOURLY"
 		term.CommitmentPeriod = &period
 	}
-	_, err := term.periodCost()
-	return err
+	return term.validateSelection()
 }
 
 // MONTHLY alone cannot distinguish a one-, three- or six-month commitment.
-func (term computeBillingTerm) periodCost() (int64, error) {
+func (term computeBillingTerm) validateSelection() error {
 	if term.Committed == nil || term.UnitPriceMinor == nil || *term.UnitPriceMinor < 0 || term.CommitmentPeriod == nil || *term.CommitmentPeriod != term.BillingInterval {
-		return 0, fmt.Errorf("incomplete or inconsistent %s billing terms", term.BillingInterval)
+		return fmt.Errorf("incomplete or inconsistent %s billing terms", term.BillingInterval)
 	}
-	cost := *term.UnitPriceMinor
 	switch term.BillingInterval {
 	case "HOURLY":
 		if *term.Committed || (term.PriceUnit != "" && term.PriceUnit != "HOUR") || (term.CommitmentMonths != nil && *term.CommitmentMonths != 0) || (term.CommittedHours != nil && *term.CommittedHours != 0) {
-			return 0, fmt.Errorf("hourly VM billing option must be uncommitted and priced per hour")
+			return fmt.Errorf("hourly VM billing option must be uncommitted and priced per hour")
 		}
 	case "MONTHLY":
 		if !*term.Committed || term.CommitmentMonths == nil || *term.CommitmentMonths != 1 {
-			return 0, fmt.Errorf("monthly VM billing option must define a one-month commitment")
+			return fmt.Errorf("monthly VM billing option must define a one-month commitment")
 		}
 		switch term.PriceUnit {
 		case "MONTH":
 		case "", "HOUR":
 			if term.CommittedHours == nil || *term.CommittedHours <= 0 {
-				return 0, fmt.Errorf("monthly hourly-rate option omitted committed_hours")
+				return fmt.Errorf("monthly hourly-rate option omitted committed_hours")
 			}
-			if cost > math.MaxInt64 / *term.CommittedHours {
-				return 0, fmt.Errorf("billing commitment estimate overflows")
-			}
-			cost *= *term.CommittedHours
 		default:
-			return 0, fmt.Errorf("unsupported monthly billing price unit %q", term.PriceUnit)
+			return fmt.Errorf("unsupported monthly billing price unit %q", term.PriceUnit)
 		}
 	default:
-		return 0, fmt.Errorf("unsupported VM billing interval %q", term.BillingInterval)
+		return fmt.Errorf("unsupported VM billing interval %q", term.BillingInterval)
 	}
-	return cost, nil
+	return nil
 }
