@@ -5,7 +5,7 @@ Use Terraform to describe and manage IBEE infrastructure from configuration file
 ## Before you start
 
 - Install the [Terraform CLI](https://developer.hashicorp.com/terraform/install), version 1.11 or newer. Terraform 1.14 or newer is required for Terraform actions.
-- Create an [IBEE API token](https://ibee.ai/docs/api-reference/cli) in the portal under **Settings → API Tokens**. Authorize it for the workspace you plan to manage. For billable resources, the token needs `billing.read` and the relevant product permissions.
+- Create an [IBEE API token](https://ibee.ai/docs/api-reference/cli) in the portal under **Settings → API Tokens**. Authorize it for the workspace you plan to manage. Grant the product permissions required by your resources. Add `billing.read` only if your configuration uses the `ibee_billing_eligibility` data source.
 - Install Go if you are building the provider from source.
 
 ## 1. Build the provider
