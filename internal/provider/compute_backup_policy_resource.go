@@ -75,7 +75,7 @@ func (r *vmBackupPolicyResource) Schema(_ context.Context, _ resource.SchemaRequ
 	scheduleInteger := func(min, max int64) schema.Int64Attribute {
 		return schema.Int64Attribute{Optional: true, Computed: true, Validators: []validator.Int64{computeIntValidator{min, max}}}
 	}
-	resp.Schema = schema.Schema{Description: "Enables and manages automated VM backups. Destroy disables future backups and retains existing recovery points, which may continue incurring storage charges. Import using the VM ID. Billing checks account admission; the public API has no backup price quote.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "Enables and manages automated VM backups. Destroy disables future backups and retains existing recovery points, which may continue incurring storage charges. Import using the VM ID. The upstream mutation decides billing and lifecycle admission.", Attributes: map[string]schema.Attribute{
 		"id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "VM ID, used as the stable identity of its singleton policy."}, "vm_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Validators: []validator.String{computeNonEmpty()}}, "policy_id": schema.StringAttribute{Computed: true},
 		"billing_catalog": recoveryCatalogAttribute("backup_storage", false),
 		"frequency":       schema.StringAttribute{Optional: true, Computed: true, Validators: []validator.String{computeOneOf("hourly", "daily", "weekly")}, Description: "New schedules support daily (default) or weekly. An existing hourly schedule is preserved only while unchanged; explicitly select daily/weekly to migrate."}, "timezone": schema.StringAttribute{Optional: true, Computed: true, Description: "Defaults to UTC for new policies; omission preserves an existing timezone."},
@@ -173,10 +173,6 @@ func (r *vmBackupPolicyResource) Create(ctx context.Context, req resource.Create
 		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid backup billing catalog", err.Error())
 		return
 	}
-	if err := admitRecoveryCatalog(ctx, r.client, catalog); err != nil {
-		resp.Diagnostics.AddError("Backup billing eligibility denied", err.Error())
-		return
-	}
 	var p vmBackupPolicyAPI
 	body := m.body()
 	body["billing_catalog"] = catalog
@@ -219,10 +215,6 @@ func (r *vmBackupPolicyResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
-func backupPolicyIncreases(old, next vmBackupPolicyModel) bool {
-	rates := map[string]int{"weekly": 1, "daily": 7, "hourly": 168}
-	return next.RetentionDays.ValueInt64() > old.RetentionDays.ValueInt64() || next.FullBackupIntervalDays.ValueInt64() < old.FullBackupIntervalDays.ValueInt64() || rates[next.Frequency.ValueString()] > rates[old.Frequency.ValueString()] || (old.IncrementalEnabled.ValueBool() && !next.IncrementalEnabled.ValueBool())
-}
 func (r *vmBackupPolicyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var m, old vmBackupPolicyModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &m)...)
@@ -245,16 +237,7 @@ func (r *vmBackupPolicyResource) Update(ctx context.Context, req resource.Update
 			resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid backup billing catalog", err.Error())
 			return
 		}
-		if err := admitRecoveryCatalog(ctx, r.client, catalog); err != nil {
-			resp.Diagnostics.AddError("Backup billing eligibility denied", err.Error())
-			return
-		}
 		body["billing_catalog"] = catalog
-	} else if backupPolicyIncreases(old, m) {
-		if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-			resp.Diagnostics.AddError("Backup billing eligibility denied", err.Error())
-			return
-		}
 	}
 	if catalogChanged || !backupScheduleEqual(old, m) || !old.RetentionDays.Equal(m.RetentionDays) || !old.FullBackupIntervalDays.Equal(m.FullBackupIntervalDays) || !old.IncrementalEnabled.Equal(m.IncrementalEnabled) {
 		if err := r.client.do(ctx, http.MethodPatch, r.route(m.VmID.ValueString(), "policy"), body, nil); err != nil {

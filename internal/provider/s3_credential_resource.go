@@ -181,10 +181,6 @@ func (r *s3CredentialResource) Create(ctx context.Context, req resource.CreateRe
 		resp.Diagnostics.AddError("Invalid S3 credential scope", err.Error())
 		return
 	}
-	if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-		resp.Diagnostics.AddError("Credential billing eligibility failed", err.Error())
-		return
-	}
 	var out s3CredentialAPI
 	body := map[string]any{"name": plan.Name.ValueString(), "permission_type": plan.PermissionType.ValueString(), "bucket_scope": plan.BucketScope.ValueString(), "allowed_buckets": buckets}
 	if err := r.client.do(ctx, http.MethodPost, "/object-storage/credentials", body, &out); err != nil {

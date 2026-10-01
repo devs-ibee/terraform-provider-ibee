@@ -175,10 +175,6 @@ func (r *vpcResource) Create(ctx context.Context, req resource.CreateRequest, re
 	}
 	var before map[string]bool
 	if plan.ConnectivityType.ValueString() == "nat_gateway" {
-		if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-			resp.Diagnostics.AddError("Managed NAT billing eligibility denied", err.Error())
-			return
-		}
 		var err error
 		before, err = r.vpcCreationInventory(ctx, plan)
 		if err != nil {

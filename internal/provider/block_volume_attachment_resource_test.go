@@ -85,7 +85,7 @@ func TestBlockVolumeAttachmentLifecycle(t *testing.T) {
 	deleted := resource.DeleteResponse{}
 	r.Delete(ctx, resource.DeleteRequest{State: updated.State}, &deleted)
 	computeNoErrors(t, deleted.Diagnostics)
-	if attaches != 1 || detaches != 1 || admissions != 1 {
+	if attaches != 1 || detaches != 1 || admissions != 0 {
 		t.Fatal("invalid counters", attaches, detaches, admissions)
 	}
 	gone := resource.ReadResponse{State: updated.State}

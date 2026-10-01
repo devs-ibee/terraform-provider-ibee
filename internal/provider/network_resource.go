@@ -47,7 +47,6 @@ type networkResource struct {
 	// listIdentity is the input attribute used to find an entry in a list.
 	listIdentity          string
 	listPage              bool
-	billable              bool
 	waitReady, waitDelete bool
 	createResultID        func(networkValues, map[string]any) (string, error)
 	readTransform         func(networkValues, map[string]any) (map[string]any, error)
@@ -384,12 +383,6 @@ func (r *networkResource) Create(ctx context.Context, req resource.CreateRequest
 		resp.Diagnostics.AddError("Invalid networking configuration", err.Error())
 		return
 	}
-	if r.billable && (r.name != "vpc_node_attachment" || v.str("connectivity") != "private") {
-		if err := r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-			resp.Diagnostics.AddError("Billing eligibility denied", err.Error())
-			return
-		}
-	}
 	if r.beforeCreate != nil {
 		if err := r.beforeCreate(ctx, r.client, v); err != nil {
 			resp.Diagnostics.AddError("Cannot safely create "+r.name, err.Error())
@@ -466,14 +459,6 @@ func (r *networkResource) Update(ctx context.Context, req resource.UpdateRequest
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid update", err.Error())
 		return
-	}
-	// Load-balancer topology updates can increase backend capacity; the contract
-	// exposes no quote or SKU, so this is an account-status preflight only.
-	if r.billable && strings.HasPrefix(r.name, "load_balancer_") {
-		if err = r.client.requireBillingEligibility(ctx, "", nil); err != nil {
-			resp.Diagnostics.AddError("Billing eligibility denied", err.Error())
-			return
-		}
 	}
 	method := r.updateMethod
 	if method == "" {

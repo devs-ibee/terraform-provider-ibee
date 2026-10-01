@@ -101,7 +101,7 @@ func TestComputeVMCreateBillingAndCanonicalState(t *testing.T) {
 				case "/billing/resource-eligibility":
 					var b billingEligibilityRequest
 					_ = json.NewDecoder(req.Body).Decode(&b)
-					if b.SKUCode != "" && (b.SKUCode != "SKU-1" || b.EstimatedCostMinor == nil || *b.EstimatedCostMinor != 20) {
+					if b.SKUCode != "" || b.EstimatedCostMinor != nil {
 						t.Errorf("untrusted billing payload: %+v", b)
 					}
 					computeEligibility(w, true, "SKU-1")
@@ -135,7 +135,7 @@ func TestComputeVMCreateBillingAndCanonicalState(t *testing.T) {
 			if got.ID.ValueString() != "vm-1" || got.Status.ValueString() != "running" || got.Cpu.ValueInt64() != 4 || got.PublicIP.ValueString() != "192.0.2.1" {
 				t.Fatalf("bad canonical state: %+v", got)
 			}
-			if len(calls) != 6 || calls[0] != "POST /billing/resource-eligibility" || calls[2] != "POST /billing/resource-eligibility" {
+			if len(calls) != 4 || calls[0] != "GET /compute/plans" || calls[1] != "POST /compute/"+kind+"-vms" {
 				t.Fatal(calls)
 			}
 		})
@@ -153,20 +153,14 @@ func TestComputeVMCreateUsesConfiguredCatalogInterval(t *testing.T) {
 					case "/billing/resource-eligibility":
 						var b billingEligibilityRequest
 						_ = json.NewDecoder(req.Body).Decode(&b)
-						if b.SKUCode != "" {
-							want := int64(20)
-							if interval == "MONTHLY" {
-								want = 16 * 731
-							}
-							if b.EstimatedCostMinor == nil || *b.EstimatedCostMinor != want {
-								t.Errorf("wrong %s admission estimate: %+v", interval, b)
-							}
+						if b.SKUCode != "" || b.EstimatedCostMinor != nil {
+							t.Errorf("client estimated %s admission: %+v", interval, b)
 						}
 						computeEligibility(w, true, "SKU-1")
 					case "/compute/plans":
 						catalogReads++
 						query := req.URL.Query()
-						if query.Get("billing_interval") != interval || query.Get("vm_type") != kind || query.Get("site_id") != "site" || query.Get("currency") != "INR" {
+						if query.Get("billing_interval") != interval || query.Get("vm_type") != kind || query.Get("site_id") != "site" || query.Get("currency") != "" {
 							t.Errorf("catalog query does not match VM purchase: %v", query)
 							http.Error(w, "no selectable plan for the requested interval", 400)
 							return
@@ -260,8 +254,11 @@ func TestComputeVMDeniedEligibilityNeverCreates(t *testing.T) {
 		case "/billing/resource-eligibility":
 			computeEligibility(w, false, "SKU-1")
 		default:
-			t.Error("mutation after denial")
-			w.WriteHeader(500)
+			if req.URL.Path != "/compute/cloud-vms" {
+				t.Errorf("unexpected request %s", req.URL.Path)
+			}
+			w.WriteHeader(http.StatusPaymentRequired)
+			computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance"})
 		}
 	})
 	resp := resource.CreateResponse{State: computeState(t, r, nil)}
@@ -373,8 +370,11 @@ func TestComputePlanInvalidCatalogIsRejected(t *testing.T) {
 	}
 	p.Selectable = true
 	p.HourlyPriceMinor = nil
-	if p.validate("cloud") == nil {
-		t.Fatal("unknown price accepted as zero")
+	if err := p.validate("cloud"); err != nil {
+		t.Fatal("headline display price must not decide admission", err)
+	}
+	if p.selectBillingTerm("HOURLY") == nil {
+		t.Fatal("missing canonical term accepted")
 	}
 }
 func computeBackupModel() vmBackupPolicyModel {
@@ -398,27 +398,6 @@ func TestComputeBackupDestroyDisablesWithoutDeletingRecoveryPoints(t *testing.T)
 	computeNoErrors(t, resp.Diagnostics)
 	if calls != 1 {
 		t.Fatal(calls)
-	}
-}
-func TestComputeBackupIncreaseAdmission(t *testing.T) {
-	old := computeBackupModel()
-	same := old
-	if backupPolicyIncreases(old, same) {
-		t.Fatal("unchanged is increase")
-	}
-	same.RetentionDays = types.Int64Value(8)
-	if !backupPolicyIncreases(old, same) {
-		t.Fatal("retention increase missed")
-	}
-	same = old
-	same.Frequency = types.StringValue("hourly")
-	if !backupPolicyIncreases(old, same) {
-		t.Fatal("frequency increase missed")
-	}
-	same = old
-	same.RetentionDays = types.Int64Value(3)
-	if backupPolicyIncreases(old, same) {
-		t.Fatal("retention reduction is increase")
 	}
 }
 func TestComputeSnapshotImportRestoresSelection(t *testing.T) {
@@ -581,7 +560,7 @@ func TestComputeSnapshotFailureRetainsRecoverableIdentity(t *testing.T) {
 }
 
 func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
-	for _, scenario := range []string{"USD success", "catalog mismatch", "admission mismatch"} {
+	for _, scenario := range []string{"USD success", "catalog mismatch", "upstream denial"} {
 		t.Run(scenario, func(t *testing.T) {
 			r := &cloudVmResource{vmType: "cloud"}
 			admissions, creates := 0, 0
@@ -592,16 +571,13 @@ func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
 					var b billingEligibilityRequest
 					_ = json.NewDecoder(req.Body).Decode(&b)
 					currency := "USD"
-					if scenario == "admission mismatch" && b.SKUCode != "" {
-						currency = "INR"
-					}
-					if b.SKUCode != "" && (b.EstimatedCostMinor == nil || *b.EstimatedCostMinor != 150) {
-						t.Fatalf("expected USD catalog minor units, got %+v", b)
+					if b.SKUCode != "" || b.EstimatedCostMinor != nil {
+						t.Fatalf("provider must not calculate affordability: %+v", b)
 					}
 					computeJSON(w, map[string]any{"allowed": true, "organization_id": "org", "reason": "eligible", "billing_mode": "PREPAID", "billing_state": "CURRENT", "currency": currency, "sku_code": b.SKUCode, "estimated_cost_minor": b.EstimatedCostMinor, "evaluated_at": "2026-09-27T00:00:00Z"})
 				case "/compute/plans":
-					if admissions != 1 || req.URL.Query().Get("currency") != "USD" {
-						t.Error("catalog must follow authoritative billing currency")
+					if admissions != 0 || req.URL.Query().Get("currency") != "" {
+						t.Error("catalog must use workspace defaults without a diagnostic probe")
 					}
 					currency := "USD"
 					if scenario == "catalog mismatch" {
@@ -610,6 +586,11 @@ func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
 					computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "code": "SKU-1", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "selectable": true, "pricing_status": "priced", "currency": currency, "billing_interval": "MONTHLY", "monthly_price_minor": 150, "billing_catalog": computeTestBillingCatalog("SKU-1", 150)}}})
 				case "/compute/cloud-vms":
 					creates++
+					if scenario == "upstream denial" || scenario == "catalog mismatch" {
+						w.WriteHeader(http.StatusPaymentRequired)
+						computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance", "admission_context_id": "adm_upstream"})
+						return
+					}
 					computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op", Status: "accepted"})
 				case "/compute/operations/op":
 					computeJSON(w, map[string]any{"status": "succeeded"})
@@ -623,11 +604,15 @@ func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
 			r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, computeValidVMPlan())}, &resp)
 			if scenario == "USD success" {
 				computeNoErrors(t, resp.Diagnostics)
-				if creates != 1 || admissions != 2 {
-					t.Fatal("expected currency lookup and fresh purchase check")
+				if creates != 1 || admissions != 0 {
+					t.Fatal("expected upstream account/currency check and one create")
 				}
-			} else if !resp.Diagnostics.HasError() || creates != 0 {
-				t.Fatal("currency mismatch must prevent creation")
+			} else if scenario == "upstream denial" {
+				if !resp.Diagnostics.HasError() || creates != 1 || admissions != 0 || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "adm_upstream") {
+					t.Fatal("upstream denial must be preserved without a local eligibility check")
+				}
+			} else if !resp.Diagnostics.HasError() || creates != 1 || admissions != 0 {
+				t.Fatal("upstream currency denial must propagate from create")
 			}
 		})
 	}
