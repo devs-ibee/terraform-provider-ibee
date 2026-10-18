@@ -9,7 +9,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 )
 
-var version = "dev"
+// version is overridden at release time by goreleaser (-X main.version).
+var version = "0.5.0"
 
 func main() {
 	var debug bool

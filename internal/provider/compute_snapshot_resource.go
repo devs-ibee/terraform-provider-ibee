@@ -154,12 +154,15 @@ func (r *vmSnapshotResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	catalog, err := prepareRecoveryCatalog(ctx, r.client, r.vmType, m.VmID.ValueString(), m.BillingCatalog, "snapshot_storage")
+	catalog, err := recoveryCatalogBody(m.BillingCatalog)
 	if err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid snapshot billing catalog", err.Error())
 		return
 	}
-	body := map[string]any{"name": m.Name.ValueString(), "mode": m.Mode.ValueString(), "selected_data_volume_ids": volumes, "requested_by": "terraform", "billing_catalog": catalog}
+	body := map[string]any{"name": m.Name.ValueString(), "mode": m.Mode.ValueString(), "selected_data_volume_ids": volumes, "requested_by": "terraform"}
+	if catalog != nil {
+		body["billing_catalog"] = catalog
+	}
 	if !m.Description.IsNull() {
 		body["description"] = m.Description.ValueString()
 	}

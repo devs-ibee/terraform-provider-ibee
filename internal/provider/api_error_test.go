@@ -57,28 +57,51 @@ func TestAPIErrorEnvelopeParity(t *testing.T) {
 	}
 }
 
-func TestAPIErrorMetadataAndSecretSafeGuidance(t *testing.T) {
+func TestAPIErrorMetadataAndSecretSafeDiagnostics(t *testing.T) {
 	secret := "fixture-secret-never-print"
 	data := []byte(`{"error":"organization_restricted","billing_reason":"billing_limit_exhausted","billing_sku_code":"BACKUP-STD","admission_context_id":"ctx-123","message":"` + secret + `"}`)
 	ae := parseAPIError(403, data, "request-123", secret)
-	if ae.BillingSKUCode != "BACKUP-STD" || ae.AdmissionContextID != "ctx-123" {
+	if ae.BillingSKUCode != "BACKUP-STD" || ae.AdmissionContextID != "ctx-123" || !ae.billingAnswer() {
 		t.Fatalf("metadata missing: %+v", ae)
 	}
-	if strings.Contains(ae.Error(), secret) || strings.Contains(secretSafeError(ae), secret) || !strings.Contains(secretSafeError(ae), "organization is restricted") {
-		t.Fatal("unsafe or unactionable secret diagnostic")
+	if strings.Contains(ae.Error(), secret) || strings.Contains(secretSafeError(ae), secret) || !strings.Contains(secretSafeError(ae), "HTTP 403") {
+		t.Fatal("unsafe or status-less secret diagnostic")
 	}
-	for _, code := range []string{"organization_suspended", "key_revoked", "key_expired", "insufficient_scope", "workspace_not_allowed", "organization_lifecycle_unavailable", "billing_denied"} {
+	for _, code := range []string{"organization_suspended", "key_revoked", "insufficient_scope", "billing_denied"} {
 		e := parseAPIError(403, []byte(`{"error":"`+code+`","billing_reason":"`+secret+`","required_scope":"`+secret+`"}`), secret, secret)
-		if e.guidance() == "" || strings.Contains(secretSafeError(e), secret) {
-			t.Fatalf("unsafe guidance for %s", code)
+		if strings.Contains(secretSafeError(e), secret) || strings.Contains(secretSafeError(e), code) {
+			t.Fatalf("secret diagnostic used server text for %s", code)
 		}
 	}
 	malformed := parseAPIError(403, []byte(`{"error":"key_revoked\nforged","billing_reason":"bad\u001b[31m","required_scope":"wrong scope"}`), "request\nforged", "")
 	if malformed.Code != "" || malformed.Reason != "" || malformed.RequiredScope != "" || malformed.RequestID != "" {
 		t.Fatal("control/invalid metadata accepted")
 	}
-	if strings.Contains(secretSafeError(&apiError{Status: 403, Body: secret, Code: secret, Reason: secret, RequestID: secret}), secret) {
+	if strings.Contains(secretSafeError(&apiError{Status: 403, Body: secret, Code: secret, Message: secret, Reason: secret, RequestID: secret}), secret) {
 		t.Fatal("secret-safe diagnostics used untrusted metadata")
+	}
+}
+
+func TestAPIErrorRelaysServerAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"gateway", `{"error":"organization_suspended","required_scope":null,"billing_reason":null}`, `IBEE API returned HTTP 423 organization_suspended: {"error":"organization_suspended","required_scope":null,"billing_reason":null} (request req-1)`},
+		{"nested", `{"error":{"code":"FORBIDDEN","message":"Operation is not allowed while organization is suspended"}}`, "IBEE API returned HTTP 423 forbidden: Operation is not allowed while organization is suspended (request req-1)"},
+		{"detail string", `{"detail":"Resize is increase-only"}`, "IBEE API returned HTTP 423: Resize is increase-only (request req-1)"},
+		{"detail object", `{"detail":{"message":"Resize request is currently blocked.","decision":"blocked","reasons":["host capacity"]}}`, `IBEE API returned HTTP 423: Resize request is currently blocked. Response: {"detail":{"message":"Resize request is currently blocked.","decision":"blocked","reasons":["host capacity"]}} (request req-1)`},
+		{"plain", `Locked`, "IBEE API returned HTTP 423: Locked (request req-1)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseAPIError(423, []byte(tc.body), "req-1", "token").Error(); got != tc.want {
+				t.Fatalf("got  %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+	for _, sentence := range []string{"Resolve its access", "Configure a valid token", "adding credits", "Review the organization"} {
+		if strings.Contains(parseAPIError(403, []byte(`{"error":"insufficient_scope"}`), "", "").Error(), sentence) {
+			t.Fatalf("provider guidance %q added to the server answer", sentence)
+		}
 	}
 }
 

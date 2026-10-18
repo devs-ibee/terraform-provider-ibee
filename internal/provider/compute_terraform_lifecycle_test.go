@@ -39,7 +39,7 @@ func TestTerraformLifecycleCompute(t *testing.T) {
 	}
 	cli := filepath.Join(dir, "dev.tfrc")
 	writeTestFile(t, cli, fmt.Sprintf("provider_installation {\n dev_overrides { \"devs-ibee/ibee\" = %q }\n direct {}\n}\n", bin))
-	f := &computeTerraformFixture{allowed: true, vms: map[string]map[string]any{}, snapshots: map[string]map[string]any{}, policies: map[string]map[string]any{}}
+	f := &computeTerraformFixture{allowed: true, vms: map[string]map[string]any{}, snapshots: map[string]map[string]any{}, policies: map[string]map[string]any{}, resizes: map[string]int{}}
 	srv := httptest.NewServer(f)
 	defer srv.Close()
 	work := filepath.Join(dir, "work")
@@ -120,7 +120,9 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 }
 `, kind)
 	}
-	writeTestFile(t, filepath.Join(work, "main.tf"), config)
+	// The term is chosen explicitly for new VMs; the provider has no default.
+	hourly := strings.ReplaceAll(config, " tags = [\"terraform\"]", " tags = [\"terraform\"]\n billing_interval = \"HOURLY\"")
+	writeTestFile(t, filepath.Join(work, "main.tf"), hourly)
 	run(0, "validate", "-no-color")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	f.mu.Lock()
@@ -152,6 +154,7 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 		}
 	}
 	f.mu.Unlock()
+	writeTestFile(t, filepath.Join(work, "main.tf"), config)
 	for _, kind := range []string{"cloud", "gpu"} {
 		for _, item := range []struct{ suffix, id string }{{"_vm", kind + "-vm-id"}, {"_vm_volume_attachment", kind + "-vm-id/" + kind + "-volume"}, {"_vm_snapshot", kind + "-snapshot-id"}, {"_vm_backup_policy", kind + "-vm-id"}} {
 			address := "ibee_" + kind + item.suffix + ".test"
@@ -163,8 +166,7 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	// Even explicit legacy frequency is safe if unchanged. New hourly schedules
 	// and edits to existing hourly schedules are covered by focused schedule tests.
 	// Only an explicit term change may replace either imported VM.
-	explicitHourly := strings.ReplaceAll(config, " tags = [\"terraform\"]", " tags = [\"terraform\"]\n billing_interval = \"HOURLY\"")
-	writeTestFile(t, filepath.Join(work, "main.tf"), explicitHourly)
+	writeTestFile(t, filepath.Join(work, "main.tf"), hourly)
 	replacement := run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	for _, kind := range []string{"cloud", "gpu"} {
 		if !strings.Contains(replacement, "ibee_"+kind+"_vm.test must be replaced") {
@@ -188,6 +190,24 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	f.mu.Lock()
 	if f.policies["gpu"]["schedule"].(map[string]any)["frequency"] != "hourly" || f.policies["gpu"]["schedule"].(map[string]any)["hour"] != 20 {
 		t.Error("retention-only update altered the imported hourly schedule")
+	}
+	f.mu.Unlock()
+	// A plan change resizes both VMs in place; nothing is replaced.
+	larger := strings.ReplaceAll(config, `-plan"`, `-plan-large"`)
+	writeTestFile(t, filepath.Join(work, "main.tf"), larger)
+	resize := run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	for _, kind := range []string{"cloud", "gpu"} {
+		if !strings.Contains(resize, "ibee_"+kind+"_vm.test will be updated in-place") || strings.Contains(resize, "ibee_"+kind+"_vm.test must be replaced") {
+			t.Fatalf("plan change did not resize %s VM in place:\n%s", kind, resize)
+		}
+	}
+	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
+	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	f.mu.Lock()
+	for _, kind := range []string{"cloud", "gpu"} {
+		if f.resizes[kind] != 1 || f.vms[kind]["cpu"] != float64(8) || f.vms[kind]["plan_id"] != kind+"-plan-large" {
+			t.Errorf("%s resize not applied in place: resizes=%d vm=%v", kind, f.resizes[kind], f.vms[kind])
+		}
 	}
 	f.mu.Unlock()
 	// Cleanup does not make a purchase-admission call, even after billing blocks creation.
@@ -218,6 +238,7 @@ type computeTerraformFixture struct {
 	allowed                  bool
 	admissions               int
 	vms, snapshots, policies map[string]map[string]any
+	resizes                  map[string]int
 }
 
 func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -238,8 +259,8 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 	if p == "/compute/plans" {
 		kind := r.URL.Query().Get("vm_type")
-		if r.URL.Query().Get("billing_interval") != "HOURLY" {
-			http.Error(w, "fixture plans are only selectable for explicit hourly discovery", 400)
+		if interval := r.URL.Query().Get("billing_interval"); interval != "" && interval != "HOURLY" && interval != "MONTHLY" {
+			http.Error(w, "fixture plans are listed for hourly or monthly discovery", 400)
 			return
 		}
 		count := 0
@@ -248,7 +269,16 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			count = 1
 			model = "A100"
 		}
-		send(map[string]any{"plans": []any{map[string]any{"plan_id": kind + "-plan", "name": kind + " plan", "code": kind + "-sku", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "gpu_count": count, "gpu_model": model, "selectable": true, "pricing_status": "priced", "currency": "INR", "billing_interval": "HOURLY", "hourly_price_minor": 20, "monthly_price_minor": 12000, "site_id": "site", "billing_catalog": computeTestBillingCatalog(kind+"-sku", 20)}}})
+		var plans []any
+		for _, size := range []struct {
+			suffix         string
+			cpu, ram, disk int
+		}{{"", 4, 8192, 80}, {"-large", 8, 16384, 160}} {
+			catalog := computeTestBillingCatalog(kind+"-sku"+size.suffix, 20)
+			catalog["plan_id"] = kind + "-plan" + size.suffix
+			plans = append(plans, map[string]any{"plan_id": kind + "-plan" + size.suffix, "name": kind + " plan", "code": kind + "-sku" + size.suffix, "cpu": size.cpu, "ram_mb": size.ram, "disk_gb": size.disk, "gpu_count": count, "gpu_model": model, "selectable": true, "pricing_status": "priced", "currency": "INR", "billing_interval": "HOURLY", "hourly_price_minor": 20, "monthly_price_minor": 12000, "site_id": "site", "billing_catalog": catalog})
+		}
+		send(map[string]any{"plans": plans})
 		return
 	}
 	if p == "/compute/images" {
@@ -316,6 +346,24 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 				projection["billing_catalog"] = term
 			}
 			send(projection)
+			return
+		}
+		if p == vmPath+"/actions/resize" && r.Method == "POST" {
+			// Like the VM engine: the target shape is applied and plan_id follows the sent catalog.
+			b := body()
+			catalog, _ := b["billing_catalog"].(map[string]any)
+			current, _ := f.vms[kind]["billing_catalog"].(map[string]any)
+			if r.Header.Get("X-Idempotency-Key") == "" || catalog == nil || current == nil || catalog["billing_interval"] != current["billing_interval"] {
+				http.Error(w, "resize must carry a key and the target plan's catalog for the VM's term", 400)
+				return
+			}
+			f.resizes[kind]++
+			for _, key := range []string{"cpu", "ram_mb", "disk_gb"} {
+				f.vms[kind][key] = b[key]
+			}
+			f.vms[kind]["plan_id"] = catalog["plan_id"]
+			f.vms[kind]["billing_catalog"] = catalog
+			send(operationAccepted{VmID: kind + "-vm-id", OperationID: kind + "-resize", Status: "accepted"})
 			return
 		}
 		if p == vmPath+"/actions/attach-volume" {

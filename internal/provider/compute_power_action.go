@@ -19,7 +19,7 @@ func (a *vmPowerAction) Metadata(_ context.Context, req action.MetadataRequest, 
 	resp.TypeName = req.ProviderTypeName + "_vm_power"
 }
 func (a *vmPowerAction) Schema(_ context.Context, _ action.SchemaRequest, resp *action.SchemaResponse) {
-	resp.Schema = schema.Schema{Description: "Explicit cloud/GPU VM start, stop or reboot. Requires Terraform 1.14 or later. Invoke manually or with an explicit action trigger; ordinary plan/refresh never changes VM power. Waits for operation success and canonical VM state. Does not force power operations.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "Explicit cloud/GPU VM start, stop or reboot. Requires Terraform 1.14 or later. Invoke manually or with an explicit action trigger; ordinary plan/refresh never changes VM power. The API decides whether the VM can take the operation. Waits for operation success and the resulting VM state. Does not force power operations.", Attributes: map[string]schema.Attribute{
 		"vm_id":           schema.StringAttribute{Required: true},
 		"vm_type":         schema.StringAttribute{Required: true, Description: "cloud or gpu."},
 		"operation":       schema.StringAttribute{Required: true, Description: "start, stop, or reboot."},
@@ -56,28 +56,8 @@ func (a *vmPowerAction) Invoke(ctx context.Context, req action.InvokeRequest, re
 		resp.Diagnostics.AddError("Invalid idempotency key", "Provide a known, nonempty key or omit it to generate one.")
 		return
 	}
+	// The API decides whether the VM can take this operation from its current state.
 	endpoint := "/compute/" + vmType + "-vms/" + url.PathEscape(vmID)
-	var current cloudVmAPI
-	if err := a.client.do(ctx, http.MethodGet, endpoint, nil, &current); err != nil {
-		resp.Diagnostics.AddError("Failed to inspect VM", err.Error())
-		return
-	}
-	status := strings.ToLower(strings.TrimSpace(current.Status))
-	if current.identifier() != vmID || status == "" {
-		resp.Diagnostics.AddError("Invalid VM response", "VM read omitted its status or returned a different identity.")
-		return
-	}
-	// Match the SDK's enabled state checks (also enabled by default in the CLI).
-	// Check before billing admission: even a read-only billing POST is unnecessary
-	// when this non-forced operation cannot be performed from the current state.
-	required := "running"
-	if operation == "start" {
-		required = "stopped"
-	}
-	if status != required {
-		resp.Diagnostics.AddError("Invalid VM power state", fmt.Sprintf("Cannot %s %s VM %q from status %q; this operation requires %q.", operation, vmType, vmID, current.Status, required))
-		return
-	}
 	key := m.IdempotencyKey.ValueString()
 	if key == "" {
 		key = idempotencyKey()
@@ -104,34 +84,29 @@ func (a *vmPowerAction) Invoke(ctx context.Context, req action.InvokeRequest, re
 	if operation == "stop" {
 		wanted = "stopped"
 	}
+	last := ""
 	for {
 		var vm cloudVmAPI
 		err := a.client.do(ctx, http.MethodGet, endpoint, nil, &vm)
-		if err != nil && !retryableComputeRead(err) {
+		if err != nil && ctx.Err() == nil && !retryableComputeRead(err) {
 			resp.Diagnostics.AddError("Failed to confirm VM power state", err.Error())
 			return
 		}
 		if err == nil {
-			status := strings.ToLower(strings.TrimSpace(vm.Status))
-			if vm.identifier() != vmID || status == "" {
+			last = strings.ToLower(strings.TrimSpace(vm.Status))
+			if vm.identifier() != vmID || last == "" {
 				resp.Diagnostics.AddError("Invalid VM response", "VM read omitted its status or returned a different identity.")
 				return
 			}
-			if status == wanted {
+			if last == wanted {
 				if resp.SendProgress != nil {
 					resp.SendProgress(action.InvokeProgressEvent{Message: "VM is " + wanted + "."})
 				}
 				return
 			}
-			switch status {
-			case "running", "stopped", "starting", "stopping", "rebooting":
-			default:
-				resp.Diagnostics.AddError("Unexpected VM power state", fmt.Sprintf("Operation %s succeeded but VM reports %q.", accepted.OperationID, vm.Status))
-				return
-			}
 		}
 		if err := a.client.computePoll(ctx); err != nil {
-			resp.Diagnostics.AddError("VM power state not confirmed", fmt.Sprintf("Operation %s completed but VM did not reach %s: %v", accepted.OperationID, wanted, err))
+			resp.Diagnostics.AddError("VM power state not confirmed", fmt.Sprintf("Operation %s completed but VM did not reach %s (last reported status %q): %v", accepted.OperationID, wanted, last, err))
 			return
 		}
 	}

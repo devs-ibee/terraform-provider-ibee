@@ -110,17 +110,27 @@ func (r *cloudVmResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	if r.kind() == "gpu" {
 		osTypes = []string{"linux"}
 	}
-	resp.Schema = schema.Schema{Description: "A " + r.kind() + " VM priced from the public compute catalog. Configuration changes replace the VM. Imports use the VM ID. Public-IP release is explicit; no payment is initiated by Terraform.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "A " + r.kind() + " VM. A plan_id change resizes the VM in place and an ssh_key_ids change updates its access in place; the API decides whether a change is allowed and stops and starts the VM when it must. Other configuration changes replace the VM. Imports use the VM ID.", Attributes: map[string]schema.Attribute{
 		"id":   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-		"name": required("VM name."), "site_id": required("Placement site from ibee_sites."), "plan_id": required("Selectable, priced plan from ibee_compute_plans."), "template_id": required("Image template from ibee_images."), "os_distro": required("Image OS distribution."),
-		"billing_interval": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{computeBillingIntervalDefault{}, stringplanmodifier.RequiresReplace()}, Validators: []validator.String{computeOneOf("HOURLY", "MONTHLY")}, Description: "Catalog billing term. Omission preserves an existing or imported VM's term and selects uncommitted HOURLY for a new VM. MONTHLY selects the advertised one-month commitment; deleting a VM does not cancel contractual charges. Explicit term changes replace the VM."},
+		"name": required("VM name."), "site_id": required("Placement site from ibee_sites."), "template_id": required("Image template from ibee_images."), "os_distro": required("Image OS distribution."),
+		"plan_id":          schema.StringAttribute{Required: true, Validators: []validator.String{computeNonEmpty()}, Description: "Plan from ibee_compute_plans. A change resizes the VM in place to the new plan's CPU, memory and disk; the API refuses changes it cannot make, such as shrinking the root disk."},
+		"billing_interval": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), billingIntervalReplace()}, Description: "Billing term from the plan's billing options, such as HOURLY or MONTHLY. Omit to send the plan's catalog unchanged and let the API decide. No API operation changes the term, so changing it replaces the VM; deleting a VM does not cancel contractual charges."},
 		"os_type":          schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("linux"), PlanModifiers: replace, Validators: []validator.String{computeOneOf(osTypes...)}},
 		"cpu":              schema.Int64Attribute{Computed: true}, "ram_mb": schema.Int64Attribute{Computed: true}, "disk_gb": schema.Int64Attribute{Computed: true}, "gpu_count": schema.Int64Attribute{Computed: true}, "gpu_model": schema.StringAttribute{Computed: true},
 		"status": schema.StringAttribute{Computed: true}, "public_ip": schema.StringAttribute{Computed: true}, "private_ip": schema.StringAttribute{Computed: true},
+		// Temporary: the client chooses the public-IP action until the API decides it on delete.
 		"delete_public_ip_action": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("release"), Validators: []validator.String{computeOneOf("release", "reserve")}, Description: "release (default) or reserve the automatic public IP on destroy. Reserving an address may continue billing."},
-		"ssh_key_ids":             schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(empty), PlanModifiers: []planmodifier.Set{setplanmodifier.RequiresReplace()}, Description: "Existing Secret Store SSH key IDs. Changes replace the VM."},
+		"ssh_key_ids":             schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(empty), Description: "Existing Secret Store SSH key IDs. Changes are applied in place through the VM access operation (keys are added before others are removed)."},
 		"tags":                    schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(empty), PlanModifiers: []planmodifier.Set{setplanmodifier.RequiresReplace()}, Description: "VM tags. Changes replace the VM because the public API has no tag update operation."},
 	}}
+}
+
+// A term the API never reported (legacy or imported VM) only records the
+// configured value; a change to a known term replaces the VM.
+func billingIntervalReplace() planmodifier.String {
+	return stringplanmodifier.RequiresReplaceIf(func(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+		resp.RequiresReplace = !req.StateValue.IsNull() && !req.PlanValue.IsUnknown() && !req.PlanValue.Equal(req.StateValue)
+	}, "Changing a known billing term replaces the VM.", "Changing a known billing term replaces the VM.")
 }
 func (r *cloudVmResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
@@ -139,19 +149,9 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Resolve canonical catalog terms in the configured workspace. The mutation
-	// obtains the authoritative quote and Billing decision upstream.
-	p, err := r.client.findPlanForTerm(ctx, r.kind(), plan.SiteID.ValueString(), plan.PlanID.ValueString(), "", plan.BillingInterval.ValueString())
+	p, err := r.targetPlan(ctx, plan.SiteID.ValueString(), plan.PlanID.ValueString(), plan.BillingInterval.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to resolve compute plan", err.Error())
-		return
-	}
-	if err := p.selectBillingTerm(plan.BillingInterval.ValueString()); err != nil {
-		resp.Diagnostics.AddError("Unsupported VM billing term", err.Error())
-		return
-	}
-	if err := p.validate(r.kind()); err != nil {
-		resp.Diagnostics.AddError("Invalid compute plan", err.Error())
 		return
 	}
 	var keys, tags []string
@@ -161,7 +161,6 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 	body := map[string]any{"name": plan.Name.ValueString(), "site_id": plan.SiteID.ValueString(), "os_distro": plan.OsDistro.ValueString(), "os_type": plan.OsType.ValueString(), "template_id": plan.TemplateID.ValueString(), "cpu": p.Cpu, "ram_mb": p.RamMb, "disk_gb": p.DiskGb, "plan_id": p.PlanID, "ssh_key_ids": keys, "tags": tags}
-	// This catalog extension is exposed by public_compute_catalog.py; older OpenAPI revisions omit it.
 	if len(p.BillingCatalog) > 0 {
 		body["billing_catalog"] = p.BillingCatalog
 	}
@@ -187,6 +186,9 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 	plan.Status = types.StringValue(accepted.Status)
 	plan.PublicIP = types.StringNull()
 	plan.PrivateIP = types.StringNull()
+	if plan.BillingInterval.IsUnknown() {
+		plan.BillingInterval = types.StringNull()
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -205,30 +207,92 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
-func (p *computePlan) validate(vmType string) error {
-	if len(p.BillingCatalog) == 0 {
-		return fmt.Errorf("plan %q has no canonical billing_catalog; public catalog alignment is required", p.PlanID)
+
+// Temporary: the plan's billing_catalog is looked up and sent until the API resolves the SKU from plan_id itself.
+func (r *cloudVmResource) targetPlan(ctx context.Context, siteID, planID, interval string) (*computePlan, error) {
+	p, err := r.client.findPlanForTerm(ctx, r.kind(), siteID, planID, "", interval)
+	if err != nil {
+		return nil, err
 	}
-	if sku, ok := p.BillingCatalog["sku_code"].(string); !ok || sku != p.Code {
-		return fmt.Errorf("plan %q has inconsistent SKU identity", p.PlanID)
+	if err := p.selectBillingTerm(interval); err != nil {
+		return nil, err
 	}
-	if !p.Selectable || p.PricingStatus != "priced" {
-		return fmt.Errorf("plan %q is not selectable and priced", p.PlanID)
+	return p, nil
+}
+
+// submit sends one VM action and waits for its operation.
+func (r *cloudVmResource) submit(ctx context.Context, method, id, action string, body map[string]any) error {
+	var accepted operationAccepted
+	if err := r.client.doH(ctx, method, r.route(id)+"/actions/"+action, map[string]string{"X-Idempotency-Key": idempotencyKey()}, body, &accepted); err != nil {
+		return err
 	}
-	if p.Cpu < 1 || p.RamMb < 512 || p.DiskGb < 10 || p.Code == "" {
-		return fmt.Errorf("plan %q has incomplete sizing or SKU identity", p.PlanID)
+	if accepted.OperationID == "" {
+		return fmt.Errorf("API accepted the %s request but returned no operation_id", action)
 	}
-	if vmType == "gpu" && (p.GpuCount < 1 || p.GpuModel == "") {
-		return fmt.Errorf("plan %q has no GPU model/count", p.PlanID)
+	return r.client.waitOperation(ctx, accepted.OperationID, 0)
+}
+
+// resize moves the VM to another plan in place. The API runs its own precheck,
+// stops and starts the VM when it must, and answers with an error otherwise.
+func (r *cloudVmResource) resize(ctx context.Context, state cloudVmModel, planID string) error {
+	p, err := r.targetPlan(ctx, state.SiteID.ValueString(), planID, state.BillingInterval.ValueString())
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"requested_by": "terraform"}
+	for key, value := range map[string]int64{"cpu": p.Cpu, "ram_mb": p.RamMb, "disk_gb": p.DiskGb} {
+		if value > 0 {
+			body[key] = value
+		}
+	}
+	if len(p.BillingCatalog) > 0 {
+		body["billing_catalog"] = p.BillingCatalog
+	}
+	return r.submit(ctx, http.MethodPost, state.ID.ValueString(), "resize", body)
+}
+
+// updateSSHKeys adds new keys before removing old ones through the access operation.
+func (r *cloudVmResource) updateSSHKeys(ctx context.Context, id string, from, to types.Set) error {
+	var before, after []string
+	if d := from.ElementsAs(ctx, &before, false); d.HasError() {
+		return fmt.Errorf("invalid SSH key state")
+	}
+	if d := to.ElementsAs(ctx, &after, false); d.HasError() {
+		return fmt.Errorf("invalid SSH key configuration")
+	}
+	for _, change := range []struct {
+		mode string
+		ids  []string
+	}{{"add", setDifference(after, before)}, {"remove", setDifference(before, after)}} {
+		if len(change.ids) == 0 {
+			continue
+		}
+		if err := r.submit(ctx, http.MethodPatch, id, "access", map[string]any{"ssh_key_mode": change.mode, "ssh_key_ids": change.ids, "requested_by": "terraform"}); err != nil {
+			return fmt.Errorf("%s SSH keys: %w", change.mode, err)
+		}
 	}
 	return nil
+}
+
+func setDifference(values, minus []string) []string {
+	skip := make(map[string]bool, len(minus))
+	for _, v := range minus {
+		skip[v] = true
+	}
+	var out []string
+	for _, v := range values {
+		if !skip[v] {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 func (r *cloudVmResource) refresh(ctx context.Context, state *cloudVmModel) error {
 	var vm cloudVmAPI
 	if err := r.client.do(ctx, http.MethodGet, r.route(state.ID.ValueString()), nil, &vm); err != nil {
 		return err
 	}
-	if vm.identifier() == "" || vm.Name == "" || vm.Status == "" || vm.Cpu < 1 || vm.RamMb < 512 || vm.DiskGb < 10 {
+	if vm.identifier() == "" || vm.Name == "" || vm.Status == "" {
 		return fmt.Errorf("incomplete VM response; refusing to overwrite state")
 	}
 	if vm.identifier() != state.ID.ValueString() {
@@ -238,13 +302,12 @@ func (r *cloudVmResource) refresh(ctx context.Context, state *cloudVmModel) erro
 	if vm.SiteID == nil || vm.PlanID == nil || vm.TemplateID == nil || *vm.SiteID == "" || *vm.PlanID == "" || *vm.TemplateID == "" {
 		return fmt.Errorf("VM read must expose site_id, plan_id and template_id for reliable refresh/import; upgrade the public API contract")
 	}
-	if vm.BillingCatalog == nil || (vm.BillingCatalog.BillingInterval != "HOURLY" && vm.BillingCatalog.BillingInterval != "MONTHLY") {
-		return fmt.Errorf("VM read must expose selected billing_catalog.billing_interval for safe billing-term refresh/import; an unselected legacy catalog cannot establish contractual intent")
+	// The term is whatever the API reports; a read without one keeps the recorded value.
+	if vm.BillingCatalog != nil && vm.BillingCatalog.BillingInterval != "" {
+		state.BillingInterval = types.StringValue(vm.BillingCatalog.BillingInterval)
+	} else if state.BillingInterval.IsUnknown() {
+		state.BillingInterval = types.StringNull()
 	}
-	if err := vm.BillingCatalog.validateCanonical(); err != nil {
-		return fmt.Errorf("unsupported canonical VM billing commitment: %w", err)
-	}
-	state.BillingInterval = types.StringValue(vm.BillingCatalog.BillingInterval)
 	state.Name = types.StringValue(vm.Name)
 	state.SiteID = types.StringPointerValue(vm.SiteID)
 	state.PlanID = types.StringPointerValue(vm.PlanID)
@@ -294,16 +357,36 @@ func (r *cloudVmResource) Read(ctx context.Context, req resource.ReadRequest, re
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 func (r *cloudVmResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan cloudVmModel
+	var plan, state cloudVmModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.refresh(ctx, &plan); err != nil {
-		resp.Diagnostics.AddError("Failed to refresh VM", err.Error())
+	if !plan.BillingInterval.IsUnknown() {
+		state.BillingInterval = plan.BillingInterval
+	}
+	state.PublicIPAction = plan.PublicIPAction
+	// Each completed change is saved before the next one starts.
+	save := func(summary string, err error) bool {
+		if err != nil {
+			resp.Diagnostics.AddError(summary, err.Error())
+			return false
+		}
+		if err := r.refresh(ctx, &state); err != nil {
+			resp.Diagnostics.AddError("Failed to refresh VM", err.Error())
+			return false
+		}
+		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+		return !resp.Diagnostics.HasError()
+	}
+	if !plan.PlanID.Equal(state.PlanID) && !save("Failed to resize VM", r.resize(ctx, state, plan.PlanID.ValueString())) {
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if !plan.SSHKeyIDs.Equal(state.SSHKeyIDs) && !save("Failed to update VM SSH keys", r.updateSSHKeys(ctx, state.ID.ValueString(), state.SSHKeyIDs, plan.SSHKeyIDs)) {
+		return
+	}
+	save("Failed to refresh VM", nil)
 }
 func (r *cloudVmResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state cloudVmModel
@@ -311,6 +394,7 @@ func (r *cloudVmResource) Delete(ctx context.Context, req resource.DeleteRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Temporary: the client sends public_ip_action until the API decides it on delete.
 	action := state.PublicIPAction.ValueString()
 	if action == "" {
 		action = "release"

@@ -53,27 +53,3 @@ func (v computeIntValidator) ValidateInt64(ctx context.Context, req validator.In
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid value", v.Description(ctx))
 	}
 }
-
-type computeCurrencyValidator struct{}
-
-func (computeCurrencyValidator) Description(context.Context) string {
-	return "must be a three-letter uppercase currency code"
-}
-func (v computeCurrencyValidator) MarkdownDescription(ctx context.Context) string {
-	return v.Description(ctx)
-}
-func (v computeCurrencyValidator) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
-	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
-		return
-	}
-	s := req.ConfigValue.ValueString()
-	valid := len(s) == 3
-	for _, ch := range s {
-		if ch < 'A' || ch > 'Z' {
-			valid = false
-		}
-	}
-	if !valid {
-		resp.Diagnostics.AddAttributeError(req.Path, "Invalid currency", v.Description(ctx))
-	}
-}

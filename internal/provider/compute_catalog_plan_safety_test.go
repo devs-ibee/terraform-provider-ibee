@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -64,19 +63,6 @@ func catalogSafetyModify(t *testing.T, r resource.Resource, old, next any, confi
 	return resp
 }
 
-func catalogSafetyRequireDiagnostic(t *testing.T, diagnostics diag.Diagnostics) {
-	t.Helper()
-	if !diagnostics.HasError() {
-		t.Fatal("missing catalog was accepted during planning")
-	}
-	for _, diagnostic := range diagnostics {
-		if located, ok := diagnostic.(diag.DiagnosticWithPath); ok && located.Path().Equal(path.Root("billing_catalog")) && diagnostic.Severity() == diag.SeverityError {
-			return
-		}
-	}
-	t.Fatalf("expected an error on billing_catalog, got %v", diagnostics)
-}
-
 func TestComputeCatalogPlanSafetyMissingSelection(t *testing.T) {
 	for _, kind := range []string{"cloud", "gpu"} {
 		for _, product := range []string{"snapshot_storage", "backup_storage", "block_storage"} {
@@ -86,7 +72,7 @@ func TestComputeCatalogPlanSafetyMissingSelection(t *testing.T) {
 					var old any
 					next := recoveryTestSetCatalog(model, types.StringUnknown())
 					configured := types.StringNull()
-					wantError := scenario == "new missing" && product != "block_storage"
+					// A missing catalog is the API's to refuse, not the plan's.
 					wantValue := types.StringUnknown()
 					switch scenario {
 					case "new unknown":
@@ -104,10 +90,6 @@ func TestComputeCatalogPlanSafetyMissingSelection(t *testing.T) {
 						next, wantValue = nil, types.StringNull()
 					}
 					resp := catalogSafetyModify(t, r, old, next, configured)
-					if wantError {
-						catalogSafetyRequireDiagnostic(t, resp.Diagnostics)
-						return
-					}
 					computeNoErrors(t, resp.Diagnostics)
 					if resp.RequiresReplace || !resp.PlanValue.Equal(wantValue) {
 						t.Fatalf("replace=%v value=%s; want no replacement and %s", resp.RequiresReplace, resp.PlanValue, wantValue)
@@ -147,8 +129,12 @@ func TestComputeCatalogPlanSafetyLegacySnapshotReplacement(t *testing.T) {
 				case "selected_data_volume_ids":
 					next.SelectedDataVolumeIDs = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("vol-2")})
 				}
+				// Replacing a legacy snapshot without a catalog is planned; the API decides at create.
 				resp := catalogSafetyModify(t, r, old, next, types.StringNull())
-				catalogSafetyRequireDiagnostic(t, resp.Diagnostics)
+				computeNoErrors(t, resp.Diagnostics)
+				if resp.RequiresReplace || !resp.PlanValue.IsNull() {
+					t.Fatalf("omitted legacy catalog must stay omitted: replace=%v value=%s", resp.RequiresReplace, resp.PlanValue)
+				}
 			})
 		}
 	}
@@ -274,12 +260,6 @@ provider "ibee" {
  mode = "root_only"
 }
 `, kind)
-					assertCatalogError := func(output string) {
-						t.Helper()
-						if !strings.Contains(output, "billing_catalog") || !strings.Contains(output, "Error:") {
-							t.Fatalf("expected missing-catalog planning diagnostic:\n%s", output)
-						}
-					}
 					assertSnapshotTracked := func() {
 						t.Helper()
 						out := run(0, "state", "show", "-no-color", address)
@@ -292,13 +272,12 @@ provider "ibee" {
 						writeTestFile(t, filepath.Join(work, "main.tf"), config)
 						run(0, "import", "-input=false", "-no-color", address, "snap-legacy")
 						run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+						// Planning makes no API decision about the missing catalog; nothing is applied here.
 						writeTestFile(t, filepath.Join(work, "main.tf"), strings.Replace(config, `name = "before"`, `name = "after"`, 1))
-						assertCatalogError(run(1, "plan", "-detailed-exitcode", "-input=false", "-no-color"))
-						// apply must fail in planning, before reaching Delete, too.
-						assertCatalogError(run(1, "apply", "-auto-approve", "-input=false", "-no-color"))
+						run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 						assertSnapshotTracked()
 						writeTestFile(t, filepath.Join(work, "main.tf"), config)
-						assertCatalogError(run(1, "plan", "-replace="+address, "-detailed-exitcode", "-input=false", "-no-color"))
+						run(2, "plan", "-replace="+address, "-detailed-exitcode", "-input=false", "-no-color")
 						run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 						run(2, "plan", "-destroy", "-detailed-exitcode", "-input=false", "-no-color")
 						assertSnapshotTracked()
@@ -307,7 +286,7 @@ provider "ibee" {
 							config = prefix + fmt.Sprintf("resource \"ibee_%s_vm_backup_policy\" \"new\" {\n vm_id = \"vm-1\"\n}\n", kind)
 						}
 						writeTestFile(t, filepath.Join(work, "main.tf"), config)
-						assertCatalogError(run(1, "plan", "-detailed-exitcode", "-input=false", "-no-color"))
+						run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 					case "unknown catalog replacement":
 						config = strings.Replace(config, ` mode = "root_only"`, " mode = \"root_only\"\n billing_catalog = terraform_data.catalog.output", 1)
 						config += `resource "terraform_data" "catalog" {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 )
 
 type billingEligibilityRequest struct {
@@ -38,15 +37,10 @@ func (c *Client) checkBillingEligibility(ctx context.Context, request billingEli
 	if request.EstimatedCostMinor != nil && *request.EstimatedCostMinor < 0 {
 		return nil, fmt.Errorf("billing estimate cannot be negative")
 	}
+	// The decision is relayed as Billing returns it; errors are the API's answer.
 	var decision billingEligibility
 	if err := c.do(ctx, http.MethodPost, "/billing/resource-eligibility", request, &decision); err != nil {
-		return nil, fmt.Errorf("billing eligibility could not be verified (the API token requires billing.read): %w", err)
-	}
-	if decision.Allowed == nil || strings.TrimSpace(decision.OrganizationID) == "" || strings.TrimSpace(decision.Reason) == "" || decision.Currency == "" || decision.BillingState == "" || (decision.BillingMode != "PREPAID" && decision.BillingMode != "POSTPAID") {
-		return nil, fmt.Errorf("billing returned an incomplete eligibility decision")
-	}
-	if _, err := time.Parse(time.RFC3339Nano, decision.EvaluatedAt); err != nil {
-		return nil, fmt.Errorf("billing returned an invalid evaluation timestamp")
+		return nil, err
 	}
 	if c.organizationID != "" && decision.OrganizationID != c.organizationID {
 		return nil, fmt.Errorf("billing decision does not match the configured organization_id")

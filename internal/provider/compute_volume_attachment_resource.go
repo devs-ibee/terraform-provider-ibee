@@ -75,12 +75,10 @@ func (r *vmVolumeAttachmentResource) route(vmID string) string {
 	return "/compute/" + r.vmType + "-vms/" + url.PathEscape(vmID)
 }
 
-// The volume is the authoritative source, not a compute plan or a fabricated
-// generic storage SKU. Keep this projection local to compute attachment billing.
-func (r *vmVolumeAttachmentResource) volumeCatalog(ctx context.Context, volumeID string) (map[string]any, string, error) {
+// Temporary: an omitted attachment catalog is read from the volume and sent until the API resolves the SKU itself.
+func (r *vmVolumeAttachmentResource) volumeCatalog(ctx context.Context, volumeID string) (map[string]any, error) {
 	var volume struct {
 		ID             string          `json:"id"`
-		SiteID         string          `json:"site_id"`
 		BillingCatalog recoveryCatalog `json:"billing_catalog"`
 		Metadata       struct {
 			BillingCatalog recoveryCatalog `json:"billing_catalog"`
@@ -89,41 +87,31 @@ func (r *vmVolumeAttachmentResource) volumeCatalog(ctx context.Context, volumeID
 	if err := r.client.do(ctx, http.MethodGet, blockVolumePath(volumeID), nil, &volume); err != nil {
 		// A volume catalog lookup failing (including 404) is not proof that the
 		// VM attachment disappeared. Do not expose IsNotFound to Read/Delete.
-		return nil, "", fmt.Errorf("failed to read volume billing catalog: %s", err)
+		return nil, fmt.Errorf("failed to read volume billing catalog: %s", err)
 	}
 	if volume.ID != volumeID {
-		return nil, "", fmt.Errorf("volume catalog response identity does not match volume_id")
+		return nil, fmt.Errorf("volume catalog response identity does not match volume_id")
 	}
 	if volume.BillingCatalog == nil {
 		volume.BillingCatalog = volume.Metadata.BillingCatalog
 	}
-	return volume.BillingCatalog, volume.SiteID, nil
+	return volume.BillingCatalog, nil
 }
 
 func (r *vmVolumeAttachmentResource) purchaseCatalog(ctx context.Context, m *vmVolumeAttachmentModel) (map[string]any, error) {
-	if m.BillingCatalog.IsNull() || m.BillingCatalog.IsUnknown() {
-		catalog, site, err := r.volumeCatalog(ctx, m.VolumeID.ValueString())
-		if err != nil {
-			return nil, err
-		}
-		if catalog == nil {
-			return nil, fmt.Errorf("volume has no canonical billing_catalog; explicitly supply its block_storage catalog before attaching")
-		}
-		// Check the volume placement independently of optional catalog metadata.
-		var vm cloudVmAPI
-		if err := r.client.do(ctx, http.MethodGet, r.route(m.VmID.ValueString()), nil, &vm); err != nil {
-			return nil, err
-		}
-		if vm.identifier() != m.VmID.ValueString() || vm.SiteID == nil || site == "" || *vm.SiteID != site {
-			return nil, fmt.Errorf("volume and VM must expose matching sites before resolving the attachment catalog")
-		}
-		encoded, err := json.Marshal(catalog)
-		if err != nil {
-			return nil, fmt.Errorf("invalid volume billing catalog response")
-		}
-		m.BillingCatalog = types.StringValue(string(encoded))
+	if !m.BillingCatalog.IsNull() && !m.BillingCatalog.IsUnknown() {
+		return recoveryCatalogBody(m.BillingCatalog)
 	}
-	return prepareRecoveryCatalog(ctx, r.client, r.vmType, m.VmID.ValueString(), m.BillingCatalog, "block_storage")
+	catalog, err := r.volumeCatalog(ctx, m.VolumeID.ValueString())
+	if err != nil || catalog == nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(catalog)
+	if err != nil {
+		return nil, fmt.Errorf("invalid volume billing catalog response")
+	}
+	m.BillingCatalog = types.StringValue(string(encoded))
+	return catalog, nil
 }
 
 func (r *vmVolumeAttachmentResource) refresh(ctx context.Context, m *vmVolumeAttachmentModel) (bool, error) {
@@ -149,7 +137,7 @@ func (r *vmVolumeAttachmentResource) refreshWithCatalog(ctx context.Context, m *
 			catalog := v.BillingCatalog
 			if loadCatalog && catalog == nil && (m.BillingCatalog.IsNull() || m.BillingCatalog.IsUnknown()) {
 				var err error
-				catalog, _, err = r.volumeCatalog(ctx, m.VolumeID.ValueString())
+				catalog, err = r.volumeCatalog(ctx, m.VolumeID.ValueString())
 				if err != nil {
 					return false, err
 				}
@@ -175,13 +163,6 @@ func (r *vmVolumeAttachmentResource) Create(ctx context.Context, req resource.Cr
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Reject malformed explicit inputs before making any API call.
-	if !m.BillingCatalog.IsNull() && !m.BillingCatalog.IsUnknown() {
-		if _, err := parseRecoveryCatalog(m.BillingCatalog, "block_storage"); err != nil {
-			resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid attachment billing catalog", err.Error())
-			return
-		}
-	}
 	probe := m
 	found, err := r.refreshWithCatalog(ctx, &probe, false)
 	if err != nil {
@@ -197,8 +178,12 @@ func (r *vmVolumeAttachmentResource) Create(ctx context.Context, req resource.Cr
 		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid attachment billing catalog", err.Error())
 		return
 	}
+	body := map[string]any{"volume_id": m.VolumeID.ValueString(), "mode": m.Mode.ValueString(), "requested_by": "terraform"}
+	if catalog != nil {
+		body["billing_catalog"] = catalog
+	}
 	var accepted operationAccepted
-	if err := r.client.doH(ctx, http.MethodPost, r.route(m.VmID.ValueString())+"/actions/attach-volume", map[string]string{"X-Idempotency-Key": idempotencyKey()}, map[string]any{"volume_id": m.VolumeID.ValueString(), "mode": m.Mode.ValueString(), "requested_by": "terraform", "billing_catalog": catalog}, &accepted); err != nil {
+	if err := r.client.doH(ctx, http.MethodPost, r.route(m.VmID.ValueString())+"/actions/attach-volume", map[string]string{"X-Idempotency-Key": idempotencyKey()}, body, &accepted); err != nil {
 		resp.Diagnostics.AddError("Failed to attach volume", err.Error())
 		return
 	}

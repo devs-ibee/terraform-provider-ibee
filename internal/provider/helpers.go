@@ -106,10 +106,6 @@ type computePlan struct {
 	BillingCatalog    map[string]any `json:"billing_catalog"`
 }
 
-func (c *Client) listComputePlans(ctx context.Context, vmType, siteID string) ([]computePlan, error) {
-	return c.listComputePlansFiltered(ctx, vmType, siteID, "", "")
-}
-
 func (c *Client) listComputePlansFiltered(ctx context.Context, vmType, siteID, currency, interval string) ([]computePlan, error) {
 	if vmType != "cloud" && vmType != "gpu" {
 		return nil, fmt.Errorf("vm_type must be cloud or gpu")
@@ -136,16 +132,8 @@ func (c *Client) listComputePlansFiltered(ctx context.Context, vmType, siteID, c
 	return *out.Plans, nil
 }
 
-// findPlan resolves a plan by ID; the plan carries the billing_catalog the
-// create endpoints require (the portal copies it the same way).
-func (c *Client) findPlan(ctx context.Context, vmType, siteID, planID string) (*computePlan, error) {
-	return c.findPlanForCurrency(ctx, vmType, siteID, planID, "")
-}
-
-func (c *Client) findPlanForCurrency(ctx context.Context, vmType, siteID, planID, currency string) (*computePlan, error) {
-	return c.findPlanForTerm(ctx, vmType, siteID, planID, currency, "MONTHLY")
-}
-
+// findPlanForTerm resolves a plan by ID; the plan carries the billing_catalog
+// the create endpoints require (the portal copies it the same way).
 func (c *Client) findPlanForTerm(ctx context.Context, vmType, siteID, planID, currency, interval string) (*computePlan, error) {
 	plans, err := c.listComputePlansFiltered(ctx, vmType, siteID, currency, interval)
 	if err != nil {

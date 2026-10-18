@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -169,12 +170,12 @@ func TestComputeVMCreateUsesConfiguredCatalogInterval(t *testing.T) {
 					case "/compute/" + kind + "-vms":
 						creates++
 						var b struct {
-							Catalog computeBillingTerm `json:"billing_catalog"`
+							Catalog map[string]any `json:"billing_catalog"`
 						}
 						if err := json.NewDecoder(req.Body).Decode(&b); err != nil {
 							t.Fatal(err)
 						}
-						if b.Catalog.BillingInterval != interval || b.Catalog.Committed == nil || *b.Catalog.Committed != (interval == "MONTHLY") {
+						if b.Catalog["billing_interval"] != interval || b.Catalog["committed"] != (interval == "MONTHLY") {
 							t.Errorf("wrong selected create term: %+v", b.Catalog)
 						}
 						computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op-1", Status: "accepted"})
@@ -206,14 +207,11 @@ func TestComputePlansDataSourceBillingIntervalSelection(t *testing.T) {
 	for _, kind := range []string{"cloud", "gpu"} {
 		for _, configured := range []string{"", "HOURLY", "MONTHLY"} {
 			t.Run(kind+"/"+configured, func(t *testing.T) {
-				want := configured
-				if want == "" {
-					want = "HOURLY"
-				}
+				want := configured // An omitted interval is not sent; the API picks its default.
 				d := &computePlansDataSource{}
 				d.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 					query := req.URL.Query()
-					if req.Method != "GET" || req.URL.Path != "/compute/plans" || query.Get("vm_type") != kind || query.Get("billing_interval") != want || query.Get("site_id") != "site" || query.Get("currency") != "INR" {
+					if req.Method != "GET" || req.URL.Path != "/compute/plans" || query.Get("vm_type") != kind || query.Get("billing_interval") != want || query.Get("site_id") != "site" || query.Has("currency") {
 						t.Errorf("incorrect catalog query: %s %s", req.Method, req.URL)
 					}
 					// An hourly-only GPU can carry display prices but remain unpriced
@@ -358,23 +356,50 @@ func TestComputeOperationTerminalErrorsAndCancellation(t *testing.T) {
 		}
 	})
 }
-func TestComputePlanInvalidCatalogIsRejected(t *testing.T) {
-	n := int64(10)
-	p := computePlan{PlanID: "p", Code: "SKU", Cpu: 1, RamMb: 512, DiskGb: 10, Selectable: true, PricingStatus: "priced", BillingInterval: "HOURLY", HourlyPriceMinor: &n, BillingCatalog: map[string]any{"sku_code": "SKU"}}
-	if err := p.validate("cloud"); err != nil {
-		t.Fatal(err)
-	}
-	p.Selectable = false
-	if p.validate("cloud") == nil {
-		t.Fatal("unselectable plan accepted")
-	}
-	p.Selectable = true
-	p.HourlyPriceMinor = nil
-	if err := p.validate("cloud"); err != nil {
-		t.Fatal("headline display price must not decide admission", err)
+func TestComputePlanTermSelectionPassesCatalogThrough(t *testing.T) {
+	p := computePlan{PlanID: "p", BillingCatalog: map[string]any{"sku_code": "SKU"}}
+	if err := p.selectBillingTerm(""); err != nil || !reflect.DeepEqual(p.BillingCatalog, map[string]any{"sku_code": "SKU"}) {
+		t.Fatalf("an omitted term must send the catalog unchanged: %v %v", err, p.BillingCatalog)
 	}
 	if p.selectBillingTerm("HOURLY") == nil {
-		t.Fatal("missing canonical term accepted")
+		t.Fatal("a term the catalog does not list was accepted")
+	}
+	// Any term the catalog lists is merged as given; the API decides whether it can be bought.
+	p.BillingCatalog = computeTestBillingCatalog("SKU", 20)
+	p.BillingCatalog["billing_options"] = append(p.BillingCatalog["billing_options"].([]any), map[string]any{"billing_interval": "MONTHLY_3", "committed": true, "commitment_months": 3, "unit_price_minor": 12})
+	if err := p.selectBillingTerm("MONTHLY_3"); err != nil || p.BillingCatalog["commitment_months"] != 3 || p.BillingCatalog["billing_interval"] != "MONTHLY_3" {
+		t.Fatalf("listed term not merged: %v %v", err, p.BillingCatalog)
+	}
+}
+func TestComputeVMCreateLeavesPlanEligibilityToAPI(t *testing.T) {
+	creates := 0
+	r := &cloudVmResource{vmType: "cloud"}
+	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/compute/plans":
+			if req.URL.Query().Has("billing_interval") {
+				t.Error("an omitted term must not be chosen by the provider")
+			}
+			computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "code": "SKU-1", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "selectable": false, "pricing_status": "unpriced", "billing_catalog": map[string]any{"sku_code": "OTHER"}}}})
+		case "/compute/cloud-vms":
+			creates++
+			var b map[string]any
+			_ = json.NewDecoder(req.Body).Decode(&b)
+			if !reflect.DeepEqual(b["billing_catalog"], map[string]any{"sku_code": "OTHER"}) {
+				t.Errorf("catalog not passed through: %v", b["billing_catalog"])
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			computeJSON(w, map[string]any{"error": "compute_billing_term_required", "admission_context_id": "adm-1"})
+		default:
+			t.Errorf("unexpected request %s", req.URL.Path)
+		}
+	})
+	plan := computeValidVMPlan()
+	plan.BillingInterval = types.StringUnknown()
+	resp := resource.CreateResponse{State: computeState(t, r, nil)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, plan)}, &resp)
+	if creates != 1 || !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "HTTP 400 compute_billing_term_required") {
+		t.Fatalf("the API, not the provider, must decide: creates=%d %v", creates, resp.Diagnostics)
 	}
 }
 func computeBackupModel() vmBackupPolicyModel {
@@ -500,7 +525,7 @@ func TestComputeMissingBackupEnabledPreservesState(t *testing.T) {
 func TestComputeCatalogMalformedAndSiteMismatch(t *testing.T) {
 	t.Run("missing array", func(t *testing.T) {
 		c := computeTestClient(t, func(w http.ResponseWriter, r *http.Request) { computeJSON(w, map[string]any{}) })
-		if _, err := c.listComputePlans(context.Background(), "cloud", ""); err == nil {
+		if _, err := c.listComputePlansFiltered(context.Background(), "cloud", "", "", ""); err == nil {
 			t.Fatal("missing plans accepted")
 		}
 	})
@@ -508,19 +533,8 @@ func TestComputeCatalogMalformedAndSiteMismatch(t *testing.T) {
 		c := computeTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "p", "site_id": "other"}}})
 		})
-		if _, err := c.findPlan(context.Background(), "cloud", "site", "p"); err == nil {
+		if _, err := c.findPlanForTerm(context.Background(), "cloud", "site", "p", "", ""); err == nil {
 			t.Fatal("wrong site accepted")
-		}
-	})
-	t.Run("billing reference", func(t *testing.T) {
-		n := int64(10)
-		p := computePlan{PlanID: "p", Code: "SKU", Cpu: 1, RamMb: 512, DiskGb: 10, Selectable: true, PricingStatus: "priced", BillingInterval: "HOURLY", HourlyPriceMinor: &n}
-		if p.validate("cloud") == nil {
-			t.Fatal("missing billing_catalog accepted")
-		}
-		p.BillingCatalog = map[string]any{"sku_code": "other"}
-		if p.validate("cloud") == nil {
-			t.Fatal("mismatched billing SKU accepted")
 		}
 	})
 }
@@ -615,5 +629,141 @@ func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
 				t.Fatal("upstream currency denial must propagate from create")
 			}
 		})
+	}
+}
+
+func TestComputeVMChangesWithAnOperationUpdateInPlace(t *testing.T) {
+	r := &cloudVmResource{vmType: "cloud"}
+	var schema resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schema)
+	for name, wantReplace := range map[string]bool{"plan_id": false, "ssh_key_ids": false, "tags": true, "name": true, "template_id": true} {
+		description := ""
+		switch attribute := schema.Schema.Attributes[name].(type) {
+		case rschema.StringAttribute:
+			for _, m := range attribute.PlanModifiers {
+				description += m.Description(context.Background())
+			}
+		case rschema.SetAttribute:
+			for _, m := range attribute.PlanModifiers {
+				description += m.Description(context.Background())
+			}
+		}
+		if strings.Contains(description, "destroy and recreate") != wantReplace {
+			t.Errorf("%s: requires replace=%v, want %v (%q)", name, !wantReplace, wantReplace, description)
+		}
+	}
+}
+
+func computeVMUpdate(t *testing.T, r *cloudVmResource, state, plan cloudVmModel) resource.UpdateResponse {
+	t.Helper()
+	prior := computeState(t, r, state)
+	resp := resource.UpdateResponse{State: prior}
+	r.Update(context.Background(), resource.UpdateRequest{State: prior, Plan: computePlanState(t, r, plan)}, &resp)
+	return resp
+}
+
+func TestComputeVMPlanChangeResizesInPlace(t *testing.T) {
+	for _, kind := range []string{"cloud", "gpu"} {
+		for _, refused := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/refused=%t", kind, refused), func(t *testing.T) {
+				var requests []string
+				vm := computeCanonicalVM(kind)
+				r := &cloudVmResource{vmType: kind}
+				r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+					requests = append(requests, req.Method+" "+req.URL.Path)
+					switch req.Method + " " + req.URL.Path {
+					case "GET /compute/plans":
+						if req.URL.Query().Get("billing_interval") != "HOURLY" {
+							t.Errorf("resize must keep the VM's term: %v", req.URL.Query())
+						}
+						catalog := computeTestBillingCatalog("SKU-L", 40)
+						catalog["plan_id"] = "plan-large"
+						computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan-large", "code": "SKU-L", "cpu": 8, "ram_mb": 16384, "disk_gb": 160, "billing_catalog": catalog}}})
+					case "POST /compute/" + kind + "-vms/vm-1/actions/resize":
+						var b map[string]any
+						_ = json.NewDecoder(req.Body).Decode(&b)
+						catalog, _ := b["billing_catalog"].(map[string]any)
+						if req.Header.Get("X-Idempotency-Key") == "" || b["cpu"] != float64(8) || b["ram_mb"] != float64(16384) || b["disk_gb"] != float64(160) || b["requested_by"] != "terraform" || catalog["billing_interval"] != "HOURLY" || catalog["plan_id"] != "plan-large" {
+							t.Errorf("unexpected resize request: %v", b)
+						}
+						if refused {
+							w.WriteHeader(http.StatusConflict)
+							computeJSON(w, map[string]any{"detail": map[string]any{"message": "In-place resize cannot shrink root disk. Migration is required.", "decision": "migration_required"}})
+							return
+						}
+						vm["plan_id"], vm["cpu"], vm["ram_mb"], vm["disk_gb"] = "plan-large", 8, 16384, 160
+						computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op-resize", Status: "accepted"})
+					case "GET /compute/operations/op-resize":
+						computeJSON(w, map[string]any{"status": "succeeded"})
+					case "GET /compute/" + kind + "-vms/vm-1":
+						computeJSON(w, vm)
+					default:
+						t.Errorf("unexpected request %s %s (no stop/start or replacement expected)", req.Method, req.URL.Path)
+						w.WriteHeader(500)
+					}
+				})
+				state := computeValidVMPlan()
+				state.ID, state.Cpu, state.RamMb, state.DiskGb, state.GpuCount = types.StringValue("vm-1"), types.Int64Value(4), types.Int64Value(8192), types.Int64Value(80), types.Int64Value(1)
+				state.GpuModel, state.Status, state.PublicIP, state.PrivateIP = types.StringValue("A100"), types.StringValue("running"), types.StringNull(), types.StringNull()
+				plan := state
+				plan.PlanID = types.StringValue("plan-large")
+				plan.Cpu, plan.RamMb, plan.DiskGb, plan.Status = types.Int64Unknown(), types.Int64Unknown(), types.Int64Unknown(), types.StringUnknown()
+				resp := computeVMUpdate(t, r, state, plan)
+				var got cloudVmModel
+				computeNoErrors(t, resp.State.Get(context.Background(), &got))
+				if refused {
+					if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "HTTP 409: In-place resize cannot shrink root disk. Migration is required.") {
+						t.Fatalf("server refusal not relayed: %v", resp.Diagnostics)
+					}
+					if got.PlanID.ValueString() != "plan" {
+						t.Fatal("refused resize changed state")
+					}
+					return
+				}
+				computeNoErrors(t, resp.Diagnostics)
+				if got.ID.ValueString() != "vm-1" || got.PlanID.ValueString() != "plan-large" || got.Cpu.ValueInt64() != 8 || got.DiskGb.ValueInt64() != 160 {
+					t.Fatalf("resize not reflected: %+v", got)
+				}
+				if want := []string{"GET /compute/plans", "POST /compute/" + kind + "-vms/vm-1/actions/resize", "GET /compute/operations/op-resize", "GET /compute/" + kind + "-vms/vm-1", "GET /compute/" + kind + "-vms/vm-1"}; !reflect.DeepEqual(requests, want) {
+					t.Fatalf("requests %v, want %v", requests, want)
+				}
+			})
+		}
+	}
+}
+
+func TestComputeVMSSHKeyChangeUsesAccessOperation(t *testing.T) {
+	var changes []string
+	vm := computeCanonicalVM("cloud")
+	r := &cloudVmResource{vmType: "cloud"}
+	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method + " " + req.URL.Path {
+		case "PATCH /compute/cloud-vms/vm-1/actions/access":
+			var b struct {
+				Mode string   `json:"ssh_key_mode"`
+				IDs  []string `json:"ssh_key_ids"`
+			}
+			_ = json.NewDecoder(req.Body).Decode(&b)
+			changes = append(changes, b.Mode+" "+strings.Join(b.IDs, ","))
+			computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op-" + b.Mode, Status: "accepted"})
+		case "GET /compute/operations/op-add", "GET /compute/operations/op-remove":
+			computeJSON(w, map[string]any{"status": "succeeded"})
+		case "GET /compute/cloud-vms/vm-1":
+			vm["ssh_key_ids"] = []string{"key-2"}
+			computeJSON(w, vm)
+		default:
+			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
+			w.WriteHeader(500)
+		}
+	})
+	state := computeValidVMPlan()
+	state.ID, state.Cpu, state.RamMb, state.DiskGb, state.GpuCount = types.StringValue("vm-1"), types.Int64Value(4), types.Int64Value(8192), types.Int64Value(80), types.Int64Value(1)
+	state.GpuModel, state.Status, state.PublicIP, state.PrivateIP = types.StringValue("A100"), types.StringValue("running"), types.StringNull(), types.StringNull()
+	plan := state
+	plan.SSHKeyIDs = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("key-2")})
+	resp := computeVMUpdate(t, r, state, plan)
+	computeNoErrors(t, resp.Diagnostics)
+	if !reflect.DeepEqual(changes, []string{"add key-2", "remove key-1"}) {
+		t.Fatalf("keys must be added before others are removed: %v", changes)
 	}
 }

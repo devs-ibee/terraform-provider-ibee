@@ -17,12 +17,14 @@ func TestBillingAdmissionFailsClosed(t *testing.T) {
 	}{
 		{"allowed", func(d map[string]any) {}, ""},
 		{"denied", func(d map[string]any) { d["allowed"] = false; d["reason"] = "initial_topup_required" }, ""},
-		{"missing-allowed", func(d map[string]any) { delete(d, "allowed") }, "incomplete"},
-		{"missing-reason", func(d map[string]any) { delete(d, "reason") }, "incomplete"},
+		{"missing-allowed", func(d map[string]any) { delete(d, "allowed") }, ""},
+		{"missing-reason", func(d map[string]any) { delete(d, "reason") }, ""},
+		{"new-billing-mode", func(d map[string]any) { d["billing_mode"] = "FUTURE_MODE" }, ""},
+		{"new-billing-state", func(d map[string]any) { d["billing_state"] = "DELETION_SCHEDULED"; delete(d, "currency") }, ""},
 		{"wrong-organization", func(d map[string]any) { d["organization_id"] = "other" }, "organization_id"},
 		{"wrong-sku", func(d map[string]any) { d["sku_code"] = "different" }, "requested SKU"},
 		{"wrong-estimate", func(d map[string]any) { d["estimated_cost_minor"] = 0 }, "cost estimate"},
-		{"timestamp", func(d map[string]any) { d["evaluated_at"] = "yesterday" }, "timestamp"},
+		{"timestamp", func(d map[string]any) { d["evaluated_at"] = "yesterday" }, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -66,8 +68,8 @@ func TestBillingUnavailableDoesNotAuthorize(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(403) }))
 	defer s.Close()
 	c := NewClient(s.URL, "token", "workspace")
-	if _, err := c.checkBillingEligibility(context.Background(), billingEligibilityRequest{}); err == nil || !strings.Contains(err.Error(), "billing.read") {
-		t.Fatalf("expected actionable denial: %v", err)
+	if _, err := c.checkBillingEligibility(context.Background(), billingEligibilityRequest{}); err == nil || !strings.Contains(err.Error(), "HTTP 403") || strings.Contains(err.Error(), "billing.read") {
+		t.Fatalf("expected the server's denial without invented text: %v", err)
 	}
 	cost := int64(-1)
 	if _, err := c.checkBillingEligibility(context.Background(), billingEligibilityRequest{EstimatedCostMinor: &cost}); err == nil {
