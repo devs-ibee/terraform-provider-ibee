@@ -1,6 +1,6 @@
 # Examples
 
-Each directory is an independent Terraform configuration. Set the required values for your workspace before running it. See the [getting started guide](../docs/guides/terraform.md) for installation and setup.
+Each directory below is an independent Terraform configuration. Set the required values for your workspace before running it. The `resources/` and `data-sources/` directories hold the short examples and import commands shown on each documentation page. See the [getting started guide](../docs/guides/terraform.md) for installation and setup.
 
 | Area | Example |
 | --- | --- |
