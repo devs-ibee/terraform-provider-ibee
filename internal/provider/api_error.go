@@ -32,16 +32,26 @@ func parseAPIError(status int, data []byte, requestID, token string) *apiError {
 		}
 		return safeErrorContext(redact(strings.TrimSpace(value)), 256)
 	}
-	code, reason, requiredScope := "", "", ""
+	text := func(object map[string]json.RawMessage, key string) string {
+		var value string
+		if json.Unmarshal(object[key], &value) != nil {
+			return ""
+		}
+		return serverMessage(redact(value))
+	}
+	code, reason, requiredScope, message := "", "", "", ""
 	var gatewayCode string
 	var nested map[string]json.RawMessage
 	if json.Unmarshal(envelope["error"], &gatewayCode) == nil && gatewayCode != "" {
 		code = field(envelope, "error")
 		reason = field(envelope, "billing_reason")
+		e.billingReason = errorIdentifier(reason) != ""
 		requiredScope = field(envelope, "required_scope")
+		message = text(envelope, "message")
 	} else if json.Unmarshal(envelope["error"], &nested) == nil && nested != nil {
 		code, reason = field(nested, "code"), field(nested, "reason")
 		requiredScope = field(nested, "required_scope")
+		message = text(nested, "message")
 	} else if json.Unmarshal(envelope["detail"], &nested) == nil && nested != nil {
 		for _, key := range []string{"code", "error_code", "error"} {
 			if code = field(nested, key); code != "" {
@@ -49,16 +59,59 @@ func parseAPIError(status int, data []byte, requestID, token string) *apiError {
 			}
 		}
 		reason, requiredScope = field(nested, "reason"), field(nested, "required_scope")
+		message = text(nested, "message")
 	} else {
 		code, reason = field(envelope, "code"), field(envelope, "reason")
 		requiredScope = field(envelope, "required_scope")
+		if message = text(envelope, "detail"); message == "" {
+			message = text(envelope, "message")
+		}
 	}
 	e.Code = errorIdentifier(code)
 	e.Reason = errorIdentifier(reason)
 	e.RequiredScope = errorIdentifier(requiredScope)
+	e.Message = message
 	e.BillingSKUCode = field(envelope, "billing_sku_code")
 	e.AdmissionContextID = field(envelope, "admission_context_id")
+	e.hasDetails = message != "" && hasExtraFields(envelope)
 	return e
+}
+
+// billingAnswer reports whether the server answered with a billing or
+// admission decision. Such answers are never retried for writes.
+func (e *apiError) billingAnswer() bool {
+	return e.billingReason || e.BillingSKUCode != "" || e.AdmissionContextID != "" ||
+		strings.HasPrefix(e.Code, "billing_") || strings.HasPrefix(e.Code, "organization_") || strings.Contains(e.Code, "admission")
+}
+
+// The message is shown as the server wrote it, on one line and bounded.
+func serverMessage(value string) string {
+	value = strings.Join(strings.FieldsFunc(value, unicode.IsControl), " ")
+	value = strings.TrimSpace(value)
+	if len(value) > 1024 {
+		value = value[:1024]
+	}
+	return value
+}
+
+// hasExtraFields reports whether the body carries data beyond code and message
+// (for example a resize precheck's reasons), so the diagnostic includes the body.
+func hasExtraFields(object map[string]json.RawMessage) bool {
+	for key, raw := range object {
+		switch key {
+		case "code", "error_code", "message", "reason", "required_scope", "request_id",
+			"billing_reason", "billing_sku_code", "billing_evaluated_at", "admission_context_id":
+			continue
+		case "error", "detail":
+			var nested map[string]json.RawMessage
+			if json.Unmarshal(raw, &nested) == nil && nested != nil && hasExtraFields(nested) {
+				return true
+			}
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // Context is bounded and rejects controls, including terminal escape sequences.
@@ -81,28 +134,4 @@ func errorIdentifier(value string) string {
 		}
 	}
 	return value
-}
-
-// Only static, allowlisted messages are suitable for secret-resource diagnostics:
-// a server may echo plaintext in any free-form error field, not just its body.
-func (e *apiError) guidance() string {
-	switch e.Code {
-	case "organization_restricted":
-		return "The organization is restricted. Resolve its access or billing restriction, then retry; this is not a missing resource."
-	case "organization_suspended":
-		return "The organization is suspended. Restore access through the authorized administrator or Billing team before retrying writes."
-	case "key_revoked", "key_expired", "key_disabled", "key_inactive":
-		return "The API token is inactive. Configure a valid token for this environment and workspace."
-	case "workspace_not_allowed":
-		return "The token does not allow this workspace. Check workspace_id and the token's workspace selection."
-	case "workspace_id_required", "invalid_workspace_id":
-		return "Configure a valid workspace_id for the API token."
-	case "insufficient_scope":
-		return "The token lacks the required permission. Use an appropriately scoped token; adding credits does not resolve a missing scope."
-	case "organization_lifecycle_unavailable":
-		return "Organization eligibility is temporarily unavailable. Check service health and retry later; authorization has not been granted."
-	case "billing_denied":
-		return "Billing denied this request. Review the organization's billing eligibility before retrying."
-	}
-	return ""
 }

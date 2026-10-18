@@ -141,16 +141,31 @@ func TestComputeAttachmentCatalogLookupDoesNotBlockDeleteOrEraseState(t *testing
 	}
 }
 
-func TestComputeRecoveryCatalogSchemaValidation(t *testing.T) {
-	for _, raw := range []string{`[]`, `{} {}`, `{"sku_id":true,"sku_code":"SKU"}`, `{"sku_id":"id","sku_code":"sku"}`, `{"sku_id":"id","sku_code":"SKU","attached_skus":[]}`, `{"sku_id":"id","sku_code":"SKU","attached_skus":{"root_disk":{"sku_id":"root","sku_code":"ROOT"}}}`, `{"sku_id":"id","sku_code":"SKU","currency":"US"}`, `{"sku_id":"id","sku_code":"SKU","site_id":false}`, `{"sku_id":"id","sku_code":"SKU","skuCode":"OTHER"}`, `{"sku_id":"id","sku_code":"SKU","unit_price_minor":0.5}`} {
-		if _, err := parseRecoveryCatalog(types.StringValue(raw), "snapshot_storage"); err == nil {
-			t.Errorf("accepted invalid catalog: %s", raw)
+func TestComputeRecoveryCatalogPassesThrough(t *testing.T) {
+	for _, raw := range []string{`[]`, `{} {}`, `null`} {
+		if _, err := recoveryCatalogBody(types.StringValue(raw)); err == nil {
+			t.Errorf("accepted a value that is not one JSON object: %s", raw)
 		}
 	}
-	for _, raw := range []string{`{"sku_id":123,"sku_code":"SKU"}`, `{"sku_id":"id","sku_code":"SKU","unit_price_minor":0}`, `{"sku_id":"id","sku_code":"SKU","unit_price_minor":null,"attached_skus":{}}`} {
-		if _, err := parseRecoveryCatalog(types.StringValue(raw), "snapshot_storage"); err != nil {
-			t.Errorf("rejected backend-supported catalog: %v", err)
+	// The API decides what a catalog must contain; the provider sends it unchanged.
+	for _, raw := range []string{`{"sku_id":true,"sku_code":"sku"}`, `{"sku_id":"id","sku_code":"SKU","currency":"US","attached_skus":[]}`, `{"sku_id":9007199254740993,"sku_code":"SKU","unit_price_minor":0.5}`} {
+		catalog, err := recoveryCatalogBody(types.StringValue(raw))
+		if err != nil {
+			t.Fatalf("rejected catalog %s: %v", raw, err)
 		}
+		encoded, _ := json.Marshal(catalog)
+		var want, got any
+		_ = json.Unmarshal([]byte(raw), &want)
+		_ = json.Unmarshal(encoded, &got)
+		if !reflect.DeepEqual(want, got) {
+			t.Fatalf("catalog changed in transit: %s -> %s", raw, encoded)
+		}
+		if strings.Contains(raw, "9007199254740993") && !strings.Contains(string(encoded), "9007199254740993") {
+			t.Fatalf("large SKU id lost precision: %s", encoded)
+		}
+	}
+	if catalog, err := recoveryCatalogBody(types.StringNull()); err != nil || catalog != nil {
+		t.Fatal("omitted catalog must be omitted from the request")
 	}
 }
 
@@ -306,7 +321,8 @@ func TestComputeRecoveryCatalogContractLifecycle(t *testing.T) {
 	}
 }
 
-func TestComputeRecoveryCatalogRejectsBeforeMutation(t *testing.T) {
+// The provider sends the catalog as configured; the API accepts or refuses it.
+func TestComputeRecoveryCatalogLeftToAPI(t *testing.T) {
 	for _, kind := range []string{"cloud", "gpu"} {
 		for _, product := range []string{"snapshot_storage", "backup_storage", "block_storage"} {
 			for _, scenario := range []string{"missing", "empty", "invalid json", "missing sku", "wrong product", "root disk", "bad currency", "negative price", "wrong site", "currency mismatch", "denied"} {
@@ -344,6 +360,19 @@ func TestComputeRecoveryCatalogRejectsBeforeMutation(t *testing.T) {
 						}
 						if req.Method != "GET" {
 							mutations++
+							var b map[string]any
+							_ = json.NewDecoder(req.Body).Decode(&b)
+							sent, ok := b["billing_catalog"]
+							if value.IsNull() && ok {
+								t.Errorf("provider supplied a catalog the configuration omitted: %v", sent)
+							}
+							if !value.IsNull() {
+								var want any
+								_ = json.Unmarshal([]byte(value.ValueString()), &want)
+								if !reflect.DeepEqual(sent, want) {
+									t.Errorf("catalog changed in transit: %v != %v", sent, want)
+								}
+							}
 							w.WriteHeader(http.StatusPaymentRequired)
 							computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance"})
 							return
@@ -358,12 +387,15 @@ func TestComputeRecoveryCatalogRejectsBeforeMutation(t *testing.T) {
 					model = recoveryTestSetCatalog(model, value)
 					resp := resource.CreateResponse{State: computeState(t, r, nil)}
 					r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, model)}, &resp)
-					wantMutations := 0
-					if scenario == "currency mismatch" || scenario == "denied" {
-						wantMutations = 1
+					wantMutations := 1
+					if scenario == "invalid json" {
+						wantMutations = 0 // not one JSON object, so there is nothing to send
 					}
 					if !resp.Diagnostics.HasError() || mutations != wantMutations {
-						t.Fatalf("invalid catalog accepted: mutations=%d diagnostics=%v", mutations, resp.Diagnostics)
+						t.Fatalf("mutations=%d want %d; diagnostics=%v", mutations, wantMutations, resp.Diagnostics)
+					}
+					if wantMutations == 1 && !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "HTTP 402 billing_denied") {
+						t.Fatalf("server answer not shown: %v", resp.Diagnostics)
 					}
 				})
 			}

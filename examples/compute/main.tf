@@ -69,7 +69,7 @@ resource "ibee_gpu_vm" "worker" {
 
 # Existing volumes must be in the same workspace and a compatible site.
 # billing_catalog is resolved from each volume's canonical catalog when omitted;
-# this requires block_storage.read. An explicit jsonencode(catalog) is also supported.
+# this requires block-storage.read. An explicit jsonencode(catalog) is also supported.
 # The provider supplies mount guidance; it does not execute commands in the guests.
 resource "ibee_cloud_vm_volume_attachment" "app_data" {
   vm_id             = ibee_cloud_vm.app.id

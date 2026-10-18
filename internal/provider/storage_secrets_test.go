@@ -252,31 +252,29 @@ func TestStorageBillingDenialPreventsCreates(t *testing.T) {
 }
 
 func storageTestStoreModel() secretStoreResourceModel {
-	return secretStoreResourceModel{ID: types.StringValue("store-1"), Name: types.StringValue("production"), Description: types.StringValue(""), StoreKey: types.StringValue("production"), Status: types.StringValue("active"), ForceArchive: types.BoolValue(false)}
+	return secretStoreResourceModel{ID: types.StringValue("store-1"), Name: types.StringValue("production"), Description: types.StringValue(""), StoreKey: types.StringValue("production"), Status: types.StringValue("active")}
 }
 
 func storageTestSecretModel() secretResourceModel {
 	return secretResourceModel{ID: types.StringValue("secret-1"), StoreID: types.StringValue("store-1"), SecretName: types.StringValue("database-url"), ValueWO: types.StringNull(), ValueWOVersion: types.Int64Value(0), CurrentVersion: types.Int64Value(1), StoreKey: types.StringValue("production"), Status: types.StringValue("active")}
 }
 
-func TestSecretStoreArchiveChecksAllPages(t *testing.T) {
-	for _, activeSecondPage := range []bool{false, true} {
-		t.Run(fmt.Sprintf("active_second_page_%t", activeSecondPage), func(t *testing.T) {
-			pages, archived := 0, false
+func TestSecretStoreArchiveLeavesDecisionToAPI(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		t.Run(fmt.Sprintf("refused_%t", refused), func(t *testing.T) {
+			lists, archives := 0, 0
 			r := &secretStoreResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 				switch {
 				case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/archive"):
-					archived = true
+					archives++
+					if refused {
+						w.WriteHeader(http.StatusConflict)
+						fmt.Fprint(w, `{"detail":"Store still holds active secrets"}`)
+						return
+					}
 					fmt.Fprint(w, `{"id":"store-1","status":"archived"}`)
 				case strings.HasSuffix(req.URL.Path, "/secrets"):
-					pages++
-					if req.URL.Query().Get("page") == "1" {
-						fmt.Fprint(w, `{"total":2,"secrets":[{"id":"secret-1","status":"soft_deleted"}]}`)
-					} else if activeSecondPage {
-						fmt.Fprint(w, `{"total":2,"secrets":[{"id":"secret-2","status":"active"}]}`)
-					} else {
-						fmt.Fprint(w, `{"total":2,"secrets":[{"id":"secret-2","status":"deleted"}]}`)
-					}
+					lists++
 				default:
 					fmt.Fprint(w, `{"id":"store-1","name":"production","description":"","store_key":"production","status":"active"}`)
 				}
@@ -284,19 +282,13 @@ func TestSecretStoreArchiveChecksAllPages(t *testing.T) {
 			state := storageTestState(t, r, storageTestStoreModel())
 			response := resource.DeleteResponse{State: state}
 			r.Delete(storageTestContext, resource.DeleteRequest{State: state}, &response)
-			if pages != 2 || archived == activeSecondPage || response.Diagnostics.HasError() != activeSecondPage {
-				t.Fatalf("pages=%d archive=%v diagnostics=%v", pages, archived, response.Diagnostics)
+			if lists != 0 || archives != 1 || response.Diagnostics.HasError() != refused {
+				t.Fatalf("lists=%d archives=%d diagnostics=%v", lists, archives, response.Diagnostics)
+			}
+			if refused && !strings.Contains(response.Diagnostics.Errors()[0].Detail(), "Store still holds active secrets") {
+				t.Fatalf("server answer not shown: %v", response.Diagnostics)
 			}
 		})
-	}
-}
-
-func TestSecretStoreMalformedListPreventsArchive(t *testing.T) {
-	for _, body := range []string{`{}`, `{"total":0}`, `{"secrets":[],"total":1}`, `{"secrets":[{"id":"secret-1"}],"total":1}`} {
-		r := &secretStoreResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) { fmt.Fprint(w, body) })}
-		if err := r.verifyNoActiveSecrets(storageTestContext, "store-1"); err == nil {
-			t.Errorf("accepted invalid secret list %s", body)
-		}
 	}
 }
 
@@ -478,7 +470,7 @@ func TestStorageImportsHaveSafeLocalDefaults(t *testing.T) {
 					t.Fatalf("bad bucket import: %+v", model)
 				}
 			case *secretStoreResourceModel:
-				if model.ID.ValueString() != tc.id || model.ForceArchive.ValueBool() || model.ForceArchive.IsNull() {
+				if model.ID.ValueString() != tc.id {
 					t.Fatalf("bad store import: %+v", model)
 				}
 			case *secretResourceModel:

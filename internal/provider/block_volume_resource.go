@@ -11,7 +11,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -82,16 +81,12 @@ func (r *blockVolumeResource) Metadata(_ context.Context, req resource.MetadataR
 }
 func (r *blockVolumeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
-	resp.Schema = schema.Schema{Description: "A standalone block-storage volume. Size increases resize the existing volume; decreases replace it. Destroy refuses attached volumes and never forces detachment. SKU admission uses the server catalog without a client-invented price. Currency and pricing are resolved upstream. Import using the volume ID.", Attributes: map[string]schema.Attribute{
-		"id":       schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-		"name":     schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}},
-		"site_id":  schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}},
-		"sku_code": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}, Description: "Active block-storage SKU from the IBEE catalog. The API validates the SKU and allowed size and derives authoritative billing fields."},
-		"size_gb": schema.Int64Attribute{Required: true, Validators: []validator.Int64{computeIntValidator{1, 10000}}, PlanModifiers: []planmodifier.Int64{int64planmodifier.RequiresReplaceIf(func(_ context.Context, req planmodifier.Int64Request, resp *int64planmodifier.RequiresReplaceIfFuncResponse) {
-			if !req.StateValue.IsNull() && !req.StateValue.IsUnknown() && !req.PlanValue.IsUnknown() {
-				resp.RequiresReplace = req.PlanValue.ValueInt64() < req.StateValue.ValueInt64()
-			}
-		}, "Shrinking replaces the volume.", "Shrinking replaces the volume.")}},
+	resp.Schema = schema.Schema{Description: "A standalone block-storage volume. A size_gb change resizes the existing volume in place; the API refuses changes it cannot make, such as shrinking, and the volume is never replaced for a size change. Destroy refuses attached volumes and never forces detachment. SKU admission uses the server catalog without a client-invented price. Currency and pricing are resolved upstream. Import using the volume ID.", Attributes: map[string]schema.Attribute{
+		"id":                  schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+		"name":                schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}},
+		"site_id":             schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}},
+		"sku_code":            schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}, Description: "Active block-storage SKU from the IBEE catalog. The API validates the SKU and allowed size and derives authoritative billing fields."},
+		"size_gb":             schema.Int64Attribute{Required: true, Validators: []validator.Int64{computeIntValidator{1, 10000}}, Description: "Volume size in GB. Changes are sent to the resize operation."},
 		"volume_class":        schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("balanced"), PlanModifiers: replace, Validators: []validator.String{computeOneOf("capacity", "balanced", "performance")}},
 		"vm_type":             schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("cloud"), PlanModifiers: replace, Validators: []validator.String{computeOneOf("cloud", "gpu")}, Description: "Compute storage backend compatibility."},
 		"allow_online_resize": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Pass permission for an online expansion to the service. Does not bypass backend resize restrictions."},
@@ -240,7 +235,10 @@ func (r *blockVolumeResource) Create(ctx context.Context, req resource.CreateReq
 	m.State = types.StringValue(accepted.Volume.State)
 	m.VolumeName = types.StringValue(accepted.Volume.VolumeName)
 	m.ReplicaCount = types.Int64Value(accepted.Volume.ReplicaCount)
-	m.BillingCurrency = types.StringValue("INR")
+	m.BillingCurrency = types.StringNull()
+	if currency := accepted.Volume.Metadata.BillingCatalog.Currency; currency != "" {
+		m.BillingCurrency = types.StringValue(currency)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -285,13 +283,9 @@ func (r *blockVolumeResource) Update(ctx context.Context, req resource.UpdateReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if m.SizeGb.ValueInt64() < old.SizeGb.ValueInt64() {
-		resp.Diagnostics.AddError("Block volume cannot shrink", "A smaller size requires replacement.")
-		return
-	}
 	ctx, cancel := context.WithTimeout(ctx, r.client.computeTimeout())
 	defer cancel()
-	if m.SizeGb.ValueInt64() > old.SizeGb.ValueInt64() {
+	if m.SizeGb.ValueInt64() != old.SizeGb.ValueInt64() {
 		key := idempotencyKey()
 		var accepted blockVolumeActionAPI
 		err := r.client.doH(ctx, http.MethodPost, blockVolumePath(m.ID.ValueString())+"/resize", map[string]string{"X-Idempotency-Key": key}, map[string]any{"new_size_gb": m.SizeGb.ValueInt64(), "allow_online": m.AllowOnlineResize.ValueBool(), "idempotency_key": key}, &accepted)

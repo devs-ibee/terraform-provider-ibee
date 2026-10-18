@@ -61,7 +61,7 @@ func (d *billingEligibilityDataSource) Schema(_ context.Context, _ datasource.Sc
 		"organization_id":         schema.StringAttribute{Computed: true, Description: "Organization resolved by the public gateway."},
 		"allowed":                 schema.BoolAttribute{Computed: true, Description: "Whether the billing service currently permits the requested purchase."},
 		"reason":                  schema.StringAttribute{Computed: true, Description: "Machine-readable reason for the decision."},
-		"billing_mode":            schema.StringAttribute{Computed: true, Description: "PREPAID or POSTPAID."},
+		"billing_mode":            schema.StringAttribute{Computed: true, Description: "Billing mode as returned by Billing, such as PREPAID or POSTPAID."},
 		"billing_state":           schema.StringAttribute{Computed: true, Description: "Current billing account state."},
 		"currency":                schema.StringAttribute{Computed: true, Description: "Wallet currency."},
 		"effective_balance_minor": schema.Int64Attribute{Computed: true, Sensitive: true, Description: "Effective prepaid balance, if returned, in currency minor units."},
@@ -97,7 +97,7 @@ func (d *billingEligibilityDataSource) Read(ctx context.Context, req datasource.
 		return
 	}
 	state.OrganizationID = types.StringValue(decision.OrganizationID)
-	state.Allowed = types.BoolValue(*decision.Allowed)
+	state.Allowed = types.BoolPointerValue(decision.Allowed)
 	state.Reason = types.StringValue(decision.Reason)
 	state.BillingMode = types.StringValue(decision.BillingMode)
 	state.BillingState = types.StringValue(decision.BillingState)

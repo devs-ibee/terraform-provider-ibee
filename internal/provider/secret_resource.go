@@ -145,16 +145,12 @@ func (out secretAPI) apply(state *secretResourceModel) error {
 	return nil
 }
 
-// Secret endpoints may echo input or plaintext in an error body. Do not expose
-// that body (or JSON conversion errors) in Terraform diagnostics.
+// Secret endpoints may echo input or plaintext in any error field. Show only
+// the HTTP status; never the body, code, message or JSON conversion errors.
 func secretSafeError(err error) string {
 	var apiErr *apiError
 	if errors.As(err, &apiErr) {
-		message := fmt.Sprintf("Secret API request failed with HTTP %d. Response details are omitted to protect secret data.", apiErr.Status)
-		if guidance := apiErr.guidance(); guidance != "" {
-			message += " " + guidance
-		}
-		return message
+		return fmt.Sprintf("Secret API request failed with HTTP %d. Response details are omitted to protect secret data.", apiErr.Status)
 	}
 	if errors.Is(err, context.Canceled) {
 		return "Secret API request was cancelled."

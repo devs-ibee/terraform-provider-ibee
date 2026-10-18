@@ -86,7 +86,7 @@ func TestVmPowerAction(t *testing.T) {
 				a.Invoke(context.Background(), action.InvokeRequest{Config: powerActionConfig(t, a, vmType, operation)}, &resp)
 				computeNoErrors(t, resp.Diagnostics)
 				wantAdmission := 0
-				if calls != 1 || admissions != wantAdmission || reads != 2 {
+				if calls != 1 || admissions != wantAdmission || reads != 1 {
 					t.Fatal("invalid lifecycle", calls, admissions, reads)
 				}
 				if !reflect.DeepEqual(progress, []string{"Waiting for VM power operation op.", "VM is " + wanted + "."}) {
@@ -103,17 +103,17 @@ func TestVmPowerActionRefusesUnsafeResponses(t *testing.T) {
 			mutated       bool
 		}{
 			{"invalid operation", "Invalid VM power action", false},
-			{"wrong VM", "Invalid VM response", false},
+			{"wrong VM", "Invalid VM response", true},
 			{"denied", "VM power request failed", true},
 			{"wrong accepted VM", "Invalid VM power response", true},
 			{"missing operation", "Invalid VM power response", true},
 			{"failed operation", "VM power operation did not complete", true},
 			{"wrong canonical VM", "Invalid VM response", true},
-			{"missing state", "Invalid VM response", false},
-			{"blank state", "Invalid VM response", false},
+			{"missing state", "Invalid VM response", true},
+			{"blank state", "Invalid VM response", true},
 			{"missing canonical state", "Invalid VM response", true},
 			{"blank canonical state", "Invalid VM response", true},
-			{"unexpected canonical state", "Unexpected VM power state", true},
+			{"unexpected canonical state", "VM power state not confirmed", true},
 		} {
 			t.Run(vmType+"/"+tc.name, func(t *testing.T) {
 				scenario := tc.name
@@ -188,44 +188,26 @@ func TestVmPowerActionRefusesUnsafeResponses(t *testing.T) {
 	}
 }
 
-func TestVmPowerActionRejectsWrongStateBeforeAnyPOST(t *testing.T) {
+func TestVmPowerActionLeavesStateDecisionToAPI(t *testing.T) {
 	for _, vmType := range []string{"cloud", "gpu"} {
 		for _, operation := range []string{"start", "stop", "reboot"} {
-			required := "running"
-			if operation == "start" {
-				required = "stopped"
-			}
-			for _, status := range []string{"running", "stopped", "starting", "stopping", "rebooting", "creating", "deleting", "error", "paused", "unknown", " \tReBoOtInG\n", " \tRUNNING\n", " \tSTOPPED\n"} {
-				if strings.ToLower(strings.TrimSpace(status)) == required {
-					continue
+			t.Run(vmType+"/"+operation, func(t *testing.T) {
+				endpoint := "/compute/" + vmType + "-vms/vm"
+				var requests []string
+				a := &vmPowerAction{client: computeTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+					requests = append(requests, r.Method+" "+r.URL.Path)
+					w.WriteHeader(http.StatusConflict)
+					fmt.Fprint(w, `{"detail":"VM is already in the requested state"}`)
+				})}
+				var resp action.InvokeResponse
+				a.Invoke(context.Background(), action.InvokeRequest{Config: powerActionConfig(t, a, vmType, operation)}, &resp)
+				if resp.Diagnostics.ErrorsCount() != 1 || resp.Diagnostics[0].Summary() != "VM power request failed" || !strings.Contains(resp.Diagnostics[0].Detail(), "HTTP 409: VM is already in the requested state") {
+					t.Fatalf("expected the API's answer, got %v", resp.Diagnostics)
 				}
-				t.Run(vmType+"/"+operation+"/"+status, func(t *testing.T) {
-					endpoint := "/compute/" + vmType + "-vms/vm"
-					var requests []string
-					a := &vmPowerAction{client: computeTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-						requests = append(requests, r.Method+" "+r.URL.Path)
-						if r.Method != http.MethodGet || r.URL.Path != endpoint {
-							t.Errorf("wrong-state action reached %s %s", r.Method, r.URL.Path)
-							http.Error(w, "unexpected request", http.StatusBadRequest)
-							return
-						}
-						computeJSON(w, map[string]any{"id": "vm", "status": status})
-					})}
-					var resp action.InvokeResponse
-					a.Invoke(context.Background(), action.InvokeRequest{Config: powerActionConfig(t, a, vmType, operation)}, &resp)
-					if resp.Diagnostics.ErrorsCount() != 1 || resp.Diagnostics[0].Summary() != "Invalid VM power state" {
-						t.Fatalf("expected state rejection, got %v", resp.Diagnostics)
-					}
-					for _, want := range []string{operation, vmType, fmt.Sprintf("%q", status), fmt.Sprintf("requires %q", required)} {
-						if !strings.Contains(resp.Diagnostics[0].Detail(), want) {
-							t.Errorf("diagnostic omitted %q: %v", want, resp.Diagnostics)
-						}
-					}
-					if !reflect.DeepEqual(requests, []string{"GET " + endpoint}) {
-						t.Fatalf("precondition made requests beyond VM inspection: %v", requests)
-					}
-				})
-			}
+				if !reflect.DeepEqual(requests, []string{"POST " + endpoint + "/actions/" + operation}) {
+					t.Fatalf("provider inspected state before asking the API: %v", requests)
+				}
+			})
 		}
 	}
 }
@@ -234,9 +216,9 @@ func TestVmPowerActionWaitsForOperationAndCanonicalState(t *testing.T) {
 	for _, vmType := range []string{"cloud", "gpu"} {
 		for _, operation := range []string{"start", "stop", "reboot"} {
 			t.Run(vmType+"/"+operation, func(t *testing.T) {
-				initial, transitional, terminal := "running", "rebooting", "running"
+				transitional, terminal := "rebooting", "running"
 				if operation == "start" {
-					initial, transitional = "stopped", "starting"
+					transitional = "starting"
 				} else if operation == "stop" {
 					transitional, terminal = "stopping", "stopped"
 				}
@@ -246,15 +228,12 @@ func TestVmPowerActionWaitsForOperationAndCanonicalState(t *testing.T) {
 					switch r.Method + " " + r.URL.Path {
 					case "GET " + endpoint:
 						reads++
-						status := initial
-						if reads > 1 {
-							if polls != 2 {
-								t.Error("read canonical state before operation succeeded")
-							}
-							status = " \t" + strings.ToUpper(transitional) + "\n"
-							if reads == 3 {
-								status = " \t" + strings.ToUpper(terminal) + "\n"
-							}
+						if polls != 2 {
+							t.Error("read canonical state before operation succeeded")
+						}
+						status := " \t" + strings.ToUpper(transitional) + "\n"
+						if reads == 2 {
+							status = " \t" + strings.ToUpper(terminal) + "\n"
 						}
 						computeJSON(w, map[string]any{"_id": "vm", "status": status})
 					case "POST /billing/resource-eligibility":
@@ -280,7 +259,7 @@ func TestVmPowerActionWaitsForOperationAndCanonicalState(t *testing.T) {
 				a.Invoke(context.Background(), action.InvokeRequest{Config: powerActionConfig(t, a, vmType, operation)}, &resp)
 				computeNoErrors(t, resp.Diagnostics)
 				wantAdmissions := 0
-				if reads != 3 || polls != 2 || posts != 1 || admissions != wantAdmissions {
+				if reads != 2 || polls != 2 || posts != 1 || admissions != wantAdmissions {
 					t.Fatalf("reads=%d polls=%d posts=%d admissions=%d", reads, polls, posts, admissions)
 				}
 			})
@@ -404,7 +383,7 @@ func TestVmPowerActionCancellationAndTimeout(t *testing.T) {
 					if posts.Load() != 1 || !reflect.DeepEqual(progress, []string{"Waiting for VM power operation op."}) {
 						t.Fatalf("replayed mutation or reported false success: posts=%d progress=%v", posts.Load(), progress)
 					}
-					if phase == "operation" && reads.Load() != 1 {
+					if phase == "operation" && reads.Load() != 0 {
 						t.Fatal("read canonical VM before operation succeeded")
 					}
 				})

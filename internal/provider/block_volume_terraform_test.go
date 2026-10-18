@@ -85,6 +85,11 @@ func TestTerraformLifecycleBlockVolume(t *testing.T) {
 			resizes++
 			var b map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&b)
+			if current, _ := volume["size_gb"].(float64); b["new_size_gb"].(float64) < current {
+				w.WriteHeader(http.StatusConflict)
+				computeJSON(w, map[string]any{"detail": "Resize is increase-only"})
+				return
+			}
 			volume["size_gb"] = b["new_size_gb"]
 			computeJSON(w, map[string]any{"volume": volume, "operation": blockVolumeOperationAPI{ID: "resize-op", VolumeID: "vol-1", Status: "succeeded"}})
 		case "/block-storage/volumes/vol-1":
@@ -174,6 +179,22 @@ resource "ibee_block_volume_attachment" "test" {
 	mu.Lock()
 	if creates != 1 || resizes != 1 {
 		t.Fatalf("expansion must not replace volume: creates=%d resizes=%d", creates, resizes)
+	}
+	mu.Unlock()
+	// A shrink is planned in place and sent; the API refuses it and nothing is replaced.
+	config(150)
+	shrink := run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	if !strings.Contains(shrink, "ibee_block_volume.test will be updated in-place") || strings.Contains(shrink, "must be replaced") {
+		t.Fatalf("shrink must not plan replacement:\n%s", shrink)
+	}
+	if out := run(1, "apply", "-auto-approve", "-input=false", "-no-color"); !strings.Contains(strings.Join(strings.Fields(out), " "), "HTTP 409: Resize is increase-only") {
+		t.Fatalf("server refusal not shown:\n%s", out)
+	}
+	config(200)
+	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	mu.Lock()
+	if creates != 1 || deletes != 0 || resizes != 2 || volume["size_gb"] != float64(200) {
+		t.Fatalf("shrink changed the volume: creates=%d deletes=%d resizes=%d size=%v", creates, deletes, resizes, volume["size_gb"])
 	}
 	volume["name"] = "portal-change"
 	mu.Unlock()

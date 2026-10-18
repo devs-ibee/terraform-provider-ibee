@@ -55,9 +55,8 @@ resource "ibee_bucket" "assets" {
 }
 
 resource "ibee_secret_store" "application" {
-  name          = var.secret_store_name
-  description   = "Application secrets managed by Terraform"
-  force_archive = false
+  name        = var.secret_store_name
+  description = "Application secrets managed by Terraform"
 }
 
 resource "ibee_secret" "database" {

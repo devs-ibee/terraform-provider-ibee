@@ -1,141 +1,39 @@
 package provider
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
+import "fmt"
 
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/types"
-)
-
-// A schema default runs before prior state is considered, so it must not be used
-// for this immutable contractual field: it could replace imported monthly VMs.
-type computeBillingIntervalDefault struct{}
-
-func (computeBillingIntervalDefault) Description(context.Context) string {
-	return "Preserve the existing billing term when omitted; use HOURLY for a new VM."
-}
-func (m computeBillingIntervalDefault) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-func (computeBillingIntervalDefault) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	if !req.ConfigValue.IsNull() || req.Plan.Raw.IsNull() {
-		return
-	}
-	if !req.StateValue.IsNull() && !req.StateValue.IsUnknown() {
-		resp.PlanValue = req.StateValue
-		return
-	}
-	resp.PlanValue = types.StringValue("HOURLY")
-}
-
+// computeBillingTerm is the term the VM read reports in its billing_catalog.
 type computeBillingTerm struct {
-	BillingInterval  string   `json:"billing_interval"`
-	Committed        *bool    `json:"committed"`
-	CommitmentPeriod *string  `json:"commitment_period"`
-	CommitmentMonths *int64   `json:"commitment_months"`
-	CommittedHours   *int64   `json:"committed_hours"`
-	UnitPriceMinor   *int64   `json:"unit_price_minor"`
-	PriceUnit        string   `json:"price_unit"`
-	DiscountPercent  *float64 `json:"discount_percent"`
+	BillingInterval string `json:"billing_interval"`
 }
 
-// selectBillingTerm mirrors portal billingCatalogForTerm. Catalog display prices
-// alone do not select a purchased term, and a monthly headline is not an hourly quote.
+var computeBillingTermFields = []string{"billing_interval", "committed", "commitment_period", "commitment_months", "committed_hours", "discount_percent", "price_unit", "unit_price_minor"}
+
+// Temporary: VM create and resize compose the plan's billing_catalog until the API resolves the SKU itself.
+// The chosen billing option's fields are merged in; an empty interval sends the catalog unchanged.
 func (p *computePlan) selectBillingTerm(interval string) error {
-	if interval != "HOURLY" && interval != "MONTHLY" {
-		return fmt.Errorf("unsupported VM billing interval %q", interval)
+	if interval == "" {
+		return nil
 	}
-	raw, err := json.Marshal(p.BillingCatalog["billing_options"])
-	if err != nil {
-		return fmt.Errorf("invalid billing options: %w", err)
-	}
-	var options []computeBillingTerm
-	if err := json.Unmarshal(raw, &options); err != nil {
-		return fmt.Errorf("invalid billing options: %w", err)
-	}
-	var selected *computeBillingTerm
-	for i := range options {
-		if options[i].BillingInterval == interval {
-			if selected != nil {
-				return fmt.Errorf("catalog contains duplicate %s billing terms", interval)
+	options, _ := p.BillingCatalog["billing_options"].([]any)
+	for _, raw := range options {
+		option, ok := raw.(map[string]any)
+		if !ok || option["billing_interval"] != interval {
+			continue
+		}
+		catalog := make(map[string]any, len(p.BillingCatalog)+len(computeBillingTermFields))
+		for k, v := range p.BillingCatalog {
+			catalog[k] = v
+		}
+		for _, k := range computeBillingTermFields {
+			delete(catalog, k)
+			if v, ok := option[k]; ok && v != nil {
+				catalog[k] = v
 			}
-			selected = &options[i]
 		}
+		p.BillingCatalog = catalog
+		p.BillingInterval = interval
+		return nil
 	}
-	if selected == nil {
-		return fmt.Errorf("plan %q does not advertise a canonical %s billing option", p.PlanID, interval)
-	}
-	term := *selected
-	if err := term.validateSelection(); err != nil {
-		return fmt.Errorf("plan %q: %w", p.PlanID, err)
-	}
-	catalog := make(map[string]any, len(p.BillingCatalog)+8)
-	for k, v := range p.BillingCatalog {
-		catalog[k] = v
-	}
-	for _, k := range []string{"billing_interval", "committed", "commitment_period", "commitment_months", "committed_hours", "discount_percent", "price_unit", "unit_price_minor"} {
-		delete(catalog, k)
-	}
-	catalog["billing_interval"] = term.BillingInterval
-	catalog["committed"] = *term.Committed
-	catalog["commitment_period"] = *term.CommitmentPeriod
-	catalog["unit_price_minor"] = *term.UnitPriceMinor
-	if term.CommitmentMonths != nil {
-		catalog["commitment_months"] = *term.CommitmentMonths
-	}
-	if term.CommittedHours != nil {
-		catalog["committed_hours"] = *term.CommittedHours
-	}
-	if term.DiscountPercent != nil {
-		catalog["discount_percent"] = *term.DiscountPercent
-	}
-	if term.PriceUnit != "" {
-		catalog["price_unit"] = term.PriceUnit
-	}
-	p.BillingCatalog = catalog
-	p.BillingInterval = interval
-	return nil
-}
-
-// Canonical VM reads can omit/null the period for explicitly uncommitted hourly
-// usage. The backend stores billing_catalog as an opaque dict, and the portal
-// normalizes a missing period from the interval. Limit that compatibility rule
-// to hourly reads; never infer a monthly commitment or relax purchase selection.
-func (term computeBillingTerm) validateCanonical() error {
-	if term.CommitmentPeriod == nil && term.BillingInterval == "HOURLY" && term.Committed != nil && !*term.Committed {
-		period := "HOURLY"
-		term.CommitmentPeriod = &period
-	}
-	return term.validateSelection()
-}
-
-// MONTHLY alone cannot distinguish a one-, three- or six-month commitment.
-func (term computeBillingTerm) validateSelection() error {
-	if term.Committed == nil || term.UnitPriceMinor == nil || *term.UnitPriceMinor < 0 || term.CommitmentPeriod == nil || *term.CommitmentPeriod != term.BillingInterval {
-		return fmt.Errorf("incomplete or inconsistent %s billing terms", term.BillingInterval)
-	}
-	switch term.BillingInterval {
-	case "HOURLY":
-		if *term.Committed || (term.PriceUnit != "" && term.PriceUnit != "HOUR") || (term.CommitmentMonths != nil && *term.CommitmentMonths != 0) || (term.CommittedHours != nil && *term.CommittedHours != 0) {
-			return fmt.Errorf("hourly VM billing option must be uncommitted and priced per hour")
-		}
-	case "MONTHLY":
-		if !*term.Committed || term.CommitmentMonths == nil || *term.CommitmentMonths != 1 {
-			return fmt.Errorf("monthly VM billing option must define a one-month commitment")
-		}
-		switch term.PriceUnit {
-		case "MONTH":
-		case "", "HOUR":
-			if term.CommittedHours == nil || *term.CommittedHours <= 0 {
-				return fmt.Errorf("monthly hourly-rate option omitted committed_hours")
-			}
-		default:
-			return fmt.Errorf("unsupported monthly billing price unit %q", term.PriceUnit)
-		}
-	default:
-		return fmt.Errorf("unsupported VM billing interval %q", term.BillingInterval)
-	}
-	return nil
+	return fmt.Errorf("plan %q lists no %s option in its billing_catalog.billing_options", p.PlanID, interval)
 }

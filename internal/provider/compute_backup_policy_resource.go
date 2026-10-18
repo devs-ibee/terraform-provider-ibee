@@ -168,14 +168,16 @@ func (r *vmBackupPolicyResource) Create(ctx context.Context, req resource.Create
 		resp.Diagnostics.AddError("Invalid backup schedule", err.Error())
 		return
 	}
-	catalog, err := prepareRecoveryCatalog(ctx, r.client, r.vmType, m.VmID.ValueString(), m.BillingCatalog, "backup_storage")
+	catalog, err := recoveryCatalogBody(m.BillingCatalog)
 	if err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid backup billing catalog", err.Error())
 		return
 	}
 	var p vmBackupPolicyAPI
 	body := m.body()
-	body["billing_catalog"] = catalog
+	if catalog != nil {
+		body["billing_catalog"] = catalog
+	}
 	if err := r.client.do(ctx, http.MethodPost, r.route(m.VmID.ValueString(), "enable"), body, &p); err != nil {
 		resp.Diagnostics.AddError("Failed to enable VM backups", err.Error())
 		return
@@ -232,12 +234,14 @@ func (r *vmBackupPolicyResource) Update(ctx context.Context, req resource.Update
 	}
 	catalogChanged := !recoveryCatalogSelectionUnchanged(old.BillingCatalog, m.BillingCatalog)
 	if catalogChanged {
-		catalog, err := prepareRecoveryCatalog(ctx, r.client, r.vmType, m.VmID.ValueString(), m.BillingCatalog, "backup_storage")
+		catalog, err := recoveryCatalogBody(m.BillingCatalog)
 		if err != nil {
 			resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid backup billing catalog", err.Error())
 			return
 		}
-		body["billing_catalog"] = catalog
+		if catalog != nil {
+			body["billing_catalog"] = catalog
+		}
 	}
 	if catalogChanged || !backupScheduleEqual(old, m) || !old.RetentionDays.Equal(m.RetentionDays) || !old.FullBackupIntervalDays.Equal(m.FullBackupIntervalDays) || !old.IncrementalEnabled.Equal(m.IncrementalEnabled) {
 		if err := r.client.do(ctx, http.MethodPatch, r.route(m.VmID.ValueString(), "policy"), body, nil); err != nil {

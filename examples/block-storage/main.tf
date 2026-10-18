@@ -19,7 +19,7 @@ variable "sku_code" {
 }
 variable "size_gb" {
   type        = number
-  description = "An allowed size for this SKU. Increasing expands in place; decreasing replaces the volume and loses its data."
+  description = "An allowed size for this SKU. Changes resize the volume in place; the API refuses a decrease."
 }
 
 resource "ibee_block_volume" "data" {

@@ -10,7 +10,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -29,12 +28,11 @@ type secretStoreResource struct{ client *Client }
 func NewSecretStoreResource() resource.Resource { return &secretStoreResource{} }
 
 type secretStoreResourceModel struct {
-	ID           types.String `tfsdk:"id"`
-	Name         types.String `tfsdk:"name"`
-	Description  types.String `tfsdk:"description"`
-	StoreKey     types.String `tfsdk:"store_key"`
-	Status       types.String `tfsdk:"status"`
-	ForceArchive types.Bool   `tfsdk:"force_archive"`
+	ID          types.String `tfsdk:"id"`
+	Name        types.String `tfsdk:"name"`
+	Description types.String `tfsdk:"description"`
+	StoreKey    types.String `tfsdk:"store_key"`
+	Status      types.String `tfsdk:"status"`
 }
 
 type secretStoreAPI struct {
@@ -51,14 +49,13 @@ func (r *secretStoreResource) Metadata(_ context.Context, req resource.MetadataR
 
 func (r *secretStoreResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An IBEE secret store. Destroy archives the store, blocking access and revoking sessions; it does not permanently erase secrets or free the name. The public API has no unarchive or permanent-delete operation.",
+		Description: "An IBEE secret store. Destroy archives the store, including any secrets it still holds, blocking access and revoking sessions; the API decides whether the archive is allowed. Archiving does not permanently erase secrets or free the name.",
 		Attributes: map[string]schema.Attribute{
-			"id":            schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"name":          schema.StringAttribute{Required: true, Description: "Store display name, 1–128 characters."},
-			"description":   schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("")},
-			"store_key":     schema.StringAttribute{Computed: true, Description: "Stable store key assigned by the service."},
-			"status":        schema.StringAttribute{Computed: true},
-			"force_archive": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Permit archive with active secrets, which blocks access to all contained secrets. Apply this setting before destroy. By default the provider lists all secrets and refuses to archive if an active secret remains."},
+			"id":          schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"name":        schema.StringAttribute{Required: true, Description: "Store display name, 1–128 characters."},
+			"description": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("")},
+			"store_key":   schema.StringAttribute{Computed: true, Description: "Stable store key assigned by the service."},
+			"status":      schema.StringAttribute{Computed: true},
 		},
 	}
 }
@@ -145,9 +142,6 @@ func (r *secretStoreResource) Read(ctx context.Context, req resource.ReadRequest
 		resp.Diagnostics.AddError("Invalid secret store response", err.Error())
 		return
 	}
-	if state.ForceArchive.IsNull() {
-		state.ForceArchive = types.BoolValue(false)
-	}
 	if out.Status == "archived" {
 		resp.Diagnostics.AddWarning("Secret store is archived", "The record and its reserved name still exist. Restore it through the portal before modifying it; the public API does not offer unarchive.")
 	}
@@ -178,39 +172,6 @@ func (r *secretStoreResource) Update(ctx context.Context, req resource.UpdateReq
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// List responses include soft-deleted records. Visit every page and fail closed
-// for missing totals/records or unfamiliar statuses before archiving a store.
-func (r *secretStoreResource) verifyNoActiveSecrets(ctx context.Context, id string) error {
-	seen := map[string]bool{}
-	for page := 1; ; page++ {
-		var out struct {
-			Secrets []secretAPI `json:"secrets"`
-			Total   *int        `json:"total"`
-		}
-		if err := r.client.do(ctx, http.MethodGet, fmt.Sprintf("%s/secrets?page=%d&limit=100", secretStorePath(id), page), nil, &out); err != nil {
-			return err
-		}
-		if out.Total == nil || *out.Total < 0 || out.Secrets == nil {
-			return fmt.Errorf("secret list is incomplete; cannot verify that no active secrets remain")
-		}
-		for _, secret := range out.Secrets {
-			if secret.ID == "" || seen[secret.ID] {
-				return fmt.Errorf("secret list contains missing or repeated identities; cannot safely archive")
-			}
-			seen[secret.ID] = true
-			if !secret.isDeleted() {
-				return fmt.Errorf("active or unknown-status secrets remain; delete them first, or explicitly apply force_archive=true to archive all secrets in this store")
-			}
-		}
-		if len(seen) >= *out.Total {
-			return nil
-		}
-		if len(out.Secrets) == 0 {
-			return fmt.Errorf("secret list ended before its reported total; cannot safely archive")
-		}
-	}
-}
-
 func (r *secretStoreResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state secretStoreResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -232,12 +193,6 @@ func (r *secretStoreResource) Delete(ctx context.Context, req resource.DeleteReq
 	if out.Status == "archived" {
 		return
 	}
-	if !state.ForceArchive.ValueBool() {
-		if err := r.verifyNoActiveSecrets(ctx, state.ID.ValueString()); err != nil {
-			resp.Diagnostics.AddError("Secret store archive blocked", err.Error())
-			return
-		}
-	}
 	if err := r.client.do(ctx, http.MethodPost, secretStorePath(state.ID.ValueString())+"/archive", nil, &out); err != nil {
 		if !IsNotFound(err) {
 			resp.Diagnostics.AddError("Failed to archive secret store", err.Error())
@@ -255,5 +210,4 @@ func (r *secretStoreResource) ImportState(ctx context.Context, req resource.Impo
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("force_archive"), false)...)
 }

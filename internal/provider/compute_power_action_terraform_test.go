@@ -145,15 +145,15 @@ action "ibee_vm_power" "%[1]s_%[2]s" {
 			{"normalized start", "start", " \tStOpPeD\n", "", true},
 			{"normalized stop without billing", "stop", " \tRuNnInG\n", "", false},
 			{"normalized reboot", "reboot", " \tRUNNING\n", "", true},
-			{"already running", "start", "running", "Invalid VM power state", false},
-			{"already stopped", "stop", "stopped", "Invalid VM power state", false},
-			{"reboot stopped", "reboot", "stopped", "Invalid VM power state", false},
-			{"start transitional", "start", "starting", "Invalid VM power state", false},
-			{"stop transitional", "stop", "stopping", "Invalid VM power state", false},
-			{"reboot transitional", "reboot", "rebooting", "Invalid VM power state", false},
-			{"unknown", "start", "unknown", "Invalid VM power state", false},
-			{"missing status", "start", "", "Invalid VM response", false},
-			{"billing denied", "start", "stopped", "VM power request failed", false},
+			// The fixture API, not the provider, refuses operations from the wrong state.
+			{"already running", "start", "running", "VM is not in a state that allows start", true},
+			{"already stopped", "stop", "stopped", "VM is not in a state that allows stop", false},
+			{"reboot stopped", "reboot", "stopped", "VM is not in a state that allows reboot", true},
+			{"start transitional", "start", "starting", "VM is not in a state that allows start", true},
+			{"stop transitional", "stop", "stopping", "VM is not in a state that allows stop", false},
+			{"reboot transitional", "reboot", "rebooting", "VM is not in a state that allows reboot", true},
+			{"unknown", "start", "unknown", "VM is not in a state that allows start", true},
+			{"billing denied", "start", "stopped", "billing_denied", false},
 		} {
 			t.Run(vmType+"/"+tc.name, func(t *testing.T) {
 				fixture.mu.Lock()
@@ -168,13 +168,13 @@ action "ibee_vm_power" "%[1]s_%[2]s" {
 				if tc.diagnostic != "" && !strings.Contains(out, tc.diagnostic) {
 					t.Fatalf("expected %q diagnostic:\n%s", tc.diagnostic, out)
 				}
-				endpoint := "/compute/" + vmType + "-vms/" + vmType + "-vm"
-				wantRequests := []string{"GET " + endpoint}
-				if tc.diagnostic == "VM power request failed" {
-					wantRequests = append(wantRequests, "POST "+endpoint+"/actions/"+tc.operation)
+				if tc.diagnostic != "" && !strings.Contains(out, "VM power request failed") {
+					t.Fatalf("expected the API refusal to be relayed:\n%s", out)
 				}
+				endpoint := "/compute/" + vmType + "-vms/" + vmType + "-vm"
+				wantRequests := []string{"POST " + endpoint + "/actions/" + tc.operation}
 				if tc.diagnostic == "" {
-					wantRequests = append(wantRequests, "POST "+endpoint+"/actions/"+tc.operation, "GET /compute/operations/power-op", "GET "+endpoint)
+					wantRequests = append(wantRequests, "GET /compute/operations/power-op", "GET "+endpoint)
 				}
 				fixture.mu.Lock()
 				got := append([]string(nil), fixture.requests...)
@@ -210,6 +210,15 @@ func (f *powerActionTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.R
 	case "POST /billing/resource-eligibility":
 		blockEligibility(w, f.allowed, "INR")
 	case "POST " + endpoint + "/actions/" + f.operation:
+		required := "running"
+		if f.operation == "start" {
+			required = "stopped"
+		}
+		if strings.ToLower(strings.TrimSpace(f.status)) != required {
+			w.WriteHeader(http.StatusConflict)
+			computeJSON(w, map[string]any{"detail": "VM is not in a state that allows " + f.operation})
+			return
+		}
 		if !f.allowed && f.operation != "stop" {
 			w.WriteHeader(http.StatusPaymentRequired)
 			computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance"})

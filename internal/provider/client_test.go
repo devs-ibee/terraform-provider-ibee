@@ -35,15 +35,28 @@ func TestClientRetriesOnlySafeRequests(t *testing.T) {
 	for _, tc := range []struct {
 		name, method string
 		keyed        bool
+		status       int
+		body         string
 		want         int
-	}{{"read", "GET", false, 4}, {"mutation", "POST", false, 1}, {"keyed mutation", "POST", true, 4}} {
+	}{
+		{"read 503", "GET", false, 503, `{"detail":"unavailable"}`, 4},
+		{"read 502", "GET", false, 502, `{"detail":"bad gateway"}`, 4},
+		{"read 504", "GET", false, 504, `{"detail":"timeout"}`, 4},
+		{"write 503", "POST", false, 503, `{"detail":"unavailable"}`, 4},
+		{"write 429", "POST", false, 429, `{"detail":"slow down"}`, 4},
+		{"keyed create 502", "POST", true, 502, `{"detail":"bad gateway"}`, 1},
+		{"keyed create 504", "POST", true, 504, `{"detail":"timeout"}`, 1},
+		{"keyed create 503 admission", "POST", true, 503, `{"error":"billing_admission_timeout","admission_context_id":"ctx-1"}`, 1},
+		{"write 429 billing", "POST", false, 429, `{"error":"rate_limited","billing_reason":"credit_check"}`, 1},
+		{"write 409", "POST", true, 409, `{"detail":"conflict"}`, 1},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				w.Header().Set("Retry-After", "0")
-				w.WriteHeader(503)
-				fmt.Fprint(w, `{"detail":"unavailable"}`)
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
 			}))
 			defer s.Close()
 			c := NewClient(s.URL, "token", "workspace")
@@ -95,7 +108,11 @@ func TestClientInvalidJSONAndWrappedNotFound(t *testing.T) {
 func TestClientRedactsTokenAndCancelsRetry(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(503)
+		if r.Method == http.MethodPost {
+			w.WriteHeader(400)
+		} else {
+			w.WriteHeader(503)
+		}
 		fmt.Fprint(w, `{"detail":"test-token"}`)
 	}))
 	defer s.Close()
