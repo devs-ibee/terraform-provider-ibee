@@ -173,6 +173,7 @@ func (p *ibeeProvider) Resources(_ context.Context) []func() resource.Resource {
 		NewCloudVmBackupPolicyResource, NewGpuVmBackupPolicyResource,
 		NewCloudVmVolumeAttachmentResource, NewGpuVmVolumeAttachmentResource,
 		NewBucketResource, NewBucketRetentionResource, NewS3CredentialResource, NewSecretStoreResource, NewSecretResource,
+		NewSecretIdentityResource, NewSecretIdentityScopeResource,
 	}
 }
 func (p *ibeeProvider) DataSources(_ context.Context) []func() datasource.DataSource {
@@ -183,6 +184,6 @@ func (p *ibeeProvider) DataSources(_ context.Context) []func() datasource.DataSo
 
 func (p *ibeeProvider) Actions(_ context.Context) []func() action.Action {
 	return []func() action.Action{NewCDNPurgeAction, NewCDNVerifyDomainAction,
-		NewVmPowerAction,
+		NewVmPowerAction, NewVmAccessAction, NewVmSnapshotRestoreAction, NewVmBackupRestoreAction, NewVmBackupRunAction,
 	}
 }

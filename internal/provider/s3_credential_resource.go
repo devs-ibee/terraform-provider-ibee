@@ -245,12 +245,11 @@ func (r *s3CredentialResource) Delete(ctx context.Context, req resource.DeleteRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Use the explicit revoke operation. The native DELETE currently erases
-	// metadata, whereas earlier published schemas described DELETE as revoke.
+	// revokeS3Credential. The credential may then read as revoked or be gone.
 	var result struct {
 		Success *bool `json:"success"`
 	}
-	err := r.client.do(ctx, http.MethodPost, s3CredentialPath(state.ID.ValueString())+"/revoke", nil, &result)
+	err := r.client.do(ctx, http.MethodDelete, s3CredentialPath(state.ID.ValueString()), nil, &result)
 	if err != nil && !IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to revoke S3 credential", s3CredentialSafeError(err))
 		return

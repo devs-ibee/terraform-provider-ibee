@@ -36,6 +36,7 @@ func (v networkValues) segment(k string) string { return url.PathEscape(v.str(k)
 type networkResource struct {
 	client            *Client
 	name, description string
+	deprecation       string
 	attributes        map[string]schema.Attribute
 	// requestFields and responseFields map Terraform attributes to JSON fields.
 	requestFields, responseFields                map[string]string
@@ -64,7 +65,11 @@ func (r *networkResource) Metadata(_ context.Context, req resource.MetadataReque
 	resp.TypeName = req.ProviderTypeName + "_" + r.name
 }
 func (r *networkResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = schema.Schema{Description: r.description, Attributes: r.attributes}
+	description := r.description
+	if r.deprecation != "" {
+		description = "Deprecated. " + r.deprecation + " " + description
+	}
+	resp.Schema = schema.Schema{Description: description, DeprecationMessage: r.deprecation, Attributes: r.attributes}
 }
 func (r *networkResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {

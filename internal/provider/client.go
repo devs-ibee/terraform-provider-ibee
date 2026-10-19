@@ -88,6 +88,11 @@ func retryable(method string, e *apiError) bool {
 	}
 	return false
 }
+
+// requestObserver is set only by tests: the contract route check records the
+// method and path of every request the provider sends.
+var requestObserver func(method, path string)
+
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	return c.doH(ctx, method, path, nil, body, out)
 }
@@ -103,6 +108,9 @@ func (c *Client) doH(ctx context.Context, method, requestPath string, headers ma
 		if segment == "." || segment == ".." {
 			return fmt.Errorf("invalid API path segment")
 		}
+	}
+	if requestObserver != nil {
+		requestObserver(method, rel.EscapedPath())
 	}
 	u, err := url.Parse(c.endpoint + requestPath)
 	if err != nil {

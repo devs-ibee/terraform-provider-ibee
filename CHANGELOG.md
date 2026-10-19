@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.6.0 (unreleased)
+
+Adds the VM recovery, VM access and Secret Store identity operations the public API contract (0.4.0) already has. Like the rest of the provider, these call the API and relay its answer.
+
+### New actions (Terraform 1.14 or later)
+
+- `ibee_vm_snapshot_restore`: restores a cloud or GPU VM snapshot set with `target_mode` `replace`, `new_vm` or `volume_only`, and waits for the restore to finish.
+- `ibee_vm_backup_restore`: restores a backup recovery point the same way.
+- `ibee_vm_backup_run`: runs a manual backup now and waits for the run to finish.
+- `ibee_vm_access`: adds or removes inline SSH keys or Secret Store key IDs, resets the Linux user password, or turns SSH password login on or off. `ibee_cloud_vm` and `ibee_gpu_vm` still update `ssh_key_ids` in place.
+
+### New resources
+
+- `ibee_secret_identity`: an AppRole or Kubernetes application identity for a secret store. `token_policy_mode` and `enabled` change in place. The AppRole `role_id` and `secret_id` are read once, at creation, and kept in state (`secret_id` is sensitive).
+- `ibee_secret_identity_scope`: grants an identity access to another store; permissions change in place.
+
+### Fixes
+
+- `ibee_s3_credential`: destroy now revokes the key with `DELETE /object-storage/credentials/{access_key_id}`, the contract's revoke operation. The previous `POST .../revoke` route is not served by the API gateway.
+- `ibee_secret_store`: the archived-store warning no longer says the API cannot unarchive.
+
+### Deprecated
+
+The public API contract has no operation for these resources, so the API gateway does not serve the routes they call. They will be removed in a future release unless the API adds the operations.
+
+- `ibee_bucket_cors`, `ibee_bucket_lifecycle`, `ibee_bucket_notifications` (`/object-storage/buckets/{bucket_name}/{cors,lifecycle,notifications}`)
+- `ibee_bucket_retention` (`/object-storage/buckets/{bucket_name}/object-lock-configuration`)
+- `ibee_cdn_origin` (`/cdn/origins`)
+
+### Development
+
+- The public API contract is vendored at `contract/ibee-cloud.yaml`. The test suite now checks that every request the provider sends is an operation in it, and fails when an API call site is neither exercised by a test nor checkable from its source.
+- Every action page has an Example Usage section.
+
 ## 0.5.0 (2026-10-19)
 
 The provider is now a thin layer over the IBEE API: resources call the API and relay its answer. Business rules (pricing, eligibility, lifecycle, state checks) are decided by the API, not by the provider.
