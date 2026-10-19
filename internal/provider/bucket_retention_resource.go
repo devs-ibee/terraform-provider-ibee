@@ -53,7 +53,8 @@ func (r *bucketRetentionResource) Metadata(_ context.Context, req resource.Metad
 
 func (r *bucketRetentionResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manage the default retention rule of an Object Lock-enabled bucket through its native object-lock-configuration endpoint. Exactly one of days or years is required. The current service cannot clear this rule. Destroy therefore fails by default; explicitly applying retain_on_destroy=true permits Terraform to relinquish management while retaining the remote rule and all protected objects. Never use this resource to erase retained data. Endpoint deployment must be verified before live use.",
+		DeprecationMessage: offContractDeprecation("bucket retention (object-lock-configuration)"),
+		Description:        "Deprecated. " + offContractDeprecation("bucket retention (object-lock-configuration)") + " Manage the default retention rule of an Object Lock-enabled bucket through its native object-lock-configuration endpoint. Exactly one of days or years is required. The current service cannot clear this rule. Destroy therefore fails by default; explicitly applying retain_on_destroy=true permits Terraform to relinquish management while retaining the remote rule and all protected objects. Never use this resource to erase retained data. Endpoint deployment must be verified before live use.",
 		Attributes: map[string]schema.Attribute{
 			"id":                schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "Bucket name, also used as the import ID."},
 			"bucket_name":       schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Existing bucket created with object_lock_enabled=true. Import an existing default rule instead of overwriting it during creation."},
@@ -100,6 +101,12 @@ func (r *bucketRetentionResource) ValidateConfig(ctx context.Context, req resour
 }
 
 func bucketRetentionPath(name string) string { return bucketPath(name) + "/object-lock-configuration" }
+
+// offContractDeprecation marks a resource whose routes are not in the public
+// API contract, so the gateway does not serve them.
+func offContractDeprecation(feature string) string {
+	return "The public API has no " + feature + " operation, so the API gateway does not serve the routes this resource calls. It will be removed in a future release unless the API adds the operation."
+}
 
 func (rule bucketRetentionRule) validate() error {
 	if rule.Mode != "GOVERNANCE" && rule.Mode != "COMPLIANCE" {

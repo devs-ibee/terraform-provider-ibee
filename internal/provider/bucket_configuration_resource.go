@@ -28,6 +28,7 @@ func newBucketConfiguration(section, collection, description string, fields map[
 		section: section, collection: collection,
 		networkResource: &networkResource{
 			name:         "bucket_" + section,
+			deprecation:  offContractDeprecation("bucket " + section),
 			description:  description + " Owns the complete configuration section. Import using the bucket name before managing existing nonempty configuration. Creation refuses to overwrite it; the preflight is not atomic, so use one writer per bucket section. Destroy clears this section and confirms an empty API response.",
 			importFields: []string{"bucket_name"},
 			attributes: map[string]schema.Attribute{

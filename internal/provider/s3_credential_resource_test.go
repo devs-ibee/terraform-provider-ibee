@@ -45,10 +45,7 @@ func TestS3CredentialLifecycleAndScopedDrift(t *testing.T) {
 			out := s3TestMetadata("active")
 			out["secret_access_key"] = generatedSecret
 			json.NewEncoder(w).Encode(out)
-		case strings.HasSuffix(req.URL.Path, "/revoke"):
-			if req.Method != http.MethodPost {
-				t.Error("revocation did not use explicit revoke")
-			}
+		case req.Method == http.MethodDelete:
 			revoked = true
 			metadata["status"] = "revoked"
 			fmt.Fprint(w, `{"success":true,"message":"revoked"}`)
@@ -222,12 +219,13 @@ func TestS3CredentialCreateErrorRedactionAndPartialRecovery(t *testing.T) {
 
 func TestS3CredentialRevokeConfirmation(t *testing.T) {
 	for _, tc := range []struct {
-		name, status      string
-		postCode, getCode int
-		body              string
-		wantError         bool
+		name, status        string
+		revokeCode, getCode int
+		body                string
+		wantError           bool
 	}{
 		{"success", "revoked", 200, 200, `{"success":true}`, false},
+		{"success-erased", "", 200, 404, `{"success":true}`, false},
 		{"gone", "", 404, 404, `{}`, false},
 		{"already-revoked", "revoked", 404, 200, `{}`, false},
 		{"still-active", "active", 200, 200, `{"success":true}`, true},
@@ -237,8 +235,8 @@ func TestS3CredentialRevokeConfirmation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &s3CredentialResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				if req.Method == http.MethodPost {
-					w.WriteHeader(tc.postCode)
+				if req.Method == http.MethodDelete {
+					w.WriteHeader(tc.revokeCode)
 					fmt.Fprint(w, tc.body)
 					return
 				}

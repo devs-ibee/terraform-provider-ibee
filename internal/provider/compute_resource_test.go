@@ -767,3 +767,38 @@ func TestComputeVMSSHKeyChangeUsesAccessOperation(t *testing.T) {
 		t.Fatalf("keys must be added before others are removed: %v", changes)
 	}
 }
+
+func TestComputeVMDeleteWaitsForOperation(t *testing.T) {
+	for _, kind := range []string{"cloud", "gpu"} {
+		t.Run(kind, func(t *testing.T) {
+			deleted := false
+			r := &cloudVmResource{vmType: kind}
+			r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+				switch req.Method + " " + req.URL.Path {
+				case "DELETE /compute/" + kind + "-vms/vm-1":
+					var b map[string]any
+					_ = json.NewDecoder(req.Body).Decode(&b)
+					if b["public_ip_action"] != "release" || req.Header.Get("X-Idempotency-Key") == "" {
+						t.Error("unexpected delete request", b)
+					}
+					computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op-delete", Status: "accepted"})
+				case "GET /compute/operations/op-delete":
+					deleted = true
+					computeJSON(w, map[string]any{"status": "succeeded"})
+				default:
+					t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
+					w.WriteHeader(500)
+				}
+			})
+			state := computeValidVMPlan()
+			state.ID, state.Cpu, state.RamMb, state.DiskGb, state.GpuCount = types.StringValue("vm-1"), types.Int64Value(4), types.Int64Value(8192), types.Int64Value(80), types.Int64Value(1)
+			state.GpuModel, state.Status, state.PublicIP, state.PrivateIP = types.StringValue("A100"), types.StringValue("running"), types.StringNull(), types.StringNull()
+			resp := resource.DeleteResponse{}
+			r.Delete(context.Background(), resource.DeleteRequest{State: computeState(t, r, state)}, &resp)
+			computeNoErrors(t, resp.Diagnostics)
+			if !deleted {
+				t.Fatal("delete did not wait for its operation")
+			}
+		})
+	}
+}

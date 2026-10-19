@@ -218,15 +218,15 @@ func (f *s3TerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		send(response)
 		return
 	}
-	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/object-storage/credentials/"), "/revoke")
+	id := strings.TrimPrefix(r.URL.Path, "/object-storage/credentials/")
 	key := f.keys[id]
 	if key == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if strings.HasSuffix(r.URL.Path, "/revoke") && r.Method == http.MethodPost {
+	if r.Method == http.MethodDelete {
 		key["status"] = "revoked"
-		send(map[string]any{"success": true})
+		send(map[string]any{"success": true, "message": "revoked"})
 		return
 	}
 	if r.Method != http.MethodGet {

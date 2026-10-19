@@ -136,7 +136,7 @@ func (r *cdnDistributionResource) Update(ctx context.Context, req resource.Updat
 
 func NewCDNOriginResource() resource.Resource {
 	base := "/cdn/origins"
-	r := &networkResource{name: "cdn_origin", description: "An HTTPS custom origin for IBEE CDN. Terraform manages origin configuration, not the remote origin server. Remove dependent distributions before deleting the origin.",
+	r := &networkResource{name: "cdn_origin", deprecation: offContractDeprecation("CDN origin"), description: "An HTTPS custom origin for IBEE CDN. Terraform manages origin configuration, not the remote origin server. Remove dependent distributions before deleting the origin.",
 		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "name": networkRequired(false), "origin_url": networkRequired(false), "default_url": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("name", "origin_url"), responseFields: networkIdentityFields("name", "origin_url", "default_url"),
 		createPath: networkPath(base), readPath: func(v networkValues) string { return base + "/" + v.segment("id") }, updatePath: func(v networkValues) string { return base + "/" + v.segment("id") }, deletePath: func(v networkValues) string { return base + "/" + v.segment("id") }, idField: "id", importFields: []string{"id"}, waitDelete: true,

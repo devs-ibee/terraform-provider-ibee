@@ -42,3 +42,5 @@ Browse highlighted resources: [Cloud VM](docs/resources/cloud_vm.md), [VPC](docs
 ## Contributing
 
 Contributions are welcome. Open an issue or pull request to get started.
+
+The provider is built against the public API contract in [contract/ibee-cloud.yaml](contract/ibee-cloud.yaml). `go test ./...` fails if the provider sends a request that is not an operation in it; update the vendored copy when the contract changes.

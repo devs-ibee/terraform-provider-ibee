@@ -14,8 +14,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 ADDRESS = "registry.terraform.io/devs-ibee/ibee"
 EXAMPLES = ROOT / "examples"
-# Per-page examples: examples/<category>/<name>/{resource.tf,data-source.tf,import.sh}.
-SNIPPETS = {"resources": "resource.tf", "data-sources": "data-source.tf"}
+# Per-page examples: examples/<category>/<name>/{resource.tf,data-source.tf,action.tf,import.sh}.
+SNIPPETS = {"resources": "resource.tf", "data-sources": "data-source.tf", "actions": "action.tf"}
 PROVIDER_BLOCK = 'terraform {\n  required_providers {\n    ibee = { source = "devs-ibee/ibee" }\n  }\n}\n\n'
 
 
@@ -115,7 +115,10 @@ def main():
             for path in directory.glob("*.md"):
                 if path not in expected:
                     stale.append(str(path.relative_to(ROOT)))
-        for category, key in [("resources", "resource_schemas"), ("data-sources", "data_source_schemas")]:
+        categories = [("resources", "resource_schemas"), ("data-sources", "data_source_schemas")]
+        if supports_actions:
+            categories.append(("actions", "action_schemas"))
+        for category, key in categories:
             for directory in (EXAMPLES / category).iterdir():
                 if directory.is_dir() and directory.name not in schema.get(key, {}):
                     stale.append(str(directory.relative_to(ROOT)))
@@ -123,7 +126,8 @@ def main():
             raise SystemExit("Documentation differs; run make docs and review: " + ", ".join(stale))
         snippet_roots = [EXAMPLES / category for category in SNIPPETS]
         for directory in sorted({p.parent for p in EXAMPLES.rglob("*.tf")}):
-            if directory.name == "actions" and not supports_actions:
+            actions = EXAMPLES / "actions"
+            if not supports_actions and (directory == actions or actions in directory.parents):
                 continue
             if any(root in directory.parents for root in snippet_roots):
                 # Page examples are fragments; validate each with a provider block.

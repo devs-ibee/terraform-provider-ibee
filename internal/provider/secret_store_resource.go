@@ -143,7 +143,7 @@ func (r *secretStoreResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 	if out.Status == "archived" {
-		resp.Diagnostics.AddWarning("Secret store is archived", "The record and its reserved name still exist. Restore it through the portal before modifying it; the public API does not offer unarchive.")
+		resp.Diagnostics.AddWarning("Secret store is archived", "The record and its reserved name still exist. Unarchive it before modifying it.")
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

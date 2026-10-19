@@ -87,6 +87,10 @@ func TestComputeRecoveryCatalogRefreshDenialsPreserveState(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/%s/%d", kind, product, status), func(t *testing.T) {
 					client := computeTestClient(t, func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(status) })
 					r, model := recoveryTestResource(kind, product, client)
+					if m, ok := model.(vmSnapshotModel); ok {
+						m.ID = types.StringValue("snap")
+						model = m
+					}
 					state := computeState(t, r, model)
 					resp := resource.ReadResponse{State: state}
 					r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
