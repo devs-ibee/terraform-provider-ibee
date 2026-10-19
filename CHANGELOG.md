@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0 (2026-10-19)
 
 The provider is now a thin layer over the IBEE API: resources call the API and relay its answer. Business rules (pricing, eligibility, lifecycle, state checks) are decided by the API, not by the provider.
 
