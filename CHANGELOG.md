@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 (unreleased)
+## 0.6.0 (2026-10-19)
 
 Adds the VM recovery, VM access and Secret Store identity operations the public API contract (0.4.0) already has. Like the rest of the provider, these call the API and relay its answer.
 
