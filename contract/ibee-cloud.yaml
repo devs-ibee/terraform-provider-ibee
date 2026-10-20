@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: IBEE Solutions API
-  version: 0.4.0
+  version: 0.5.0
   description: |
     Public API reference for IBEE Solutions.
 
@@ -49,6 +49,10 @@ tags:
     description: Manage CDN distributions, static websites, custom domains, URLs, and cache purges.
     x-fern-display-name: CDN
     x-displayName: CDN
+  - name: ContainerRegistry
+    description: Manage container registries, storage plans, registry access tokens, repositories, images, vulnerability findings, SBOMs, and usage metrics.
+    x-fern-display-name: Container Registry
+    x-displayName: Container Registry
 
   - name: CloudVms
     description: Deploy and manage cloud virtual machines.
@@ -5893,6 +5897,805 @@ paths:
         "423": { $ref: "#/components/responses/Locked" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  # Container Registry. The gateway forwards each path below, and only these
+  # paths, to the container-registry service's /api/v1 routes. The service owns
+  # ownership, lifecycle and Billing checks; the contract adds no rule of its
+  # own. Schemas follow IBEE/container-registry src/ibee_container_registry/
+  # schemas.py; internal fields the service also returns (harbor_project_id,
+  # harbor_project_name, last_error) are deliberately not part of the contract.
+  /container-registry/registry-names/{registry_name}/availability:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - name: registry_name
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 3
+          maxLength: 48
+          pattern: "^[a-z][a-z0-9-]{1,46}[a-z0-9]$"
+        description: Registry name to check.
+    get:
+      tags: [ContainerRegistry]
+      summary: Check registry name availability
+      description: "Checks whether a registry name is free across IBEE. Names are global and never reassigned; unavailable names come with suggestions. Requires scope: container-registry.read."
+      operationId: checkContainerRegistryNameAvailability
+      x-ibee-required-scope: container-registry.read
+      responses:
+        "200":
+          description: Availability returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryNameAvailability" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [ContainerRegistry]
+      summary: List registries
+      description: "Lists the workspace's registries, newest first. Paged with `page` and `page_size` (at most 100). Requires scope: container-registry.read."
+      operationId: listContainerRegistries
+      x-ibee-required-scope: container-registry.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ContainerRegistryPageSize"
+      responses:
+        "200":
+          description: Registries returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    post:
+      tags: [ContainerRegistry]
+      summary: Create registry
+      description: |
+        Creates a registry with a storage plan (`billing_catalog.sku_code`).
+        The registry service asks Billing whether the workspace may buy that
+        plan and refuses with 403 `billing_resource_not_eligible` (and a
+        `reason`) when it may not. Returns 201 when the registry is active, or
+        202 while provisioning finishes in the background; poll the registry
+        until `observed_state` is `ACTIVE`. Requires scope:
+        container-registry.write.
+      operationId: createContainerRegistry
+      x-ibee-required-scope: container-registry.write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateContainerRegistryRequest" }
+            example:
+              registry_name: acme-apps
+              confirm_registry_name: acme-apps
+              visibility: PRIVATE
+              security:
+                vulnerability_pull_policy: ALLOW
+              billing_catalog:
+                sku_code: REGISTRY-STORAGE-250GB
+      responses:
+        "201":
+          description: Registry created and active.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistry" }
+        "202":
+          description: Registry accepted; provisioning continues in the background.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: Get registry
+      description: "Returns one registry, including its visibility, pull policy and provisioning state. A deleted registry is still returned, with `deleted_at` set. Requires scope: container-registry.read."
+      operationId: getContainerRegistry
+      x-ibee-required-scope: container-registry.read
+      responses:
+        "200":
+          description: Registry returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    delete:
+      tags: [ContainerRegistry]
+      summary: Delete registry
+      description: "Starts deleting a registry; returns 202 with `observed_state: DELETING`. The registry must be empty: 409 with `detail.code: registry_not_empty` otherwise (see Empty registry). The name is never reused. Requires scope: container-registry.write."
+      operationId: deleteContainerRegistry
+      x-ibee-required-scope: container-registry.write
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistryConfirmName"
+      responses:
+        "202":
+          description: Deletion accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/visibility:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    patch:
+      tags: [ContainerRegistry]
+      summary: Change registry visibility
+      description: "Makes a registry private or public. Public requires `acknowledge_public_egress_charges: true`, because anonymous pull bandwidth is billed to the workspace. Returns 202 while the change is applied. Requires scope: container-registry.write."
+      operationId: updateContainerRegistryVisibility
+      x-ibee-required-scope: container-registry.write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateContainerRegistryVisibilityRequest" }
+            example:
+              visibility: PUBLIC
+              acknowledge_public_egress_charges: true
+      responses:
+        "202":
+          description: Visibility change accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/reconcile:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    post:
+      tags: [ContainerRegistry]
+      summary: Retry registry provisioning
+      description: "Queues the registry's pending change (create, update, upgrade or delete) to run again, for example after `observed_state: ERROR`. Requires scope: container-registry.write."
+      operationId: retryContainerRegistryProvisioning
+      x-ibee-required-scope: container-registry.write
+      responses:
+        "202":
+          description: Retry queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryReconcile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/empty:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    post:
+      tags: [ContainerRegistry]
+      summary: Empty registry
+      description: "Permanently deletes every repository and image in a registry, so it can be deleted. A bounded run can stop early with 409 `detail.code: registry_empty_incomplete` (`retryable: true`); pause pushes and call again. Requires scope: container-registry.write."
+      operationId: emptyContainerRegistry
+      x-ibee-required-scope: container-registry.write
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistryConfirmName"
+      responses:
+        "200":
+          description: Registry emptied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryEmptyResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/package:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: Get registry storage plan
+      description: "Returns the registry's current storage plan, a pending upgrade if there is one, and the status of the change being applied. Requires scope: container-registry.read."
+      operationId: getContainerRegistryPackage
+      x-ibee-required-scope: container-registry.read
+      responses:
+        "200":
+          description: Plan returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryPackage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/upgrade:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    post:
+      tags: [ContainerRegistry]
+      summary: Upgrade registry storage plan
+      description: |
+        Moves an active registry to a larger storage plan. Only larger quotas
+        are accepted and only one change can be pending (409 otherwise). The
+        registry service asks Billing first and refuses with 403
+        `billing_resource_not_eligible` when the plan is not allowed. Send an
+        `Idempotency-Key` header: a retry with the same key and plan returns
+        the original operation (202 while pending, 200 once applied); the same
+        key with a different plan returns 409. Requires scope:
+        container-registry.write.
+      operationId: upgradeContainerRegistryPackage
+      x-ibee-required-scope: container-registry.write
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistryIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpgradeContainerRegistryPackageRequest" }
+            example:
+              billing_catalog:
+                sku_code: REGISTRY-STORAGE-500GB
+      responses:
+        "200":
+          description: Replay of an upgrade that has already been applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryPackageOperation" }
+        "202":
+          description: Upgrade accepted and pending.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryPackageOperation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/access-tokens:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: List registry access tokens
+      description: "Lists the access tokens that can use this registry, newest first. Secrets are never returned. Requires scope: container-registry.read."
+      operationId: listContainerRegistryAccessTokens
+      x-ibee-required-scope: container-registry.read
+      parameters:
+        - name: include_revoked
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: Include revoked tokens.
+      responses:
+        "200":
+          description: Tokens returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ContainerRegistryAccessToken" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    post:
+      tags: [ContainerRegistry]
+      summary: Create registry access token
+      description: |
+        Creates a Docker login credential for the registry. The `username`
+        and `secret` are returned once and cannot be read again. The registry
+        must be active, and the registry service asks Billing whether the
+        workspace may create credentials. Requires scope:
+        container-registry.write.
+      operationId: createContainerRegistryAccessToken
+      x-ibee-required-scope: container-registry.write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateContainerRegistryAccessTokenRequest" }
+            example:
+              token_name: production-k8s
+              permission: PULL
+              expires_in_days: 90
+      responses:
+        "201":
+          description: Token created. Store the secret now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryAccessTokenSecret" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/access-tokens/{token_id}/rotate:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+      - $ref: "#/components/parameters/ContainerRegistryTokenId"
+    post:
+      tags: [ContainerRegistry]
+      summary: Rotate registry access token
+      description: "Issues a new secret for an active token; the old secret stops working immediately. The new secret is returned once. Revoked or expired tokens return 409. Requires scope: container-registry.write."
+      operationId: rotateContainerRegistryAccessToken
+      x-ibee-required-scope: container-registry.write
+      responses:
+        "200":
+          description: Secret rotated. Store the new secret now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryAccessTokenSecret" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/access-tokens/{token_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+      - $ref: "#/components/parameters/ContainerRegistryTokenId"
+    delete:
+      tags: [ContainerRegistry]
+      summary: Revoke registry access token
+      description: "Revokes a token immediately. Revoking an already revoked token succeeds. Requires scope: container-registry.write."
+      operationId: revokeContainerRegistryAccessToken
+      x-ibee-required-scope: container-registry.write
+      responses:
+        "200":
+          description: Token revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryMessage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/repositories:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: List repositories
+      description: "Lists an active registry's repositories. Paged with `page` and `page_size` (at most 100). Requires scope: container-registry.read."
+      operationId: listContainerRegistryRepositories
+      x-ibee-required-scope: container-registry.read
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: "^[^,%=]+$" }
+          description: Fuzzy match on the repository name.
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [name, -name, pull_count, -pull_count, creation_time, -creation_time, update_time, -update_time]
+          description: Column to sort by; prefix with `-` for descending.
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ContainerRegistryPageSize"
+      responses:
+        "200":
+          description: Repositories returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryRepositoryList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/repositories/{repository_name}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+      - name: repository_name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1 }
+        description: Repository name inside the registry, for example `api`.
+    delete:
+      tags: [ContainerRegistry]
+      summary: Delete repository
+      description: "Permanently deletes a repository and all of its images. Requires `confirm=true`. Requires scope: container-registry.write."
+      operationId: deleteContainerRegistryRepository
+      x-ibee-required-scope: container-registry.write
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistryConfirm"
+      responses:
+        "200":
+          description: Repository deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryMessage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/artifacts:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: List artifacts
+      description: "Lists the images (artifacts) in one repository with their tags and scan overview. Paged with `page` and `page_size` (at most 100). Requires scope: container-registry.read."
+      operationId: listContainerRegistryArtifacts
+      x-ibee-required-scope: container-registry.read
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistryRepositoryName"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ContainerRegistryPageSize"
+      responses:
+        "200":
+          description: Artifacts returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryArtifactList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/artifacts/{reference}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+      - $ref: "#/components/parameters/ContainerRegistryArtifactReference"
+    delete:
+      tags: [ContainerRegistry]
+      summary: Delete artifact
+      description: "Permanently deletes one image and every tag that points to it. Requires `confirm=true`. Requires scope: container-registry.write."
+      operationId: deleteContainerRegistryArtifact
+      x-ibee-required-scope: container-registry.write
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistryRepositoryName"
+        - $ref: "#/components/parameters/ContainerRegistryConfirm"
+      responses:
+        "200":
+          description: Artifact deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryMessage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/artifacts/{reference}/scan:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+      - $ref: "#/components/parameters/ContainerRegistryArtifactReference"
+    post:
+      tags: [ContainerRegistry]
+      summary: Rescan artifact
+      description: "Queues a new vulnerability scan of one image. Existing results stay visible until it completes. Requires scope: container-registry.write."
+      operationId: scanContainerRegistryArtifact
+      x-ibee-required-scope: container-registry.write
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistryRepositoryName"
+      responses:
+        "202":
+          description: Scan queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryMessage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/security/settings:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: Get registry security settings
+      description: "Returns the vulnerability pull policy. Scanning and SBOM generation always run on push. Requires scope: container-registry.read."
+      operationId: getContainerRegistrySecuritySettings
+      x-ibee-required-scope: container-registry.read
+      responses:
+        "200":
+          description: Settings returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistrySecuritySettingsStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    patch:
+      tags: [ContainerRegistry]
+      summary: Update registry security settings
+      description: "Sets the vulnerability pull policy: `ALLOW`, or block pulls of images with findings at or above `CRITICAL`, `HIGH`, `MEDIUM` or `LOW`. Returns 202 while the change is applied. Requires scope: container-registry.write."
+      operationId: updateContainerRegistrySecuritySettings
+      x-ibee-required-scope: container-registry.write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateContainerRegistrySecuritySettingsRequest" }
+            example:
+              vulnerability_pull_policy: BLOCK_CRITICAL
+      responses:
+        "202":
+          description: Settings change accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistrySecuritySettingsStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/security/vulnerabilities/summary:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: Get vulnerability summary
+      description: "Returns the number of vulnerability findings in an active registry, by severity. Requires scope: container-registry.read."
+      operationId: getContainerRegistryVulnerabilitySummary
+      x-ibee-required-scope: container-registry.read
+      responses:
+        "200":
+          description: Summary returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryVulnerabilitySummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/security/vulnerabilities:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: List vulnerabilities
+      description: "Lists vulnerability findings in an active registry, with optional filters. Paged with `page` and `page_size` (at most 100). Requires scope: container-registry.read."
+      operationId: listContainerRegistryVulnerabilities
+      x-ibee-required-scope: container-registry.read
+      parameters:
+        - name: severity
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [Critical, High, Medium, Low, Unknown, None]
+        - name: cve_id
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[^,%=]+$" }
+        - name: repository_name
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+            pattern: "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$"
+        - name: digest
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: "^[a-z0-9_+.-]+:[A-Fa-f0-9]+$" }
+        - name: tag
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$" }
+        - name: package
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: "^[^,%=]+$" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ContainerRegistryPageSize"
+      responses:
+        "200":
+          description: Findings returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryVulnerabilityList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/security/sboms:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: List SBOMs
+      description: "Lists the SBOMs of one repository, one per image digest. Paged with `page` and `page_size` (at most 100). Requires scope: container-registry.read."
+      operationId: listContainerRegistrySboms
+      x-ibee-required-scope: container-registry.read
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistrySbomRepositoryName"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ContainerRegistryPageSize"
+      responses:
+        "200":
+          description: SBOMs returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistrySbomList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/security/sboms/{artifact_digest}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+      - $ref: "#/components/parameters/ContainerRegistryArtifactDigest"
+    get:
+      tags: [ContainerRegistry]
+      summary: Get SBOM
+      description: "Returns one image's SBOM components and their relationships. `q` filters components by name, version, type, license, supplier or package URL. Components are paged with `page` and `page_size` (at most 100). Requires scope: container-registry.read."
+      operationId: getContainerRegistrySbom
+      x-ibee-required-scope: container-registry.read
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistrySbomRepositoryName"
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 200 }
+          description: Component search text.
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ContainerRegistryPageSize"
+      responses:
+        "200":
+          description: SBOM returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistrySbom" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/security/sboms/{artifact_digest}/download:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+      - $ref: "#/components/parameters/ContainerRegistryArtifactDigest"
+    get:
+      tags: [ContainerRegistry]
+      summary: Download SBOM
+      description: "Downloads one image's full SBOM document as a JSON attachment (SPDX or CycloneDX). Requires scope: container-registry.read."
+      operationId: downloadContainerRegistrySbom
+      x-ibee-required-scope: container-registry.read
+      parameters:
+        - $ref: "#/components/parameters/ContainerRegistrySbomRepositoryName"
+      responses:
+        "200":
+          description: SBOM document.
+          content:
+            application/spdx+json:
+              schema: { type: string, format: binary }
+            application/vnd.cyclonedx+json:
+              schema: { type: string, format: binary }
+            application/json:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /container-registry/registries/{registry_id}/metrics:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContainerRegistryId"
+    get:
+      tags: [ContainerRegistry]
+      summary: Get registry metrics
+      description: "Returns storage use against the plan quota and outbound bandwidth over the last 24 hours, 7 days or 30 days. Bytes are decimal (1 GB = 1,000,000,000 bytes). Requires scope: container-registry.read."
+      operationId: getContainerRegistryMetrics
+      x-ibee-required-scope: container-registry.read
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: 24h
+          description: Time window.
+      responses:
+        "200":
+          description: Metrics returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryMetrics" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ContainerRegistryValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
 components:
   securitySchemes:
     IbeeApiToken:
@@ -6130,6 +6933,73 @@ components:
       schema:
         type: string
       description: Unique key used to safely retry write operations.
+    ContainerRegistryId:
+      name: registry_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Registry ID.
+    ContainerRegistryTokenId:
+      name: token_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Registry access token ID.
+    ContainerRegistryPageSize:
+      name: page_size
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      description: Number of records per page.
+    ContainerRegistryConfirmName:
+      name: confirm_registry_name
+      in: query
+      required: true
+      schema: { type: string, minLength: 3, maxLength: 48 }
+      description: The registry's name, repeated to confirm a destructive call.
+    ContainerRegistryConfirm:
+      name: confirm
+      in: query
+      required: true
+      schema: { type: boolean }
+      description: Must be `true` to confirm permanent deletion.
+    ContainerRegistryRepositoryName:
+      name: repository_name
+      in: query
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 255 }
+      description: Repository name inside the registry, for example `api` or `team/api`.
+    ContainerRegistrySbomRepositoryName:
+      name: repository_name
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+        pattern: "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$"
+      description: Repository name inside the registry, for example `api` or `team/api`.
+    ContainerRegistryArtifactReference:
+      name: reference
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Image digest (`sha256:...`) or tag.
+    ContainerRegistryArtifactDigest:
+      name: artifact_digest
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[a-z0-9_+.-]+:[A-Fa-f0-9]+$" }
+      description: Image digest, for example `sha256:4f3c...`.
+    ContainerRegistryIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$" }
+      description: >-
+        Unique key for this upgrade. The registry service reads this header
+        (not `X-Idempotency-Key`); a retry with the same key and plan returns
+        the original operation.
 
   responses:
     BadRequest:
@@ -6221,6 +7091,16 @@ components:
         `product_catalog_unavailable`, `product_catalog_not_configured` and
         `unsupported_product_quote`.
         Otherwise the product service's `detail`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ContainerRegistryValidationError:
+      description: >-
+        The registry service rejected a parameter or the body (`detail` lists
+        the invalid fields), or the selected storage plan is not sold here
+        (`detail.code`, for example `billing_sku_unavailable` or
+        `billing_selection_not_found`).
       content:
         application/json:
           schema:
@@ -8508,6 +9388,7 @@ components:
       required:
         - name
         - plan_id
+        - site_id
         - template_id
         - os_distro
         - os_type
@@ -8523,10 +9404,9 @@ components:
         site_id:
           type: string
           minLength: 1
-          nullable: true
           description: >-
-            Optional placement site ID. Omit for automatic placement. To pin
-            the VM, copy `site_id` from `GET /compute/sites` and use the same
+            Placement site ID from `GET /compute/sites`. Required: the API
+            refuses a create without it (400 `invalid_site_id`). Use the same
             value when filtering plans and images.
         os_distro:
           type: string
@@ -8636,6 +9516,7 @@ components:
       required:
         - name
         - plan_id
+        - site_id
         - template_id
         - os_distro
         - os_type
@@ -8653,10 +9534,9 @@ components:
         site_id:
           type: string
           minLength: 1
-          nullable: true
           description: >-
-            Optional placement site ID. Omit for automatic placement. To pin
-            the VM, copy `site_id` from `GET /compute/sites` and use the same
+            Placement site ID from `GET /compute/sites`. Required: the API
+            refuses a create without it (400 `invalid_site_id`). Use the same
             value when filtering plans and images.
         os_distro:
           type: string
@@ -8986,6 +9866,11 @@ components:
         ram_mb: { type: integer, minimum: 257, maximum: 2097152 }
         allow_online: { type: boolean, default: false }
         confirm_downgrade: { type: boolean, default: false }
+        billing_catalog:
+          $ref: "#/components/schemas/BillingCatalogSelection"
+          description: >-
+            Optional. The target plan's `billing_catalog` from
+            `GET /compute/plans`. The VM engine records it with the resize.
         requested_by: { type: string, default: api }
 
     VmResizeRootDiskRequest:
@@ -8994,6 +9879,11 @@ components:
       properties:
         new_size_gb: { type: integer, minimum: 1, maximum: 10000 }
         allow_online: { type: boolean, default: false }
+        billing_catalog:
+          $ref: "#/components/schemas/BillingCatalogSelection"
+          description: >-
+            Optional. A Billing catalog selection that the VM engine records
+            with the resize.
         requested_by: { type: string, default: api }
 
     VmResizeShape:
@@ -9032,8 +9922,8 @@ components:
           $ref: "#/components/schemas/BillingCatalogSelection"
           description: >-
             Required. The Block Storage SKU from the Billing catalog that the
-            VM engine records for this attachment. No public operation lists
-            it yet.
+            VM engine records for this attachment. Copy it from the volume's
+            `metadata.billing_catalog` (`GET /block-storage/volumes/{volume_id}`).
         requested_by: { type: string, default: api }
 
     VmDetachVolumeRequest:
@@ -9724,6 +10614,15 @@ components:
           items: { $ref: "#/components/schemas/BlockVolumeAttachment" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        metadata:
+          type: object
+          additionalProperties: true
+          properties:
+            billing_catalog:
+              $ref: "#/components/schemas/BillingCatalogSelection"
+              description: >-
+                The Block Storage SKU this volume is billed under. Pass it as
+                `billing_catalog` when attaching the volume to a VM.
 
     BlockVolumeOperation:
       type: object
@@ -10110,3 +11009,579 @@ components:
               items: {}
           description: Error detail from the product service.
           example: Forbidden
+
+    # Container Registry, from IBEE/container-registry
+    # src/ibee_container_registry/schemas.py and core/enums.py.
+    ContainerRegistryVisibility:
+      type: string
+      enum: [PRIVATE, PUBLIC]
+      description: >-
+        `PRIVATE` registries need a registry access token to pull. `PUBLIC`
+        registries allow anonymous pulls, whose outbound bandwidth is billed
+        to the workspace. Pushing always needs a token with push permission.
+
+    ContainerRegistryPullPolicy:
+      type: string
+      enum: [ALLOW, BLOCK_CRITICAL, BLOCK_HIGH, BLOCK_MEDIUM, BLOCK_LOW]
+      description: >-
+        `ALLOW` pulls every image. `BLOCK_<SEVERITY>` refuses pulls of images
+        with a finding at or above that severity.
+
+    ContainerRegistryObservedState:
+      type: string
+      enum: [PROVISIONING, UPDATING, DELETING, ACTIVE, ERROR, DELETED]
+
+    ContainerRegistryJobStatus:
+      type: string
+      enum: [PENDING, PROCESSING, COMPLETE, FAILED]
+
+    ContainerRegistryAccessTokenPermission:
+      type: string
+      enum: [PULL, PULL_PUSH]
+
+    ContainerRegistryNameAvailability:
+      type: object
+      required: [registry_name, available, suggestions]
+      properties:
+        registry_name: { type: string }
+        available: { type: boolean }
+        suggestions:
+          type: array
+          items: { type: string }
+          description: Free names close to the requested one, when it is taken.
+
+    ContainerRegistryBillingCatalog:
+      type: object
+      additionalProperties: false
+      required: [sku_code]
+      properties:
+        sku_code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: >-
+            Storage plan SKU, for example `REGISTRY-STORAGE-250GB`. The
+            service trims and upper-cases it, then requires
+            `^[A-Z0-9][A-Z0-9_.-]*$`. Capacity and price come from Billing.
+
+    ContainerRegistrySecuritySettings:
+      type: object
+      properties:
+        vulnerability_pull_policy:
+          $ref: "#/components/schemas/ContainerRegistryPullPolicy"
+
+    CreateContainerRegistryRequest:
+      type: object
+      required: [registry_name, confirm_registry_name, billing_catalog]
+      properties:
+        registry_name:
+          type: string
+          minLength: 3
+          maxLength: 48
+          pattern: "^[a-z][a-z0-9-]{1,46}[a-z0-9]$"
+          description: Globally unique name; it cannot be changed or reused.
+        confirm_registry_name:
+          type: string
+          minLength: 3
+          maxLength: 48
+          description: Must equal `registry_name`.
+        visibility:
+          allOf: [{ $ref: "#/components/schemas/ContainerRegistryVisibility" }]
+          default: PRIVATE
+        acknowledge_public_egress_charges:
+          type: boolean
+          default: false
+          description: Required to be `true` when `visibility` is `PUBLIC`.
+        security:
+          $ref: "#/components/schemas/ContainerRegistrySecuritySettings"
+        billing_catalog:
+          $ref: "#/components/schemas/ContainerRegistryBillingCatalog"
+
+    UpdateContainerRegistryVisibilityRequest:
+      type: object
+      required: [visibility]
+      properties:
+        visibility:
+          $ref: "#/components/schemas/ContainerRegistryVisibility"
+        acknowledge_public_egress_charges:
+          type: boolean
+          default: false
+          description: Required to be `true` when `visibility` is `PUBLIC`.
+
+    ContainerRegistry:
+      type: object
+      required:
+        - registry_id
+        - registry_name
+        - registry_kind
+        - organization_id
+        - workspace_id
+        - visibility
+        - security
+        - desired_state
+        - observed_state
+        - generation
+        - observed_generation
+        - created_at
+        - updated_at
+        - deleted_at
+      properties:
+        registry_id: { type: string, format: uuid }
+        registry_name:
+          type: string
+          description: >-
+            Registry name. Images live at
+            `registry.ibee.ai/<registry_name>/<repository>:<tag>`.
+        registry_kind: { type: string, enum: [CUSTOMER] }
+        organization_id: { type: string }
+        workspace_id: { type: string }
+        visibility: { $ref: "#/components/schemas/ContainerRegistryVisibility" }
+        security: { $ref: "#/components/schemas/ContainerRegistrySecuritySettings" }
+        desired_state: { type: string, enum: [ACTIVE, DELETED] }
+        observed_state: { $ref: "#/components/schemas/ContainerRegistryObservedState" }
+        generation:
+          type: integer
+          description: Incremented by every accepted change.
+        observed_generation:
+          type: integer
+          description: The last generation applied; equal to `generation` when settled.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time, nullable: true }
+
+    ContainerRegistryList:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistry" }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    ContainerRegistryReconcile:
+      type: object
+      required: [registry_id, generation, status]
+      properties:
+        registry_id: { type: string, format: uuid }
+        generation: { type: integer }
+        status: { $ref: "#/components/schemas/ContainerRegistryJobStatus" }
+
+    ContainerRegistryEmptyResult:
+      type: object
+      required: [registry_id, registry_name, deleted_repository_count]
+      properties:
+        registry_id: { type: string, format: uuid }
+        registry_name: { type: string }
+        deleted_repository_count: { type: integer }
+
+    ContainerRegistryPackageAssignment:
+      type: object
+      required: [assignment_id, sku_id, sku_code, quota_bytes, quota_gb, effective_from, effective_to]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        sku_id: { type: string }
+        sku_code: { type: string }
+        quota_bytes: { type: integer }
+        quota_gb: { type: number, description: "Decimal GB (1 GB = 1,000,000,000 bytes)." }
+        effective_from: { type: string, format: date-time }
+        effective_to: { type: string, format: date-time, nullable: true }
+
+    ContainerRegistryPackageOperation:
+      type: object
+      required: [operation_id, registry_id, kind, status, sku_code, quota_bytes, quota_gb, created_at, effective_at]
+      properties:
+        operation_id: { type: string, format: uuid }
+        registry_id: { type: string, format: uuid }
+        kind: { type: string, enum: [CREATE, UPGRADE] }
+        status: { type: string, enum: [PENDING, APPLIED, CANCELLED] }
+        sku_code: { type: string }
+        quota_bytes: { type: integer }
+        quota_gb: { type: number, description: "Decimal GB (1 GB = 1,000,000,000 bytes)." }
+        created_at: { type: string, format: date-time }
+        effective_at: { type: string, format: date-time, nullable: true }
+
+    ContainerRegistryPackage:
+      type: object
+      required: [registry_id, current, pending, reconciliation_status]
+      properties:
+        registry_id: { type: string, format: uuid }
+        current:
+          allOf: [{ $ref: "#/components/schemas/ContainerRegistryPackageAssignment" }]
+          nullable: true
+          description: The plan in effect.
+        pending:
+          allOf: [{ $ref: "#/components/schemas/ContainerRegistryPackageOperation" }]
+          nullable: true
+          description: A plan change that has not been applied yet.
+        reconciliation_status:
+          allOf: [{ $ref: "#/components/schemas/ContainerRegistryJobStatus" }]
+          nullable: true
+
+    UpgradeContainerRegistryPackageRequest:
+      type: object
+      additionalProperties: false
+      required: [billing_catalog]
+      properties:
+        billing_catalog:
+          $ref: "#/components/schemas/ContainerRegistryBillingCatalog"
+
+    CreateContainerRegistryAccessTokenRequest:
+      type: object
+      required: [token_name]
+      properties:
+        token_name:
+          type: string
+          minLength: 3
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9-]{1,62}[a-z0-9]$"
+          description: Unique among the organization's active tokens.
+        permission:
+          allOf: [{ $ref: "#/components/schemas/ContainerRegistryAccessTokenPermission" }]
+          default: PULL
+        expires_in_days:
+          type: integer
+          default: 90
+          description: 1 to 365, or -1 for a token that does not expire.
+        description:
+          type: string
+          maxLength: 255
+          default: ""
+        registry_ids:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+          description: >-
+            Other registries in the same workspace the token may also use.
+            The registry in the path is always included.
+
+    ContainerRegistryAccessTokenSecret:
+      type: object
+      required: [token_id, token_name, username, secret, permission, registry_ids, expires_at, created_at]
+      properties:
+        token_id: { type: string, format: uuid }
+        token_name: { type: string }
+        username:
+          type: string
+          description: Docker login username. It contains `$`, so quote it in shells.
+        secret:
+          type: string
+          description: Docker login password. Returned only by create and rotate.
+        permission: { $ref: "#/components/schemas/ContainerRegistryAccessTokenPermission" }
+        registry_ids:
+          type: array
+          items: { type: string, format: uuid }
+        expires_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    ContainerRegistryAccessToken:
+      type: object
+      required: [token_id, token_name, harbor_username, permission, registry_ids, disabled, expires_at, created_by_user_id, created_at, revoked_at]
+      properties:
+        token_id: { type: string, format: uuid }
+        token_name: { type: string }
+        harbor_username:
+          type: string
+          description: Docker login username (the `username` returned at creation).
+        permission: { $ref: "#/components/schemas/ContainerRegistryAccessTokenPermission" }
+        registry_ids:
+          type: array
+          items: { type: string, format: uuid }
+        disabled: { type: boolean }
+        expires_at: { type: string, format: date-time, nullable: true }
+        created_by_user_id: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time, nullable: true }
+
+    ContainerRegistryMessage:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }
+
+    ContainerRegistryRepository:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string }
+        artifact_count: { type: integer }
+        pull_count: { type: integer }
+        creation_time: { type: string, format: date-time, nullable: true }
+        update_time: { type: string, format: date-time, nullable: true }
+
+    ContainerRegistryRepositoryList:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistryRepository" }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    ContainerRegistryTag:
+      type: object
+      required: [name]
+      properties:
+        id: { type: integer, nullable: true }
+        name: { type: string }
+        push_time: { type: string, format: date-time, nullable: true }
+        pull_time: { type: string, format: date-time, nullable: true }
+        immutable: { type: boolean, nullable: true }
+
+    ContainerRegistryArtifact:
+      type: object
+      required: [id, digest]
+      properties:
+        id: { type: integer }
+        type: { type: string, nullable: true }
+        media_type: { type: string, nullable: true }
+        digest: { type: string }
+        size: { type: integer }
+        push_time: { type: string, format: date-time, nullable: true }
+        pull_time: { type: string, format: date-time, nullable: true }
+        tags:
+          type: array
+          nullable: true
+          items: { $ref: "#/components/schemas/ContainerRegistryTag" }
+        scan_overview:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Scanner summary keyed by report media type, as the scanner returns it.
+
+    ContainerRegistryArtifactList:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistryArtifact" }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    UpdateContainerRegistrySecuritySettingsRequest:
+      type: object
+      required: [vulnerability_pull_policy]
+      properties:
+        vulnerability_pull_policy:
+          $ref: "#/components/schemas/ContainerRegistryPullPolicy"
+
+    ContainerRegistrySecuritySettingsStatus:
+      type: object
+      required: [vulnerability_pull_policy, scan_on_push, sbom_generation_on_push, observed_state, generation, observed_generation]
+      properties:
+        vulnerability_pull_policy: { $ref: "#/components/schemas/ContainerRegistryPullPolicy" }
+        scan_on_push: { type: boolean }
+        sbom_generation_on_push: { type: boolean }
+        observed_state: { $ref: "#/components/schemas/ContainerRegistryObservedState" }
+        generation: { type: integer }
+        observed_generation: { type: integer }
+
+    ContainerRegistryVulnerabilitySummary:
+      type: object
+      required: [total, critical, high, medium, low, unknown, none, refreshed_at]
+      properties:
+        total: { type: integer }
+        critical: { type: integer }
+        high: { type: integer }
+        medium: { type: integer }
+        low: { type: integer }
+        unknown: { type: integer }
+        none: { type: integer }
+        refreshed_at: { type: string, format: date-time }
+
+    ContainerRegistryVulnerability:
+      type: object
+      required: [repository_name, digest, tags, cve_id, severity, status, cvss_v3_score, package, version, fixed_version, description, links, scan_status, scanned_at]
+      properties:
+        repository_name: { type: string }
+        digest: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        cve_id: { type: string }
+        severity: { type: string }
+        status:
+          type: string
+          description: The finding's disposition from the scanner, for example `fixed`.
+        cvss_v3_score: { type: number, nullable: true }
+        package: { type: string }
+        version: { type: string }
+        fixed_version: { type: string }
+        description: { type: string }
+        links:
+          type: array
+          items: { type: string }
+        scan_status:
+          type: string
+          nullable: true
+          enum: [queued, scanning, completed, failed, null]
+        scanned_at: { type: string, format: date-time, nullable: true }
+
+    ContainerRegistryVulnerabilityList:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistryVulnerability" }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    ContainerRegistryScanner:
+      type: object
+      properties:
+        name: { type: string }
+        vendor: { type: string }
+        version: { type: string }
+
+    ContainerRegistryArtifactPlatform:
+      type: object
+      required: [digest]
+      properties:
+        digest: { type: string }
+        architecture: { type: string, nullable: true }
+        os: { type: string, nullable: true }
+        variant: { type: string, nullable: true }
+
+    ContainerRegistrySbomSummary:
+      type: object
+      required: [repository_name, artifact_digest, tags, status, artifact_kind, platforms]
+      properties:
+        repository_name: { type: string }
+        artifact_digest: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        status: { type: string, enum: [GENERATED, PROCESSING, FAILED, NOT_GENERATED, UNKNOWN] }
+        start_time: { type: string, format: date-time, nullable: true }
+        end_time: { type: string, format: date-time, nullable: true }
+        duration: { type: integer, nullable: true }
+        sbom_digest: { type: string, nullable: true }
+        report_id: { type: string, nullable: true }
+        scanner:
+          allOf: [{ $ref: "#/components/schemas/ContainerRegistryScanner" }]
+          nullable: true
+        format: { type: string, nullable: true, enum: [SPDX, CycloneDX, null] }
+        package_count: { type: integer, minimum: 0, nullable: true }
+        artifact_kind: { type: string, enum: [image, index] }
+        platform:
+          allOf: [{ $ref: "#/components/schemas/ContainerRegistryArtifactPlatform" }]
+          nullable: true
+        platforms:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistryArtifactPlatform" }
+
+    ContainerRegistrySbomList:
+      type: object
+      required: [items, page_summary, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistrySbomSummary" }
+        page_summary:
+          type: object
+          description: SBOM status counts for the items on this page.
+          properties:
+            generated: { type: integer }
+            processing: { type: integer }
+            failed: { type: integer }
+            not_generated: { type: integer }
+            unknown: { type: integer }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    ContainerRegistrySbomComponent:
+      type: object
+      required: [component_id, name, version, component_type, licenses, supplier]
+      properties:
+        component_id: { type: string }
+        name: { type: string }
+        version: { type: string }
+        component_type: { type: string }
+        licenses:
+          type: array
+          items: { type: string }
+        supplier: { type: string }
+        purl: { type: string, nullable: true }
+
+    ContainerRegistrySbom:
+      type: object
+      required: [repository_name, artifact_digest, media_type, components, relationships, total_components, page, page_size]
+      properties:
+        repository_name: { type: string }
+        artifact_digest: { type: string }
+        generated_at: { type: string, format: date-time, nullable: true }
+        media_type: { type: string }
+        scanner:
+          allOf: [{ $ref: "#/components/schemas/ContainerRegistryScanner" }]
+          nullable: true
+        components:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistrySbomComponent" }
+        relationships:
+          type: array
+          description: Relationships that touch a component on this page.
+          items:
+            type: object
+            required: [source, target, relationship]
+            properties:
+              source: { type: string }
+              target: { type: string }
+              relationship: { type: string }
+        total_components: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    ContainerRegistryMetrics:
+      type: object
+      required: [registry_id, range, granularity, range_start, range_end, generated_at, storage, bandwidth, bandwidth_points, coverage]
+      properties:
+        registry_id: { type: string, format: uuid }
+        range: { type: string, enum: [24h, 7d, 30d] }
+        granularity: { type: string, enum: [15m, 1h, 1d] }
+        range_start: { type: string, format: date-time }
+        range_end: { type: string, format: date-time }
+        generated_at: { type: string, format: date-time }
+        storage:
+          type: object
+          required: [used_bytes, quota_bytes, remaining_bytes, utilization_percent, measured_at, gb_definition_bytes, used_gb, quota_gb, remaining_gb]
+          properties:
+            used_bytes: { type: integer }
+            quota_bytes: { type: integer }
+            remaining_bytes: { type: integer }
+            utilization_percent: { type: number }
+            measured_at: { type: string, format: date-time }
+            gb_definition_bytes: { type: integer, description: "Always 1000000000." }
+            used_gb: { type: number }
+            quota_gb: { type: number }
+            remaining_gb: { type: number }
+        bandwidth:
+          type: object
+          required: [used_bytes]
+          properties:
+            used_bytes: { type: integer, description: Outbound bytes in the range. }
+        bandwidth_points:
+          type: array
+          items:
+            type: object
+            required: [timestamp, used_bytes]
+            properties:
+              timestamp: { type: string, format: date-time }
+              used_bytes: { type: integer }
+        coverage:
+          type: object
+          required: [status, data_available_from, data_through]
+          properties:
+            status: { type: string, enum: [provisional] }
+            data_available_from: { type: string, format: date-time, nullable: true }
+            data_through: { type: string, format: date-time, nullable: true }

@@ -174,11 +174,13 @@ func (p *ibeeProvider) Resources(_ context.Context) []func() resource.Resource {
 		NewCloudVmVolumeAttachmentResource, NewGpuVmVolumeAttachmentResource,
 		NewBucketResource, NewBucketRetentionResource, NewS3CredentialResource, NewSecretStoreResource, NewSecretResource,
 		NewSecretIdentityResource, NewSecretIdentityScopeResource,
+		NewContainerRegistryResource, NewContainerRegistryAccessTokenResource,
 	}
 }
 func (p *ibeeProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewSitesDataSource, NewNetworkSitesDataSource, NewComputePlansDataSource, NewImagesDataSource, NewBillingEligibilityDataSource,
+		NewContainerRegistriesDataSource,
 	}
 }
 
