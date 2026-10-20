@@ -37,7 +37,7 @@ variable "site_id" {
 
 ## Resources
 
-Browse highlighted resources: [Cloud VM](docs/resources/cloud_vm.md), [VPC](docs/resources/vpc.md), [Bucket](docs/resources/bucket.md), and [CDN distribution](docs/resources/cdn_distribution.md). The [provider documentation](docs/index.md) lists all resources, data sources, and actions.
+Browse highlighted resources: [Cloud VM](docs/resources/cloud_vm.md), [VPC](docs/resources/vpc.md), [Bucket](docs/resources/bucket.md), [CDN distribution](docs/resources/cdn_distribution.md), and [Container registry](docs/resources/container_registry.md). The [provider documentation](docs/index.md) lists all resources, data sources, and actions.
 
 ## Contributing
 

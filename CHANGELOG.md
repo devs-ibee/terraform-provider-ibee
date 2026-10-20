@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0
+
+Adds Container Registry from the public API contract 0.5.0 (vendored at `contract/ibee-cloud.yaml`). Like the rest of the provider, these call the API and relay its answer; the registry service decides names, plans (it asks Billing), visibility and states.
+
+### New resources
+
+- `ibee_container_registry`: a registry with a storage plan (`sku_code`). Create waits until `observed_state` is `ACTIVE` with every change applied, and stops on `ERROR`. `visibility` (with `acknowledge_public_egress_charges`) and `vulnerability_pull_policy` change in place; a new `sku_code` is sent as a plan upgrade with an `Idempotency-Key` header, and the API refuses smaller plans. Destroy sends `confirm_registry_name` and waits until the API reports the registry deleted; the registry must be empty (the API answers 409 `registry_not_empty` otherwise). Import with the registry ID (`sku_code` is then read from the registry's plan).
+- `ibee_container_registry_access_token`: a docker login credential. Every input replaces the token. `username` and the sensitive `secret` are returned once, at creation, and kept in state; reads list the registry's tokens (the API has no single-token read) and never return the secret. Destroy revokes the token. Import with `REGISTRY_ID/TOKEN_ID`.
+
+### New data source
+
+- `ibee_container_registries`: the workspace's registries, every page.
+
 ## 0.6.0 (2026-10-19)
 
 Adds the VM recovery, VM access and Secret Store identity operations the public API contract (0.4.0) already has. Like the rest of the provider, these call the API and relay its answer.
