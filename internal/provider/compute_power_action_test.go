@@ -299,7 +299,9 @@ func TestVmPowerActionIdempotencyKeys(t *testing.T) {
 					case "POST " + endpoint + "/actions/start":
 						keys = append(keys, r.Header.Get("X-Idempotency-Key"))
 						if len(keys) == 1 {
-							http.Error(w, "retryable fixture response", http.StatusServiceUnavailable)
+							// A 429 is the only answer a write is retried on (a 503 may already have been applied).
+							w.Header().Set("Retry-After", "0")
+							http.Error(w, "retryable fixture response", http.StatusTooManyRequests)
 							return
 						}
 						computeJSON(w, operationAccepted{VmID: "vm", OperationID: "op"})

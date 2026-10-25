@@ -135,6 +135,42 @@ func TestSecretIdentityImportAndGone(t *testing.T) {
 	}
 }
 
+// GET .../access mints a new AppRole secret ID on every call, so a failed read
+// is not retried: the identity is kept in state and the error is relayed.
+func TestSecretIdentityAccessReadIsNeverRetried(t *testing.T) {
+	ctx := context.Background()
+	accessReads := 0
+	r := &secretIdentityResource{}
+	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method + " " + req.URL.Path {
+		case "POST /secret-store/stores/store-1/identities":
+			w.WriteHeader(201)
+			computeJSON(w, secretIdentityTestResponse("active", "read_only"))
+		case "GET /secret-store/identities/id-1/access":
+			accessReads++
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(503)
+			computeJSON(w, map[string]any{"detail": "unavailable"})
+		default:
+			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
+			w.WriteHeader(500)
+		}
+	})
+	create := resource.CreateResponse{State: computeState(t, r, nil)}
+	r.Create(ctx, resource.CreateRequest{Plan: computePlanState(t, r, secretIdentityTestModel())}, &create)
+	if accessReads != 1 {
+		t.Fatalf("access read must not be retried, got %d reads", accessReads)
+	}
+	if create.Diagnostics.ErrorsCount() != 1 || !strings.Contains(create.Diagnostics[0].Summary(), "login details could not be read") || !strings.Contains(create.Diagnostics[0].Detail(), "HTTP 503") {
+		t.Fatalf("unexpected diagnostics: %v", create.Diagnostics)
+	}
+	var created secretIdentityModel
+	computeNoErrors(t, create.State.Get(ctx, &created))
+	if created.ID.ValueString() != "id-1" || !created.RoleID.IsNull() || !created.SecretID.IsNull() {
+		t.Fatalf("the identity must stay tracked without login details: %+v", created)
+	}
+}
+
 func TestSecretIdentityCreateRelaysRefusal(t *testing.T) {
 	r := &secretIdentityResource{}
 	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {

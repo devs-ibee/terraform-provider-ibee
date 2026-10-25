@@ -31,24 +31,45 @@ func TestClientScopeAndAuthentication(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 }
+
+// Reads retry on 429, 502, 503 and 504; writes only on a 429 that carries no
+// billing or admission answer. A write that failed with 502, 503 or 504 may
+// already have been applied (a replayed create could leave a second VM or use
+// up a registry name), so it is never replayed, keyed or not. The identity
+// access read mints a credential on every call and is never retried.
 func TestClientRetriesOnlySafeRequests(t *testing.T) {
+	const access = "/secret-store/identities/id-1/access"
 	for _, tc := range []struct {
-		name, method string
-		keyed        bool
-		status       int
-		body         string
-		want         int
+		name, method, path string
+		keyed              bool
+		status             int
+		body               string
+		want               int
 	}{
-		{"read 503", "GET", false, 503, `{"detail":"unavailable"}`, 4},
-		{"read 502", "GET", false, 502, `{"detail":"bad gateway"}`, 4},
-		{"read 504", "GET", false, 504, `{"detail":"timeout"}`, 4},
-		{"write 503", "POST", false, 503, `{"detail":"unavailable"}`, 4},
-		{"write 429", "POST", false, 429, `{"detail":"slow down"}`, 4},
-		{"keyed create 502", "POST", true, 502, `{"detail":"bad gateway"}`, 1},
-		{"keyed create 504", "POST", true, 504, `{"detail":"timeout"}`, 1},
-		{"keyed create 503 admission", "POST", true, 503, `{"error":"billing_admission_timeout","admission_context_id":"ctx-1"}`, 1},
-		{"write 429 billing", "POST", false, 429, `{"error":"rate_limited","billing_reason":"credit_check"}`, 1},
-		{"write 409", "POST", true, 409, `{"detail":"conflict"}`, 1},
+		{"read 429", "GET", "/things", false, 429, `{"detail":"slow down"}`, 4},
+		{"read 502", "GET", "/things", false, 502, `{"detail":"bad gateway"}`, 4},
+		{"read 503", "GET", "/things", false, 503, `{"detail":"unavailable"}`, 4},
+		{"read 504", "GET", "/things", false, 504, `{"detail":"timeout"}`, 4},
+		{"identity read 503", "GET", "/secret-store/identities/id-1", false, 503, `{"detail":"unavailable"}`, 4},
+		{"identity access read 429", "GET", access, false, 429, `{"detail":"slow down"}`, 1},
+		{"identity access read 503", "GET", access, false, 503, `{"detail":"unavailable"}`, 1},
+		{"identity access read 503 versioned", "GET", "/v1" + access, false, 503, `{"detail":"unavailable"}`, 1},
+		{"identity access read 503 trailing slash", "GET", access + "/", false, 503, `{"detail":"unavailable"}`, 1},
+		{"write 429", "POST", "/things", false, 429, `{"detail":"slow down"}`, 4},
+		{"keyed write 429", "POST", "/things", true, 429, `{"detail":"slow down"}`, 4},
+		{"patch 429", "PATCH", "/things/1", false, 429, `{"detail":"slow down"}`, 4},
+		{"write 502", "POST", "/things", false, 502, `{"detail":"bad gateway"}`, 1},
+		{"write 503", "POST", "/things", false, 503, `{"detail":"unavailable"}`, 1},
+		{"write 504", "POST", "/things", false, 504, `{"detail":"timeout"}`, 1},
+		{"keyed create 502", "POST", "/compute/cloud-vms", true, 502, `{"detail":"bad gateway"}`, 1},
+		{"keyed create 503", "POST", "/compute/cloud-vms", true, 503, `{"detail":"unavailable"}`, 1},
+		{"keyed create 504", "POST", "/compute/cloud-vms", true, 504, `{"detail":"timeout"}`, 1},
+		{"keyed registry create 503", "POST", "/container-registry/registries", true, 503, `{"detail":"unavailable"}`, 1},
+		{"keyed delete 503", "DELETE", "/compute/cloud-vms/vm-1", true, 503, `{"detail":"unavailable"}`, 1},
+		{"keyed create 503 admission", "POST", "/compute/cloud-vms", true, 503, `{"error":"billing_admission_timeout","admission_context_id":"ctx-1"}`, 1},
+		{"write 429 billing", "POST", "/things", false, 429, `{"error":"rate_limited","billing_reason":"credit_check"}`, 1},
+		{"keyed write 429 admission", "POST", "/compute/cloud-vms/vm-1/actions/start", true, 429, `{"error":"billing_admission_rate_limited","admission_context_id":"ctx-1"}`, 1},
+		{"write 409", "POST", "/things", true, 409, `{"detail":"conflict"}`, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -65,7 +86,7 @@ func TestClientRetriesOnlySafeRequests(t *testing.T) {
 			if tc.keyed {
 				headers["X-Idempotency-Key"] = "one-operation"
 			}
-			err := c.doH(context.Background(), tc.method, "/things", headers, nil, nil)
+			err := c.doH(context.Background(), tc.method, tc.path, headers, nil, nil)
 			if err == nil || calls != tc.want {
 				t.Fatalf("calls=%d want=%d err=%v", calls, tc.want, err)
 			}

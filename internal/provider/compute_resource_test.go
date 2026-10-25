@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -312,7 +313,7 @@ func TestComputeVMImportHydratesAndDetectsDrift(t *testing.T) {
 	computeNoErrors(t, resp.Diagnostics)
 	var got cloudVmModel
 	computeNoErrors(t, resp.State.Get(context.Background(), &got))
-	if got.Name.ValueString() != "portal-change" || got.PlanID.ValueString() != "resized-plan" || got.Cpu.ValueInt64() != 8 || got.SSHKeyIDs.IsNull() || got.PublicIPAction.ValueString() != "release" {
+	if got.Name.ValueString() != "portal-change" || got.PlanID.ValueString() != "resized-plan" || got.Cpu.ValueInt64() != 8 || got.SSHKeyIDs.IsNull() || !got.PublicIPAction.IsNull() {
 		t.Fatal(got)
 	}
 }
@@ -778,7 +779,7 @@ func TestComputeVMDeleteWaitsForOperation(t *testing.T) {
 				case "DELETE /compute/" + kind + "-vms/vm-1":
 					var b map[string]any
 					_ = json.NewDecoder(req.Body).Decode(&b)
-					if b["public_ip_action"] != "release" || req.Header.Get("X-Idempotency-Key") == "" {
+					if b["public_ip_action"] != "reserve" || req.Header.Get("X-Idempotency-Key") == "" {
 						t.Error("unexpected delete request", b)
 					}
 					computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op-delete", Status: "accepted"})
@@ -792,7 +793,7 @@ func TestComputeVMDeleteWaitsForOperation(t *testing.T) {
 			})
 			state := computeValidVMPlan()
 			state.ID, state.Cpu, state.RamMb, state.DiskGb, state.GpuCount = types.StringValue("vm-1"), types.Int64Value(4), types.Int64Value(8192), types.Int64Value(80), types.Int64Value(1)
-			state.GpuModel, state.Status, state.PublicIP, state.PrivateIP = types.StringValue("A100"), types.StringValue("running"), types.StringNull(), types.StringNull()
+			state.GpuModel, state.Status, state.PublicIP, state.PrivateIP, state.PublicIPAction = types.StringValue("A100"), types.StringValue("running"), types.StringNull(), types.StringNull(), types.StringValue("reserve")
 			resp := resource.DeleteResponse{}
 			r.Delete(context.Background(), resource.DeleteRequest{State: computeState(t, r, state)}, &resp)
 			computeNoErrors(t, resp.Diagnostics)
@@ -800,5 +801,66 @@ func TestComputeVMDeleteWaitsForOperation(t *testing.T) {
 				t.Fatal("delete did not wait for its operation")
 			}
 		})
+	}
+}
+
+// Without delete_public_ip_action the provider sends no public_ip_action (no
+// default of its own) and relays the API's answer, here the 400 the API gives
+// for a VM with an automatically assigned public IP.
+func TestComputeVMDeleteWithoutPublicIPActionRelaysTheAPIAnswer(t *testing.T) {
+	for _, kind := range []string{"cloud", "gpu"} {
+		t.Run(kind, func(t *testing.T) {
+			deletes := 0
+			r := &cloudVmResource{vmType: kind}
+			r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+				switch req.Method + " " + req.URL.Path {
+				case "DELETE /compute/" + kind + "-vms/vm-1":
+					deletes++
+					raw, _ := io.ReadAll(req.Body)
+					if len(raw) != 0 || req.Header.Get("Content-Type") != "" || req.Header.Get("X-Idempotency-Key") == "" {
+						t.Errorf("delete without a configured action must send no body: %q", raw)
+					}
+					w.WriteHeader(400)
+					computeJSON(w, map[string]any{"error": "public_ip_action_required", "message": "public_ip_action is required for a VM with an automatically assigned public IP"})
+				default:
+					t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
+					w.WriteHeader(500)
+				}
+			})
+			state := computeValidVMPlan()
+			state.ID, state.Cpu, state.RamMb, state.DiskGb, state.GpuCount = types.StringValue("vm-1"), types.Int64Value(4), types.Int64Value(8192), types.Int64Value(80), types.Int64Value(1)
+			state.GpuModel, state.Status, state.PublicIP, state.PrivateIP, state.PublicIPAction = types.StringValue("A100"), types.StringValue("running"), types.StringValue("192.0.2.1"), types.StringNull(), types.StringNull()
+			resp := resource.DeleteResponse{}
+			r.Delete(context.Background(), resource.DeleteRequest{State: computeState(t, r, state)}, &resp)
+			if deletes != 1 || resp.Diagnostics.ErrorsCount() != 1 {
+				t.Fatalf("deletes=%d diagnostics=%v", deletes, resp.Diagnostics)
+			}
+			if d := resp.Diagnostics[0]; d.Summary() != "Failed to delete VM" || !strings.Contains(d.Detail(), "HTTP 400 public_ip_action_required") || !strings.Contains(d.Detail(), "automatically assigned public IP") {
+				t.Fatalf("the API answer must reach the caller unchanged: %s / %s", d.Summary(), d.Detail())
+			}
+		})
+	}
+}
+
+// delete_public_ip_action has no default: a configuration without it keeps a
+// null value through create and refresh.
+func TestComputeVMPublicIPActionHasNoDefault(t *testing.T) {
+	r := &cloudVmResource{vmType: "cloud"}
+	var sr resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &sr)
+	attribute := sr.Schema.Attributes["delete_public_ip_action"].(rschema.StringAttribute)
+	if attribute.Default != nil || attribute.Computed || !attribute.Optional {
+		t.Fatalf("delete_public_ip_action must be optional without a default: %+v", attribute)
+	}
+	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		computeJSON(w, computeCanonicalVM("cloud"))
+	})
+	state := computeValidVMPlan()
+	state.ID, state.PublicIPAction = types.StringValue("vm-1"), types.StringNull()
+	if err := r.refresh(context.Background(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.PublicIPAction.IsNull() {
+		t.Fatalf("refresh invented a public IP action: %v", state.PublicIPAction)
 	}
 }

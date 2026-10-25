@@ -118,8 +118,8 @@ func (r *cloudVmResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 		"os_type":          schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("linux"), PlanModifiers: replace, Validators: []validator.String{computeOneOf(osTypes...)}},
 		"cpu":              schema.Int64Attribute{Computed: true}, "ram_mb": schema.Int64Attribute{Computed: true}, "disk_gb": schema.Int64Attribute{Computed: true}, "gpu_count": schema.Int64Attribute{Computed: true}, "gpu_model": schema.StringAttribute{Computed: true},
 		"status": schema.StringAttribute{Computed: true}, "public_ip": schema.StringAttribute{Computed: true}, "private_ip": schema.StringAttribute{Computed: true},
-		// Temporary: the client chooses the public-IP action until the API decides it on delete.
-		"delete_public_ip_action": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("release"), Validators: []validator.String{computeOneOf("release", "reserve")}, Description: "release (default) or reserve the automatic public IP on destroy. Reserving an address may continue billing."},
+		// No default: the API requires the choice for a VM with an automatically assigned public IP and answers 400 without it.
+		"delete_public_ip_action": schema.StringAttribute{Optional: true, Validators: []validator.String{computeOneOf("release", "reserve")}, Description: "What to do with the VM's automatically assigned public IP on destroy: release or reserve. The API requires it for a VM with an automatically assigned public IP and refuses the destroy with 400 when it is missing; when unset the provider sends no public_ip_action and relays that answer. Reserving an address may continue billing."},
 		"ssh_key_ids":             schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(empty), Description: "Existing Secret Store SSH key IDs. Changes are applied in place through the VM access operation (keys are added before others are removed)."},
 		"tags":                    schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(empty), PlanModifiers: []planmodifier.Set{setplanmodifier.RequiresReplace()}, Description: "VM tags. Changes replace the VM because the public API has no tag update operation."},
 	}}
@@ -335,9 +335,6 @@ func (r *cloudVmResource) refresh(ctx context.Context, state *cloudVmModel) erro
 		return fmt.Errorf("invalid tags in VM response: %v", d)
 	}
 	state.Tags = tags
-	if state.PublicIPAction.IsNull() || state.PublicIPAction.IsUnknown() {
-		state.PublicIPAction = types.StringValue("release")
-	}
 	return nil
 }
 func (r *cloudVmResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -394,13 +391,14 @@ func (r *cloudVmResource) Delete(ctx context.Context, req resource.DeleteRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Temporary: the client sends public_ip_action until the API decides it on delete.
-	action := state.PublicIPAction.ValueString()
-	if action == "" {
-		action = "release"
+	// Only a configured public_ip_action is sent. Without one the API decides:
+	// it answers 400 for a VM with an automatically assigned public IP.
+	var body any
+	if action := state.PublicIPAction.ValueString(); action != "" {
+		body = map[string]any{"public_ip_action": action}
 	}
 	var accepted operationAccepted
-	err := r.client.doH(ctx, http.MethodDelete, r.route(state.ID.ValueString()), map[string]string{"X-Idempotency-Key": idempotencyKey()}, map[string]any{"public_ip_action": action}, &accepted)
+	err := r.client.doH(ctx, http.MethodDelete, r.route(state.ID.ValueString()), map[string]string{"X-Idempotency-Key": idempotencyKey()}, body, &accepted)
 	if IsNotFound(err) {
 		return
 	}

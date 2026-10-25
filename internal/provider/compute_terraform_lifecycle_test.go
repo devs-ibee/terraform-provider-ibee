@@ -220,6 +220,30 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 		f.vms[kind]["billing_catalog"] = computeTestSelectedBillingTerm("HOURLY")
 	}
 	f.mu.Unlock()
+	// The VMs were created without delete_public_ip_action: the provider has no
+	// default, and the API requires the choice to delete a VM with an automatic
+	// public IP (the fixture answers 400 without it, as the API does). Adding it
+	// is an in-place change that sends no mutation; destroy then sends it.
+	withAction := strings.ReplaceAll(larger, " tags = [\"terraform\"]", " tags = [\"terraform\"]\n delete_public_ip_action = \"release\"")
+	writeTestFile(t, filepath.Join(work, "main.tf"), withAction)
+	added := run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	for _, kind := range []string{"cloud", "gpu"} {
+		if !strings.Contains(added, "ibee_"+kind+"_vm.test will be updated in-place") || strings.Contains(added, "ibee_"+kind+"_vm.test must be replaced") {
+			t.Fatalf("adding delete_public_ip_action must be an in-place change for the %s VM:\n%s", kind, added)
+		}
+	}
+	if !strings.Contains(added, `+ delete_public_ip_action = "release"`) {
+		t.Fatalf("delete_public_ip_action not planned:\n%s", added)
+	}
+	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
+	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	f.mu.Lock()
+	for _, kind := range []string{"cloud", "gpu"} {
+		if f.resizes[kind] != 1 || f.vms[kind]["plan_id"] != kind+"-plan-large" {
+			t.Errorf("adding delete_public_ip_action mutated the %s VM: resizes=%d vm=%v", kind, f.resizes[kind], f.vms[kind])
+		}
+	}
+	f.mu.Unlock()
 	run(0, "destroy", "-auto-approve", "-input=false", "-no-color")
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -323,6 +347,12 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 				return
 			}
 			if r.Method == "DELETE" {
+				// The API refuses to delete a VM with an automatic public IP unless the caller chooses.
+				if action, _ := body()["public_ip_action"].(string); action != "release" && action != "reserve" {
+					w.WriteHeader(400)
+					send(map[string]any{"error": "public_ip_action_required"})
+					return
+				}
 				delete(f.vms, kind)
 				send(operationAccepted{VmID: kind + "-vm-id", OperationID: kind + "-delete", Status: "accepted"})
 				return

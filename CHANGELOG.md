@@ -13,6 +13,15 @@ Adds Container Registry from the public API contract 0.5.0 (vendored at `contrac
 
 - `ibee_container_registries`: the workspace's registries, every page.
 
+### Changed
+
+- `ibee_cloud_vm`, `ibee_gpu_vm`: `delete_public_ip_action` no longer defaults to `release`. It is optional with no default; when it is unset the destroy sends no `public_ip_action` and the API's answer is relayed, a 400 for a VM with an automatically assigned public IP. Set `release` or `reserve` in the configuration (and apply) before destroying such a VM. A state that still holds the old default shows a one-time in-place change to null on the next plan; no API call is made for it.
+
+### Fixed
+
+- Writes (anything but GET/HEAD) are no longer retried on 503, 502 or 504, with or without an idempotency key: the request may already have been applied, and the API has not confirmed that a replayed create with the same key is de-duplicated, so a retry could leave a second VM or use up a registry name. Writes retry only on a 429 that carries no billing or admission answer. Reads still retry on 429, 502, 503 and 504.
+- The identity access read (`GET /secret-store/identities/{id}/access`, made once when `ibee_secret_identity` is created) is never retried: every call mints a new AppRole secret ID. If it fails, the identity stays in state with empty `role_id` and `secret_id`, as before.
+
 ## 0.6.0 (2026-10-19)
 
 Adds the VM recovery, VM access and Secret Store identity operations the public API contract (0.4.0) already has. Like the rest of the provider, these call the API and relay its answer.

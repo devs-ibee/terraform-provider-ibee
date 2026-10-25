@@ -22,6 +22,9 @@ resource "ibee_cloud_vm" "web" {
   os_distro        = "ubuntu"
   billing_interval = "HOURLY"
   ssh_key_ids      = ["SSH_KEY_ID"]
+
+  # Required by the API to destroy a VM with an automatically assigned public IP.
+  delete_public_ip_action = "release"
 }
 ```
 
@@ -31,7 +34,7 @@ resource "ibee_cloud_vm" "web" {
 | --- | --- | --- | --- |
 | `billing_interval` | `string` | Optional, Defaulted | Billing term from the plan's billing options, such as HOURLY or MONTHLY. Omit to send the plan's catalog unchanged and let the API decide. No API operation changes the term, so changing it replaces the VM; deleting a VM does not cancel contractual charges. |
 | `cpu` | `number` | Read-only |  |
-| `delete_public_ip_action` | `string` | Optional, Defaulted | release (default) or reserve the automatic public IP on destroy. Reserving an address may continue billing. |
+| `delete_public_ip_action` | `string` | Optional | What to do with the VM's automatically assigned public IP on destroy: release or reserve. The API requires it for a VM with an automatically assigned public IP and refuses the destroy with 400 when it is missing; when unset the provider sends no public_ip_action and relays that answer. Reserving an address may continue billing. |
 | `disk_gb` | `number` | Read-only |  |
 | `gpu_count` | `number` | Read-only |  |
 | `gpu_model` | `string` | Read-only |  |
