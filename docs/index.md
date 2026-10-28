@@ -31,8 +31,8 @@ Start with the [Terraform guide](guides/terraform.md), or browse the [examples](
 | Attribute | Type | Behavior | Description |
 | --- | --- | --- | --- |
 | `endpoint` | `string` | Optional | Public API base URL. Precedence: explicit value, IBEE_ENDPOINT, IBEE_BASE_URL, IBEE_ENV (dev/development uses https://api.ibee.co.in/v1; prod/production or unset uses https://api.ibee.ai/v1). HTTPS is required except for local test servers. |
-| `operation_timeout` | `string` | Optional | Timeout for asynchronous provisioning and deletion, as a Go duration. Defaults to 20m. Must be between 1s and 2h. |
-| `organization_id` | `string` | Optional | Optional expected organization for billing decisions. Falls back to IBEE_ORGANIZATION_ID. A mismatched decision fails closed. |
-| `request_timeout` | `string` | Optional | Timeout for each HTTP request, as a Go duration (for example 90s). Defaults to 90s. Must be between 1s and 10m. |
+| `operation_timeout` | `string` | Optional | Timeout for waiting on asynchronous operations, as a Go duration. Defaults to 20m. |
+| `organization_id` | `string` | Optional | Deprecated and unused. |
+| `request_timeout` | `string` | Optional | Timeout for each HTTP request, as a Go duration (for example 90s). Defaults to 90s. |
 | `token` | `string` | Optional, Sensitive | IBEE API token. Falls back to IBEE_TOKEN. Prefer the environment variable to avoid saving a token in configuration. |
 | `workspace_id` | `string` | Optional | Workspace identifier attached to every API request. Falls back to IBEE_WORKSPACE_ID. |

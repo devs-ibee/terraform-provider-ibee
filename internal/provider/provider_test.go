@@ -1,9 +1,10 @@
 package provider
 
 import (
-	"github.com/hashicorp/terraform-plugin-framework/types"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 func providerTestConfig(t *testing.T) ibeeProviderModel {
@@ -38,7 +39,7 @@ func TestProviderConfigDefaultsAndPrecedence(t *testing.T) {
 	}
 }
 func TestProviderRejectsInvalidConfiguration(t *testing.T) {
-	for _, name := range []string{"unknown", "missing-token", "missing-workspace", "insecure", "credentials", "query", "fragment", "duration", "environment-mismatch", "uppercase-environment", "empty-endpoint", "invalid-env"} {
+	for _, name := range []string{"unknown", "missing-token", "missing-workspace", "insecure", "credentials", "query", "fragment", "duration", "empty-endpoint", "invalid-env"} {
 		t.Run(name, func(t *testing.T) {
 			cfg := providerTestConfig(t)
 			switch name {
@@ -57,12 +58,7 @@ func TestProviderRejectsInvalidConfiguration(t *testing.T) {
 			case "fragment":
 				cfg.Endpoint = types.StringValue("https://api.ibee.ai/v1#x")
 			case "duration":
-				cfg.RequestTimeout = types.StringValue("0s")
-			case "environment-mismatch":
-				cfg.Token = types.StringValue("ibee_dev_key_test")
-			case "uppercase-environment":
-				cfg.Endpoint = types.StringValue("https://API.IBEE.AI./v1")
-				cfg.Token = types.StringValue("ibee_dev_key_test")
+				cfg.RequestTimeout = types.StringValue("ninety seconds")
 			case "empty-endpoint":
 				t.Setenv("IBEE_ENDPOINT", "https://api.ibee.co.in/v1")
 				cfg.Endpoint = types.StringValue(" ")

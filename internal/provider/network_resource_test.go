@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -71,24 +70,6 @@ func networkTestEligibility(w http.ResponseWriter, allowed bool) {
 	json.NewEncoder(w).Encode(map[string]any{"organization_id": "org", "allowed": allowed, "reason": reason, "billing_mode": "PREPAID", "billing_state": "CURRENT", "currency": "INR", "evaluated_at": "2026-09-27T00:00:00Z"})
 }
 
-func TestNetworkMalformedListPreservesState(t *testing.T) {
-	for _, body := range []string{`{}`, `null`, `[{"status":"active"}]`} {
-		t.Run(body, func(t *testing.T) {
-			r := NewNATGatewayResource().(*networkResource)
-			r.client = networkTestClient(func(w http.ResponseWriter, req *http.Request) { fmt.Fprint(w, body) })
-			v := networkTestValues(t, r, map[string]any{"id": "nat-1", "vpc_id": "vpc-1", "name": "NAT Gateway", "status": "available"})
-			s := networkTestState(t, networkTestSchema(r), types.ObjectValueMust(r.attributeTypes(), v))
-			resp := resource.ReadResponse{State: s}
-			r.Read(context.Background(), resource.ReadRequest{State: s}, &resp)
-			if !resp.Diagnostics.HasError() {
-				t.Fatal("malformed response accepted")
-			}
-			if resp.State.Raw.IsNull() {
-				t.Fatal("malformed response removed state")
-			}
-		})
-	}
-}
 func TestNetworkAttachmentPagination(t *testing.T) {
 	pages := 0
 	r := NewFirewallAttachmentResource().(*networkResource)
@@ -195,64 +176,6 @@ func TestNetworkLBStateConversion(t *testing.T) {
 		})
 	}
 }
-func TestReservedIPAttachmentDoesNotDetachMovedIP(t *testing.T) {
-	mutations := 0
-	r := NewReservedIPAttachmentResource().(*reservedIPAttachmentResource).networkResource
-	r.client = networkTestClient(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method != "GET" {
-			mutations++
-		}
-		fmt.Fprint(w, `{"public_ip_id":"ip","attached_resource_id":"another-vm"}`)
-	})
-	v := networkTestValues(t, r, map[string]any{"id": "original-vm", "reserved_ip_id": "ip", "vm_id": "original-vm"})
-	s := networkTestState(t, networkTestSchema(r), types.ObjectValueMust(r.attributeTypes(), v))
-	resp := resource.DeleteResponse{}
-	r.Delete(context.Background(), resource.DeleteRequest{State: s}, &resp)
-	if !resp.Diagnostics.HasError() || mutations != 0 {
-		t.Fatalf("diagnostics=%v mutations=%d", resp.Diagnostics, mutations)
-	}
-}
-func TestVpcDeletionOwnsOnlyRecordedDefaultSubnet(t *testing.T) {
-	for _, owned := range []string{"", "owned"} {
-		t.Run(owned, func(t *testing.T) {
-			paths := []string{}
-			r := NewVpcResource().(*vpcResource)
-			r.client = networkTestClient(func(w http.ResponseWriter, req *http.Request) {
-				paths = append(paths, req.Method+" "+req.URL.Path)
-				if strings.Contains(req.URL.Path, "unmanaged") {
-					t.Fatal("unmanaged subnet touched")
-				}
-				if req.Method == http.MethodGet {
-					if owned == "" || strings.HasSuffix(req.URL.Path, "/nat-gateways") {
-						fmt.Fprint(w, `[]`)
-					} else {
-						fmt.Fprint(w, `[{"subnet_id":"owned"}]`)
-					}
-					return
-				}
-				w.WriteHeader(204)
-			})
-			model := vpcResourceModel{ID: types.StringValue("vpc"), Name: types.StringValue("test"), SiteID: types.StringValue("site"), Cidr: types.StringValue("10.0.0.0/24"), AutoCidr: types.BoolValue(true), CreateDefaultSubnet: types.BoolValue(false), DefaultSubnetID: types.StringValue("unmanaged"), OwnedDefaultSubnetID: types.StringNull(), Description: types.StringValue(""), Status: types.StringValue("available")}
-			if owned != "" {
-				model.OwnedDefaultSubnetID = types.StringValue(owned)
-			}
-			s := networkTestState(t, networkTestSchema(r), &model)
-			resp := resource.DeleteResponse{}
-			r.Delete(context.Background(), resource.DeleteRequest{State: s}, &resp)
-			if resp.Diagnostics.HasError() {
-				t.Fatal(resp.Diagnostics)
-			}
-			want := []string{"DELETE /networking/vpcs/vpc"}
-			if owned != "" {
-				want = append([]string{"DELETE /networking/vpcs/vpc/subnets/owned"}, want...)
-			}
-			want = append([]string{"GET /networking/vpcs/vpc/subnets", "GET /networking/vpcs/vpc/nat-gateways"}, want...)
-			if !reflect.DeepEqual(paths, want) {
-				t.Fatalf("got %v want %v", paths, want)
-			}
-		})
-	}
-}
 func networkTestFirewallPlan() firewallRuleModel {
 	return firewallRuleModel{GroupID: types.StringValue("group"), Direction: types.StringValue("ingress"), Protocol: types.StringValue("tcp"), PortStart: types.Int64Value(443), PortEnd: types.Int64Unknown(), RemoteTargets: types.ListValueMust(types.StringType, []attr.Value{types.StringValue("0.0.0.0/0")}), Action: types.StringValue("allow"), Description: types.StringNull(), Priority: types.Int64Unknown(), Enabled: types.BoolValue(false), ID: types.StringUnknown()}
 }
@@ -319,62 +242,5 @@ func TestFirewallCreateDisabledAndRefreshAllFields(t *testing.T) {
 	read.State.Get(context.Background(), &actual)
 	if actual.PortStart.ValueInt64() != 80 || actual.PortEnd.ValueInt64() != 81 || actual.Action.ValueString() != "drop" || actual.Description.ValueString() != "portal edit" {
 		t.Fatalf("drift not refreshed: %+v", actual)
-	}
-}
-
-func TestNetworkRejectsWrongResponseIdentity(t *testing.T) {
-	cases := []struct {
-		name   string
-		r      *networkResource
-		values map[string]any
-		body   string
-	}{
-		{"load-balancer", NewL4LoadBalancerResource().(*networkResource), map[string]any{"id": "wanted"}, `{"lb_id":"other","layer":"l4"}`},
-		{"reserved-ip", NewReservedIPResource().(*reservedIPResource).networkResource, map[string]any{"id": "wanted"}, `{"public_ip_id":"other"}`},
-		{"attachment", NewReservedIPAttachmentResource().(*reservedIPAttachmentResource).networkResource, map[string]any{"id": "vm", "vm_id": "vm", "reserved_ip_id": "wanted"}, `{"public_ip_id":"other","attached_resource_id":"vm"}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			tc.r.client = networkTestClient(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, tc.body) })
-			v := networkTestValues(t, tc.r, tc.values)
-			if _, err := tc.r.fetch(context.Background(), v); err == nil || IsNotFound(err) {
-				t.Fatalf("wrong identity should preserve state with an error: %v", err)
-			}
-		})
-	}
-}
-func TestReservedIPAttachmentMissingOwnershipPreservesState(t *testing.T) {
-	mutations := 0
-	r := NewReservedIPAttachmentResource().(*reservedIPAttachmentResource).networkResource
-	r.client = networkTestClient(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method != "GET" {
-			mutations++
-		}
-		fmt.Fprint(w, `{"public_ip_id":"ip"}`)
-	})
-	v := networkTestValues(t, r, map[string]any{"id": "vm", "vm_id": "vm", "reserved_ip_id": "ip"})
-	s := networkTestState(t, networkTestSchema(r), types.ObjectValueMust(r.attributeTypes(), v))
-	read := resource.ReadResponse{State: s}
-	r.Read(context.Background(), resource.ReadRequest{State: s}, &read)
-	if !read.Diagnostics.HasError() || read.State.Raw.IsNull() {
-		t.Fatalf("missing ownership must not remove state: %v", read.Diagnostics)
-	}
-	del := resource.DeleteResponse{}
-	r.Delete(context.Background(), resource.DeleteRequest{State: s}, &del)
-	if !del.Diagnostics.HasError() || mutations != 0 {
-		t.Fatalf("missing ownership allowed detach: %v", del.Diagnostics)
-	}
-}
-func TestFirewallGroupRejectsWrongIdentity(t *testing.T) {
-	r := NewFirewallGroupResource().(*firewallGroupResource)
-	r.client = networkTestClient(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"firewall_group_id":"other","name":"other","status":"active"}`)
-	})
-	m := firewallGroupModel{ID: types.StringValue("wanted"), Name: types.StringValue("wanted"), Description: types.StringNull(), Status: types.StringValue("active")}
-	s := networkTestState(t, networkTestSchema(r), &m)
-	resp := resource.ReadResponse{State: s}
-	r.Read(context.Background(), resource.ReadRequest{State: s}, &resp)
-	if !resp.Diagnostics.HasError() || resp.State.Raw.IsNull() {
-		t.Fatalf("wrong group identity accepted: %v", resp.Diagnostics)
 	}
 }

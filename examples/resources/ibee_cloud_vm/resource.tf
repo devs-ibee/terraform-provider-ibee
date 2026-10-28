@@ -4,7 +4,8 @@ resource "ibee_cloud_vm" "web" {
   plan_id          = "PLAN_ID"
   template_id      = "TEMPLATE_ID"
   os_distro        = "ubuntu"
-  billing_interval = "HOURLY"
+  os_type          = "linux"
+  billing_interval = "HOURLY" # or MONTHLY (a one-month commitment); HOURLY when omitted
   ssh_key_ids      = ["SSH_KEY_ID"]
 
   # Required by the API to destroy a VM with an automatically assigned public IP.

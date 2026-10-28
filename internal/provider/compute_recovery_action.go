@@ -9,13 +9,12 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/action/schema"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Restores and manual backup runs are one-shot operations, so they are
-// Terraform actions like ibee_vm_power. Each sends one request, relays the
-// API's answer and waits for the restore or run to finish.
+// Restores are one-shot operations, so they are Terraform actions like
+// ibee_vm_power. Each sends one request, relays the API's answer and waits
+// for the restore to finish.
 
 func configureComputeAction(req action.ConfigureRequest, resp *action.ConfigureResponse) *Client {
 	if req.ProviderData == nil {
@@ -30,8 +29,8 @@ func configureComputeAction(req action.ConfigureRequest, resp *action.ConfigureR
 
 func vmActionAttributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
-		"vm_type": schema.StringAttribute{Required: true, Description: "cloud or gpu.", Validators: []validator.String{computeOneOf("cloud", "gpu")}},
-		"vm_id":   schema.StringAttribute{Required: true, Description: "VM ID.", Validators: []validator.String{computeNonEmpty()}},
+		"vm_type": schema.StringAttribute{Required: true, Description: "cloud or gpu."},
+		"vm_id":   schema.StringAttribute{Required: true, Description: "VM ID."},
 	}
 }
 
@@ -64,9 +63,6 @@ func (c *Client) waitRecovery(ctx context.Context, statusPath string) (recoveryS
 					message = ": " + *current.ErrorMessage
 				}
 				return current, fmt.Errorf("the API reports %s%s", current.Status, message)
-			case "queued", "running":
-			default:
-				return current, fmt.Errorf("the API returned unsupported status %q", current.Status)
 			}
 		} else if !retryableComputeRead(err) {
 			return last, err
@@ -96,7 +92,7 @@ type restoreTargetModel struct {
 // body sends target_mode and every target field that is set; the API decides
 // what each mode needs.
 func (m restoreTargetModel) body() map[string]any {
-	body := map[string]any{"target_mode": m.TargetMode.ValueString(), "requested_by": "terraform"}
+	body := map[string]any{"target_mode": m.TargetMode.ValueString()}
 	for key, value := range map[string]types.String{"target_vm_name": m.TargetVmName, "target_plan_id": m.TargetPlanID, "target_site_id": m.TargetSiteID, "target_gpu_model": m.TargetGpuModel, "selected_volume_id": m.SelectedVolumeID} {
 		if !value.IsNull() && !value.IsUnknown() {
 			body[key] = value.ValueString()
@@ -140,8 +136,8 @@ func (a *vmRestoreAction) Metadata(_ context.Context, req action.MetadataRequest
 
 func (a *vmRestoreAction) Schema(_ context.Context, _ action.SchemaRequest, resp *action.SchemaResponse) {
 	attrs := vmActionAttributes()
-	attrs["vm_id"] = schema.StringAttribute{Required: true, Description: "ID of the VM the snapshot or backup was taken from.", Validators: []validator.String{computeNonEmpty()}}
-	attrs["target_mode"] = schema.StringAttribute{Required: true, Description: "replace (restore over the source VM), new_vm (create a VM from the recovery point) or volume_only (restore one volume, set selected_volume_id).", Validators: []validator.String{computeOneOf("replace", "new_vm", "volume_only")}}
+	attrs["vm_id"] = schema.StringAttribute{Required: true, Description: "ID of the VM the snapshot or backup was taken from."}
+	attrs["target_mode"] = schema.StringAttribute{Required: true, Description: "replace (restore over the source VM), new_vm (create a VM from the recovery point) or volume_only (restore one volume, set selected_volume_id)."}
 	attrs["target_vm_name"] = schema.StringAttribute{Optional: true, Description: "Name of the new VM (new_vm)."}
 	attrs["target_plan_id"] = schema.StringAttribute{Optional: true, Description: "Plan for the new VM (new_vm), from ibee_compute_plans."}
 	attrs["target_site_id"] = schema.StringAttribute{Optional: true, Description: "Site for the new VM (new_vm)."}
@@ -154,10 +150,10 @@ func (a *vmRestoreAction) Schema(_ context.Context, _ action.SchemaRequest, resp
 	attrs["auto_start"] = schema.BoolAttribute{Optional: true, Description: "Start the VM after the restore. The API default applies when omitted."}
 	description := "Restores a VM snapshot set. Requires Terraform 1.14 or later. Invoke manually or with an explicit action trigger; plan and refresh never restore. Sends the fields that are set and the API decides whether the restore is allowed and what each target mode needs. Waits until the API reports the restore succeeded, failed or was cancelled. A new VM created by new_vm is not managed by Terraform until you import it."
 	if a.backup {
-		attrs["recovery_point_id"] = schema.StringAttribute{Required: true, Description: "Backup recovery point (backup run) to restore.", Validators: []validator.String{computeNonEmpty()}}
+		attrs["recovery_point_id"] = schema.StringAttribute{Required: true, Description: "Backup recovery point (backup run) to restore."}
 		description = strings.Replace(description, "a VM snapshot set", "a VM backup recovery point", 1)
 	} else {
-		attrs["snapshot_set_id"] = schema.StringAttribute{Required: true, Description: "Snapshot set to restore, such as ibee_cloud_vm_snapshot.id.", Validators: []validator.String{computeNonEmpty()}}
+		attrs["snapshot_set_id"] = schema.StringAttribute{Required: true, Description: "Snapshot set to restore, such as ibee_cloud_vm_snapshot.id."}
 	}
 	resp.Schema = schema.Schema{Description: description, Attributes: attrs}
 }
@@ -209,74 +205,6 @@ func (a *vmRestoreAction) restore(ctx context.Context, requestPath, statusPath s
 		message := "Restore " + started.RestoreID + " succeeded."
 		if done.TargetVmID != nil && *done.TargetVmID != "" {
 			message = "Restore " + started.RestoreID + " succeeded on VM " + *done.TargetVmID + "."
-		}
-		resp.SendProgress(action.InvokeProgressEvent{Message: message})
-	}
-}
-
-type vmBackupRunAction struct{ client *Client }
-
-func NewVmBackupRunAction() action.Action { return &vmBackupRunAction{} }
-
-func (a *vmBackupRunAction) Metadata(_ context.Context, req action.MetadataRequest, resp *action.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_vm_backup_run"
-}
-
-func (a *vmBackupRunAction) Schema(_ context.Context, _ action.SchemaRequest, resp *action.SchemaResponse) {
-	attrs := vmActionAttributes()
-	attrs["billing_catalog"] = schema.StringAttribute{Optional: true, Description: "Backup storage billing catalog as a JSON object (use jsonencode), passed to the API unchanged. The current API requires it; the API decides whether it is valid.", Validators: []validator.String{recoveryCatalogValidator{}}}
-	attrs["reason"] = schema.StringAttribute{Optional: true, Description: "Optional note stored with the run."}
-	resp.Schema = schema.Schema{Description: "Runs a manual backup of a cloud or GPU VM now, using the VM's backup configuration (see ibee_cloud_vm_backup_policy). Requires Terraform 1.14 or later. Invoke manually or with an explicit action trigger; plan and refresh never run a backup. The API decides whether the run is allowed. Waits until the API reports the run succeeded, failed or was cancelled.", Attributes: attrs}
-}
-
-func (a *vmBackupRunAction) Configure(_ context.Context, req action.ConfigureRequest, resp *action.ConfigureResponse) {
-	a.client = configureComputeAction(req, resp)
-}
-
-func (a *vmBackupRunAction) Invoke(ctx context.Context, req action.InvokeRequest, resp *action.InvokeResponse) {
-	var m struct {
-		VmType         types.String `tfsdk:"vm_type"`
-		VmID           types.String `tfsdk:"vm_id"`
-		BillingCatalog types.String `tfsdk:"billing_catalog"`
-		Reason         types.String `tfsdk:"reason"`
-	}
-	resp.Diagnostics.Append(req.Config.Get(ctx, &m)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	body := map[string]any{"requested_by": "terraform"}
-	catalog, err := recoveryCatalogBody(m.BillingCatalog)
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid billing catalog", err.Error())
-		return
-	}
-	if catalog != nil {
-		body["billing_catalog"] = catalog
-	}
-	if !m.Reason.IsNull() && !m.Reason.IsUnknown() {
-		body["reason"] = m.Reason.ValueString()
-	}
-	var run recoveryStatus
-	if err := a.client.do(ctx, http.MethodPost, "/compute/"+m.VmType.ValueString()+"-vms/"+url.PathEscape(m.VmID.ValueString())+"/backups/runs", body, &run); err != nil {
-		resp.Diagnostics.AddError("Backup run request failed", err.Error())
-		return
-	}
-	if run.RunID == "" {
-		resp.Diagnostics.AddError("Invalid backup run response", "The API queued the backup but returned no run_id. Check the VM's backups in the portal before retrying.")
-		return
-	}
-	if resp.SendProgress != nil {
-		resp.SendProgress(action.InvokeProgressEvent{Message: "Waiting for backup run " + run.RunID + "."})
-	}
-	done, err := a.client.waitRecovery(ctx, "/compute/"+m.VmType.ValueString()+"-vm-backups/runs/"+url.PathEscape(run.RunID))
-	if err != nil {
-		resp.Diagnostics.AddError("Backup run did not succeed", fmt.Sprintf("Backup run %s: %v", run.RunID, err))
-		return
-	}
-	if resp.SendProgress != nil {
-		message := "Backup run " + run.RunID + " succeeded."
-		if done.RecoveryPointID != nil && *done.RecoveryPointID != "" {
-			message = "Backup run " + run.RunID + " succeeded; recovery point " + *done.RecoveryPointID + "."
 		}
 		resp.SendProgress(action.InvokeProgressEvent{Message: message})
 	}

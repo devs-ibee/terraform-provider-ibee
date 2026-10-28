@@ -87,7 +87,6 @@ provider "ibee" {
  endpoint = %q
  token = "fixture-only-token"
  workspace_id = "workspace-fixture"
- organization_id = "org-fixture"
  operation_timeout = "3s"
 }
 variable "secret_payload" {
@@ -95,7 +94,6 @@ variable "secret_payload" {
  sensitive = true
  ephemeral = true
 }
-data "ibee_billing_eligibility" "test" {}
 data "ibee_sites" "test" {}
 data "ibee_compute_plans" "test" {
  vm_type = "cloud"
@@ -121,12 +119,6 @@ resource "ibee_secret" "test" {
 	}
 	config(false, 0)
 	run(0, "validate", "-no-color")
-	writeTestFile(t, filepath.Join(work, "invalid.tf"), "data \"ibee_billing_eligibility\" \"invalid\" {\n sku_code = \" \"\n estimated_cost_minor = -1\n}\n")
-	invalid := run(1, "validate", "-no-color")
-	if !strings.Contains(invalid, "Invalid SKU") || !strings.Contains(invalid, "Invalid cost estimate") {
-		t.Fatal("billing input validation did not report both invalid inputs")
-	}
-	os.Remove(filepath.Join(work, "invalid.tf"))
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	assertNoSecretState := func() {

@@ -130,13 +130,6 @@ action "ibee_vm_backup_restore" "replace" {
     target_mode       = "replace"
   }
 }
-action "ibee_vm_backup_run" "now" {
-  config {
-    vm_type         = "cloud"
-    vm_id           = "vm-1"
-    billing_catalog = jsonencode({ sku_id = 9007199254740993, sku_code = "BACKUP-STD" })
-  }
-}
 action "ibee_vm_access" "password" {
   config {
     vm_type      = "cloud"
@@ -164,7 +157,6 @@ action "ibee_vm_access" "password" {
 		for name, want := range map[string]string{
 			"ibee_vm_snapshot_restore.new_vm": "POST /compute/cloud-vm-snapshots/set-1/actions/restore",
 			"ibee_vm_backup_restore.replace":  "POST /compute/gpu-vms/vm-1/backups/actions/restore",
-			"ibee_vm_backup_run.now":          "POST /compute/cloud-vms/vm-1/backups/runs",
 			"ibee_vm_access.password":         "PATCH /compute/cloud-vms/vm-1/actions/access",
 		} {
 			run(0, "apply", "-invoke=action."+name, "-auto-approve", "-input=false", "-no-color")
@@ -173,9 +165,9 @@ action "ibee_vm_access" "password" {
 			}
 		}
 		fixture.mu.Lock()
-		backup, access := fixture.bodies["POST /compute/cloud-vms/vm-1/backups/runs"], fixture.bodies["PATCH /compute/cloud-vms/vm-1/actions/access"]
+		access := fixture.bodies["PATCH /compute/cloud-vms/vm-1/actions/access"]
 		fixture.mu.Unlock()
-		if !strings.Contains(backup, `"sku_id":9007199254740993`) || !strings.Contains(access, `"new_password":"fixture-password-never-shown"`) {
+		if !strings.Contains(access, `"new_password":"fixture-password-never-shown"`) {
 			t.Fatal("action bodies were not relayed unchanged")
 		}
 	}
@@ -264,16 +256,12 @@ func (f *recoveryIdentityFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		f.scope = false
 		computeJSON(w, map[string]any{"status": "deleted"})
 	case "POST /compute/cloud-vm-snapshots/set-1/actions/restore", "POST /compute/gpu-vms/vm-1/backups/actions/restore":
-		if !strings.Contains(body, `"requested_by":"terraform"`) || (strings.Contains(key, "snapshots") && r.URL.Query().Get("vm_id") != "vm-1") {
+		if strings.Contains(body, `"requested_by"`) || !strings.Contains(body, `"target_mode"`) || (strings.Contains(key, "snapshots") && r.URL.Query().Get("vm_id") != "vm-1") {
 			f.t.Errorf("unexpected restore request %s %s", r.URL.String(), body)
 		}
 		computeJSON(w, map[string]any{"restore_id": "rs-1", "status": "queued"})
 	case "GET /compute/cloud-vm-snapshots/restores/rs-1", "GET /compute/gpu-vm-backups/restores/rs-1":
 		computeJSON(w, map[string]any{"restore_id": "rs-1", "status": "succeeded"})
-	case "POST /compute/cloud-vms/vm-1/backups/runs":
-		computeJSON(w, map[string]any{"run_id": "run-1", "status": "queued"})
-	case "GET /compute/cloud-vm-backups/runs/run-1":
-		computeJSON(w, map[string]any{"run_id": "run-1", "status": "succeeded"})
 	case "PATCH /compute/cloud-vms/vm-1/actions/access":
 		computeJSON(w, operationAccepted{OperationID: "op-1", VmID: "vm-1", Status: "accepted"})
 	case "GET /compute/operations/op-1":

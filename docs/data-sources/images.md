@@ -28,4 +28,5 @@ data "ibee_images" "cloud" {
 | `images.os_distro` | `string` | Read-only |  |
 | `images.os_type` | `string` | Read-only |  |
 | `images.template_id` | `string` | Read-only |  |
-| `vm_type` | `string` | Optional, Defaulted | cloud (default) or gpu. |
+| `site_id` | `string` | Optional | Restrict images to one placement site. |
+| `vm_type` | `string` | Required | cloud or gpu. |

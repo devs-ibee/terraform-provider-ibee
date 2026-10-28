@@ -15,7 +15,6 @@ variable "site_id" {
 }
 
 data "ibee_sites" "all" {}
-data "ibee_billing_eligibility" "account" {}
 
 resource "ibee_vpc" "example" {
   name    = "example-vpc"
@@ -29,5 +28,3 @@ resource "ibee_firewall_group" "example" {
 
 output "vpc_id" { value = ibee_vpc.example.id }
 output "default_subnet_id" { value = ibee_vpc.example.default_subnet_id }
-output "billing_allowed" { value = data.ibee_billing_eligibility.account.allowed }
-output "billing_reason" { value = data.ibee_billing_eligibility.account.reason }

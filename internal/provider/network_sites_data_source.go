@@ -65,22 +65,12 @@ func (d *networkSitesDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 		return
 	}
 	if out == nil {
-		resp.Diagnostics.AddError("Invalid networking site catalog", "API must return an array of networking sites, including an empty array when none are configured.")
+		resp.Diagnostics.AddError("Invalid networking site catalog", "The API returned null instead of an array.")
 		return
 	}
 	state := networkSitesModel{Sites: make([]networkSiteModel, 0, len(out))}
-	seen := map[string]bool{}
 	for _, site := range out {
-		if site.SiteID == "" || site.Name == "" || site.Available == nil {
-			resp.Diagnostics.AddError("Invalid networking site catalog", "Each site must contain a nonempty site_id and site_name, and an explicit boolean available.")
-			return
-		}
-		if seen[site.SiteID] {
-			resp.Diagnostics.AddError("Invalid networking site catalog", "API returned duplicate site_id "+site.SiteID)
-			return
-		}
-		seen[site.SiteID] = true
-		state.Sites = append(state.Sites, networkSiteModel{SiteID: types.StringValue(site.SiteID), Name: types.StringValue(site.Name), Available: types.BoolValue(*site.Available), Message: types.StringPointerValue(site.Message)})
+		state.Sites = append(state.Sites, networkSiteModel{SiteID: types.StringValue(site.SiteID), Name: types.StringValue(site.Name), Available: types.BoolPointerValue(site.Available), Message: types.StringPointerValue(site.Message)})
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

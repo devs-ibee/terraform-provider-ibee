@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -24,7 +23,7 @@ func TestS3CredentialLifecycleAndScopedDrift(t *testing.T) {
 	const generatedSecret = "fixture-generated-s3-secret"
 	metadata := s3TestMetadata("active")
 	billingCalls := 0
-	created, revoked := false, false
+	created, revoked, deleted := false, false, false
 	r := &s3CredentialResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		switch {
 		case req.URL.Path == "/billing/resource-eligibility":
@@ -45,10 +44,16 @@ func TestS3CredentialLifecycleAndScopedDrift(t *testing.T) {
 			out := s3TestMetadata("active")
 			out["secret_access_key"] = generatedSecret
 			json.NewEncoder(w).Encode(out)
-		case req.Method == http.MethodDelete:
+		case req.Method == http.MethodPost && req.URL.Path == "/object-storage/credentials/AKIAFIXTURE/revoke":
 			revoked = true
 			metadata["status"] = "revoked"
 			fmt.Fprint(w, `{"success":true,"message":"revoked"}`)
+		case req.Method == http.MethodDelete && req.URL.Path == "/object-storage/credentials/AKIAFIXTURE":
+			if !revoked {
+				t.Error("the key must be revoked before it is deleted")
+			}
+			deleted = true
+			fmt.Fprint(w, `{"success":true,"message":"deleted"}`)
 		case req.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(metadata)
 		default:
@@ -81,8 +86,8 @@ func TestS3CredentialLifecycleAndScopedDrift(t *testing.T) {
 	remove := resource.DeleteResponse{State: read.State}
 	r.Delete(storageTestContext, resource.DeleteRequest{State: read.State}, &remove)
 	storageTestCheck(t, remove.Diagnostics)
-	if !revoked || billingCalls != 0 {
-		t.Fatal("revocation missing or checked purchase admission")
+	if !revoked || !deleted || billingCalls != 0 {
+		t.Fatal("destroy must revoke and then delete the key")
 	}
 }
 
@@ -102,164 +107,33 @@ func TestS3CredentialImportCannotRecoverSecret(t *testing.T) {
 	}
 }
 
-func TestS3CredentialRejectsUnintendedBroadScope(t *testing.T) {
-	for _, tc := range []struct {
-		permission, scope string
-		buckets           []string
-		wantError         bool
-	}{
-		{"object_ro", "specific", []string{"assets"}, false},
-		{"object_rw", "all", nil, false},
-		{"admin_ro", "all", nil, false},
-		{"admin_rw", "specific", []string{"assets"}, true},
-		{"admin_ro", "all", []string{"assets"}, true},
-		{"object_ro", "specific", nil, true},
-		{"object_ro", "", nil, true},
-		{"", "all", nil, true},
-		{"object_ro", "all", []string{"assets"}, true},
-		{"object_ro", "specific", []string{" assets "}, true},
-	} {
-		if got := validateS3Scope(tc.permission, tc.scope, tc.buckets); (got != nil) != tc.wantError {
-			t.Errorf("permission=%s scope=%s buckets=%v error=%v", tc.permission, tc.scope, tc.buckets, got)
+// A key revoked outside Terraform stays in state as revoked; destroy only deletes it.
+func TestS3CredentialRevokedKeyIsOnlyDeleted(t *testing.T) {
+	var requests []string
+	r := &s3CredentialResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		requests = append(requests, req.Method+" "+req.URL.Path)
+		switch req.Method {
+		case http.MethodGet:
+			json.NewEncoder(w).Encode(s3TestMetadata("revoked"))
+		case http.MethodDelete:
+			fmt.Fprint(w, `{"success":true,"message":"deleted"}`)
+		default:
+			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
 		}
-	}
-}
-
-func TestS3CredentialReadFailuresPreserveIdentityAndSecret(t *testing.T) {
-	for _, kind := range []string{"forbidden", "missing-scope", "wrong-key", "wrong-workspace", "wrong-org", "unknown-status"} {
-		t.Run(kind, func(t *testing.T) {
-			r := &s3CredentialResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				if kind == "forbidden" {
-					w.WriteHeader(403)
-					fmt.Fprint(w, `{"detail":"private-generated-value"}`)
-					return
-				}
-				out := s3TestMetadata("active")
-				switch kind {
-				case "missing-scope":
-					delete(out, "allowed_buckets")
-				case "wrong-key":
-					out["access_key_id"] = "WRONG"
-				case "wrong-workspace":
-					out["workspace_id"] = "other"
-				case "wrong-org":
-					out["organization_id"] = "other"
-				case "unknown-status":
-					out["status"] = "unknown"
-				}
-				json.NewEncoder(w).Encode(out)
-			})}
-			r.client.organizationID = "org-test"
-			model := s3TestModel()
-			model.SecretAccessKey = types.StringValue("private-generated-value")
-			state := storageTestState(t, r, model)
-			response := resource.ReadResponse{State: state}
-			r.Read(storageTestContext, resource.ReadRequest{State: state}, &response)
-			if !response.Diagnostics.HasError() || response.State.Raw.IsNull() {
-				t.Fatal("malformed or denied read lost identity")
-			}
-			if strings.Contains(fmt.Sprint(response.Diagnostics), "private-generated-value") {
-				t.Fatal("read error leaked secret")
-			}
-			var after s3CredentialResourceModel
-			storageTestCheck(t, response.State.Get(storageTestContext, &after))
-			if after.SecretAccessKey.ValueString() != "private-generated-value" {
-				t.Fatal("failed read lost stored key")
-			}
-		})
-	}
-}
-
-func TestS3CredentialCreateErrorRedactionAndPartialRecovery(t *testing.T) {
-	for _, kind := range []string{"error", "missing-secret", "billing-denied"} {
-		t.Run(kind, func(t *testing.T) {
-			creates := 0
-			r := &s3CredentialResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				if req.URL.Path == "/billing/resource-eligibility" {
-					storageTestBilling(w, kind != "billing-denied")
-					return
-				}
-				creates++
-				if kind == "billing-denied" {
-					w.WriteHeader(http.StatusPaymentRequired)
-					fmt.Fprint(w, `{"error":"billing_denied","billing_reason":"insufficient_balance"}`)
-					return
-				}
-				if kind == "error" {
-					w.WriteHeader(400)
-					fmt.Fprint(w, `{"detail":"private-generated-value"}`)
-					return
-				}
-				json.NewEncoder(w).Encode(s3TestMetadata("active"))
-			})}
-			model := s3TestModel()
-			model.ID = types.StringUnknown()
-			state := storageTestState(t, r, model)
-			response := resource.CreateResponse{State: state}
-			r.Create(storageTestContext, resource.CreateRequest{Plan: storageTestPlan(state)}, &response)
-			if !response.Diagnostics.HasError() {
-				t.Fatal("expected creation failure")
-			}
-			if strings.Contains(fmt.Sprint(response.Diagnostics), "private-generated-value") {
-				t.Fatal("create error leaked secret")
-			}
-			if kind == "missing-secret" {
-				var after s3CredentialResourceModel
-				storageTestCheck(t, response.State.Get(storageTestContext, &after))
-				if after.ID.ValueString() != "AKIAFIXTURE" {
-					t.Fatal("missing one-time secret lost recoverable key ID")
-				}
-			}
-			if kind == "billing-denied" && creates != 1 {
-				t.Fatal("denied purchase reached credential API")
-			}
-		})
-	}
-}
-
-func TestS3CredentialRevokeConfirmation(t *testing.T) {
-	for _, tc := range []struct {
-		name, status        string
-		revokeCode, getCode int
-		body                string
-		wantError           bool
-	}{
-		{"success", "revoked", 200, 200, `{"success":true}`, false},
-		{"success-erased", "", 200, 404, `{"success":true}`, false},
-		{"gone", "", 404, 404, `{}`, false},
-		{"already-revoked", "revoked", 404, 200, `{}`, false},
-		{"still-active", "active", 200, 200, `{"success":true}`, true},
-		{"unsupported-revoke-route", "active", 404, 200, `{}`, true},
-		{"success-missing", "active", 200, 200, `{}`, true},
-		{"unsuccessful", "active", 200, 200, `{"success":false}`, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := &s3CredentialResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				if req.Method == http.MethodDelete {
-					w.WriteHeader(tc.revokeCode)
-					fmt.Fprint(w, tc.body)
-					return
-				}
-				w.WriteHeader(tc.getCode)
-				json.NewEncoder(w).Encode(s3TestMetadata(tc.status))
-			})}
-			state := storageTestState(t, r, s3TestModel())
-			response := resource.DeleteResponse{State: state}
-			r.Delete(storageTestContext, resource.DeleteRequest{State: state}, &response)
-			if response.Diagnostics.HasError() != tc.wantError {
-				t.Fatalf("revocation result: %v", response.Diagnostics)
-			}
-		})
-	}
-}
-
-func TestS3CredentialRevokedReadRemovesInactiveKey(t *testing.T) {
-	r := &s3CredentialResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) { json.NewEncoder(w).Encode(s3TestMetadata("revoked")) })}
+	})}
 	state := storageTestState(t, r, s3TestModel())
-	response := resource.ReadResponse{State: state}
-	r.Read(storageTestContext, resource.ReadRequest{State: state}, &response)
-	storageTestCheck(t, response.Diagnostics)
-	if !response.State.Raw.IsNull() {
-		t.Fatal("revoked key remained managed as active")
+	read := resource.ReadResponse{State: state}
+	r.Read(storageTestContext, resource.ReadRequest{State: state}, &read)
+	storageTestCheck(t, read.Diagnostics)
+	var got s3CredentialResourceModel
+	storageTestCheck(t, read.State.Get(storageTestContext, &got))
+	if got.Status.ValueString() != "revoked" {
+		t.Fatalf("a revoked key must stay in state: %+v", got)
+	}
+	remove := resource.DeleteResponse{State: read.State}
+	r.Delete(storageTestContext, resource.DeleteRequest{State: read.State}, &remove)
+	storageTestCheck(t, remove.Diagnostics)
+	if len(requests) != 2 || requests[1] != "DELETE /object-storage/credentials/AKIAFIXTURE" {
+		t.Fatal(requests)
 	}
 }

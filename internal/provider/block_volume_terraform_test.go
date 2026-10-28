@@ -44,8 +44,7 @@ func TestTerraformLifecycleBlockVolume(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var volume map[string]any
-	allowed := true
-	var creates, resizes, deletes, admissions, attaches, detaches int
+	var creates, resizes, deletes int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -54,9 +53,6 @@ func TestTerraformLifecycleBlockVolume(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
-		case "/billing/resource-eligibility":
-			admissions++
-			blockEligibility(w, allowed, "INR")
 		case "/block-storage/volumes":
 			if r.Method != "POST" {
 				http.Error(w, "bad method", 405)
@@ -68,19 +64,6 @@ func TestTerraformLifecycleBlockVolume(t *testing.T) {
 			volume = blockVolumeFixture(int64(b["size_gb"].(float64)))
 			volume["name"] = b["name"]
 			computeJSON(w, map[string]any{"volume": volume, "operation": blockVolumeOperationAPI{ID: "create-op", VolumeID: "vol-1", Status: "succeeded"}})
-		case "/block-storage/volumes/vol-1/attachments":
-			attaches++
-			volume["attachments"] = []any{map[string]any{"node_name": "node", "mode": "single-writer", "device_path": "/dev/drbd100"}}
-			computeJSON(w, map[string]any{"volume": volume, "operation": blockVolumeOperationAPI{ID: "attach-op", VolumeID: "vol-1", Status: "succeeded"}})
-		case "/block-storage/volumes/vol-1/detach":
-			detaches++
-			var b map[string]any
-			_ = json.NewDecoder(r.Body).Decode(&b)
-			if b["force"] != false || b["confirm_unmounted"] != true {
-				t.Error("unsafe detach")
-			}
-			volume["attachments"] = []any{}
-			computeJSON(w, map[string]any{"volume": volume, "operation": blockVolumeOperationAPI{ID: "detach-op", VolumeID: "vol-1", Status: "succeeded"}})
 		case "/block-storage/volumes/vol-1/resize":
 			resizes++
 			var b map[string]any
@@ -139,7 +122,6 @@ func TestTerraformLifecycleBlockVolume(t *testing.T) {
 		}
 		return string(out)
 	}
-	confirmUnmounted := false
 	config := func(size int) {
 		writeTestFile(t, filepath.Join(work, "main.tf"), fmt.Sprintf(`terraform {
  required_providers { ibee = { source = "devs-ibee/ibee" } }
@@ -156,12 +138,7 @@ resource "ibee_block_volume" "test" {
  sku_code = "BLOCK-STD"
  size_gb = %d
 }
-resource "ibee_block_volume_attachment" "test" {
- volume_id = ibee_block_volume.test.id
- node_name = "node"
- confirm_unmounted = %t
-}
-`, server.URL, size, confirmUnmounted))
+`, server.URL, size))
 	}
 	config(100)
 	run(0, "validate", "-no-color")
@@ -169,9 +146,6 @@ resource "ibee_block_volume_attachment" "test" {
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	run(0, "state", "rm", "ibee_block_volume.test")
 	run(0, "import", "-input=false", "-no-color", "ibee_block_volume.test", "vol-1")
-	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-	run(0, "state", "rm", "ibee_block_volume_attachment.test")
-	run(0, "import", "-input=false", "-no-color", "ibee_block_volume_attachment.test", "vol-1/node")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	config(200)
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
@@ -202,17 +176,10 @@ resource "ibee_block_volume_attachment" "test" {
 	mu.Lock()
 	volume["name"] = "data"
 	mu.Unlock()
-	confirmUnmounted = true
-	config(200)
-	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
-	mu.Lock()
-	allowed = false
-	calls := admissions
-	mu.Unlock()
 	run(0, "destroy", "-auto-approve", "-input=false", "-no-color")
 	mu.Lock()
 	defer mu.Unlock()
-	if volume != nil || deletes != 1 || admissions != calls || attaches != 1 || detaches != 1 {
-		t.Fatalf("destroy must release volume without purchase check: %d %d", deletes, admissions)
+	if volume != nil || deletes != 1 {
+		t.Fatalf("destroy must delete the volume: deletes=%d", deletes)
 	}
 }

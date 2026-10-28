@@ -67,11 +67,19 @@ func TestTerraformLifecycleBucketConfiguration(t *testing.T) {
 				http.Error(w, "missing configuration entries", 400)
 				return
 			}
-			for _, item := range items {
+			for i, item := range items {
 				entry := item.(map[string]any)
-				if section == "cors" && (entry["AllowedOrigins"] == nil || entry["allowed_origins"] != nil) {
-					http.Error(w, "wrong CORS field casing", 400)
-					return
+				if section == "cors" {
+					if entry["allowed_origins"] == nil || entry["AllowedOrigins"] != nil {
+						http.Error(w, "wrong CORS field casing", 400)
+						return
+					}
+					// Like the API, store and read CORS rules with S3-cased keys.
+					cased := map[string]any{}
+					for name, value := range entry {
+						cased[bucketCORSAliases[name]] = value
+					}
+					items[i] = cased
 				}
 				if section == "lifecycle" {
 					if date, ok := entry["expiration_date"].(string); ok {

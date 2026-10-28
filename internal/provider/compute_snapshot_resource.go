@@ -3,19 +3,16 @@ package provider
 import (
 	"context"
 	"fmt"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"net/http"
+	"net/url"
+
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"net/http"
-	"net/url"
 )
 
 type vmSnapshotResource struct {
@@ -27,7 +24,6 @@ func NewCloudVmSnapshotResource() resource.Resource { return &vmSnapshotResource
 func NewGpuVmSnapshotResource() resource.Resource   { return &vmSnapshotResource{vmType: "gpu"} }
 
 var _ resource.ResourceWithImportState = (*vmSnapshotResource)(nil)
-var _ resource.ResourceWithValidateConfig = (*vmSnapshotResource)(nil)
 
 type vmSnapshotModel struct {
 	ID                    types.String `tfsdk:"id"`
@@ -62,11 +58,11 @@ func (r *vmSnapshotResource) Schema(_ context.Context, _ resource.SchemaRequest,
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{Description: "An immutable VM snapshot. Creation waits for capture completion. Deletion removes this recovery point; restoring is an explicit operation outside this resource. The upstream mutation decides billing and lifecycle admission.", Attributes: map[string]schema.Attribute{
 		"id":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-		"vm_id": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}}, "name": schema.StringAttribute{Required: true, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}},
+		"vm_id": schema.StringAttribute{Required: true, PlanModifiers: replace}, "name": schema.StringAttribute{Required: true, PlanModifiers: replace},
 		"description":              schema.StringAttribute{Optional: true, PlanModifiers: replace},
-		"billing_catalog":          recoveryCatalogAttribute("snapshot_storage", true),
-		"mode":                     schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("all_attached"), PlanModifiers: replace, Validators: []validator.String{computeOneOf("root_only", "all_attached", "selective")}},
-		"selected_data_volume_ids": schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{})), PlanModifiers: []planmodifier.Set{setplanmodifier.RequiresReplace()}, Description: "Required for selective mode; otherwise must be empty."},
+		"billing_catalog":          recoveryCatalogAttribute("snapshot_storage (see ibee_snapshot_storage_plans)", true),
+		"mode":                     schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()}, Description: "root_only, all_attached or selective. Omit to use the API's default."},
+		"selected_data_volume_ids": schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, PlanModifiers: []planmodifier.Set{setplanmodifier.UseStateForUnknown(), setplanmodifier.RequiresReplace()}, Description: "Data volumes to capture with mode selective."},
 		"status":                   schema.StringAttribute{Computed: true}, "recovery_point_id": schema.StringAttribute{Computed: true},
 	}}
 }
@@ -81,26 +77,12 @@ func (r *vmSnapshotResource) Configure(_ context.Context, req resource.Configure
 	}
 	r.client = c
 }
-func (r *vmSnapshotResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var m vmSnapshotModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &m)...)
-	if resp.Diagnostics.HasError() || m.Mode.IsUnknown() || m.SelectedDataVolumeIDs.IsUnknown() {
-		return
-	}
-	n := len(m.SelectedDataVolumeIDs.Elements())
-	if m.Mode.ValueString() == "selective" && n == 0 {
-		resp.Diagnostics.AddAttributeError(path.Root("selected_data_volume_ids"), "Missing volumes", "selective mode requires at least one data volume ID.")
-	}
-	if m.Mode.ValueString() != "selective" && n > 0 {
-		resp.Diagnostics.AddAttributeError(path.Root("selected_data_volume_ids"), "Unexpected volumes", "Set mode to selective when selecting data volume IDs.")
-	}
-}
 func (r *vmSnapshotResource) route(id string) string {
 	return "/compute/" + r.vmType + "-vm-snapshots/" + url.PathEscape(id)
 }
 func (r *vmSnapshotResource) hydrate(ctx context.Context, m *vmSnapshotModel, s vmSnapshotAPI) error {
-	if s.ID == "" || s.VmID == "" || s.Name == "" || s.Status == "" || s.Mode == "" {
-		return fmt.Errorf("incomplete snapshot response")
+	if s.ID == "" {
+		return fmt.Errorf("snapshot response has no snapshot_set_id")
 	}
 	if err := hydrateRecoveryCatalog(&m.BillingCatalog, s.BillingCatalog); err != nil {
 		return err
@@ -109,7 +91,9 @@ func (r *vmSnapshotResource) hydrate(ctx context.Context, m *vmSnapshotModel, s 
 	m.VmID = types.StringValue(s.VmID)
 	m.Name = types.StringValue(s.Name)
 	m.Description = types.StringPointerValue(s.Description)
-	m.Mode = types.StringValue(s.Mode)
+	if s.Mode != "" {
+		m.Mode = types.StringValue(s.Mode)
+	}
 	m.Status = types.StringValue(s.Status)
 	m.RecoveryPointID = types.StringValue(s.RecoveryPointID)
 	selected := []string{}
@@ -119,9 +103,6 @@ func (r *vmSnapshotResource) hydrate(ctx context.Context, m *vmSnapshotModel, s 
 				selected = append(selected, v.SourceVolumeID)
 			}
 		}
-	}
-	if s.Status == "succeeded" && s.Mode == "selective" && len(selected) == 0 {
-		return fmt.Errorf("completed selective snapshot omitted its selected data-volume manifest")
 	}
 	// A queued snapshot may not yet have its volume manifest. Preserve requested IDs until capture finishes.
 	if s.Mode != "selective" || len(selected) > 0 || m.SelectedDataVolumeIDs.IsNull() || m.SelectedDataVolumeIDs.IsUnknown() {
@@ -149,17 +130,20 @@ func (r *vmSnapshotResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var volumes []string
-	resp.Diagnostics.Append(m.SelectedDataVolumeIDs.ElementsAs(ctx, &volumes, false)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
 	catalog, err := recoveryCatalogBody(m.BillingCatalog)
 	if err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid snapshot billing catalog", err.Error())
 		return
 	}
-	body := map[string]any{"name": m.Name.ValueString(), "mode": m.Mode.ValueString(), "selected_data_volume_ids": volumes, "requested_by": "terraform"}
+	body := map[string]any{"name": m.Name.ValueString()}
+	if !m.Mode.IsNull() && !m.Mode.IsUnknown() {
+		body["mode"] = m.Mode.ValueString()
+	}
+	if !m.SelectedDataVolumeIDs.IsNull() && !m.SelectedDataVolumeIDs.IsUnknown() {
+		var volumes []string
+		resp.Diagnostics.Append(m.SelectedDataVolumeIDs.ElementsAs(ctx, &volumes, false)...)
+		body["selected_data_volume_ids"] = volumes
+	}
 	if catalog != nil {
 		body["billing_catalog"] = catalog
 	}
@@ -179,6 +163,18 @@ func (r *vmSnapshotResource) Create(ctx context.Context, req resource.CreateRequ
 	m.ID = types.StringValue(snapshot.ID)
 	m.Status = types.StringValue(snapshot.Status)
 	m.RecoveryPointID = types.StringValue(snapshot.RecoveryPointID)
+	if m.Mode.IsUnknown() {
+		m.Mode = types.StringNull()
+		if snapshot.Mode != "" {
+			m.Mode = types.StringValue(snapshot.Mode)
+		}
+	}
+	if m.SelectedDataVolumeIDs.IsUnknown() {
+		m.SelectedDataVolumeIDs = types.SetNull(types.StringType)
+	}
+	if m.BillingCatalog.IsUnknown() {
+		m.BillingCatalog = types.StringNull()
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 	if resp.Diagnostics.HasError() {
 		return

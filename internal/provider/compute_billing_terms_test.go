@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -34,8 +35,8 @@ func TestComputeBillingTermPassesOptionThrough(t *testing.T) {
 	missing := computeTestBillingCatalog("SKU", 20)
 	delete(missing, "billing_options")
 	p := computePlan{PlanID: "plan", BillingCatalog: missing}
-	if p.selectBillingTerm("HOURLY") == nil {
-		t.Fatal("a term with no listed option was accepted")
+	if p.selectBillingTerm("HOURLY") != nil || !reflect.DeepEqual(p.BillingCatalog, missing) {
+		t.Fatal("a term with no listed option must leave the catalog for the API to answer")
 	}
 	// The API, not the provider, decides whether a listed option can be bought.
 	for _, scenario := range []string{"negative", "monthly three months", "hourly committed", "missing period"} {

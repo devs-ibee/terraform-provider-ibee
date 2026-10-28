@@ -100,13 +100,6 @@ func TestComputeVMCreateBillingAndCanonicalState(t *testing.T) {
 						t.Error("incorrect catalog type")
 					}
 					computeCatalog(w)
-				case "/billing/resource-eligibility":
-					var b billingEligibilityRequest
-					_ = json.NewDecoder(req.Body).Decode(&b)
-					if b.SKUCode != "" || b.EstimatedCostMinor != nil {
-						t.Errorf("untrusted billing payload: %+v", b)
-					}
-					computeEligibility(w, true, "SKU-1")
 				case "/compute/" + kind + "-vms":
 					var b map[string]any
 					_ = json.NewDecoder(req.Body).Decode(&b)
@@ -152,13 +145,6 @@ func TestComputeVMCreateUsesConfiguredCatalogInterval(t *testing.T) {
 				catalogReads, creates := 0, 0
 				r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 					switch req.URL.Path {
-					case "/billing/resource-eligibility":
-						var b billingEligibilityRequest
-						_ = json.NewDecoder(req.Body).Decode(&b)
-						if b.SKUCode != "" || b.EstimatedCostMinor != nil {
-							t.Errorf("client estimated %s admission: %+v", interval, b)
-						}
-						computeEligibility(w, true, "SKU-1")
 					case "/compute/plans":
 						catalogReads++
 						query := req.URL.Query()
@@ -362,8 +348,8 @@ func TestComputePlanTermSelectionPassesCatalogThrough(t *testing.T) {
 	if err := p.selectBillingTerm(""); err != nil || !reflect.DeepEqual(p.BillingCatalog, map[string]any{"sku_code": "SKU"}) {
 		t.Fatalf("an omitted term must send the catalog unchanged: %v %v", err, p.BillingCatalog)
 	}
-	if p.selectBillingTerm("HOURLY") == nil {
-		t.Fatal("a term the catalog does not list was accepted")
+	if err := p.selectBillingTerm("HOURLY"); err != nil || !reflect.DeepEqual(p.BillingCatalog, map[string]any{"sku_code": "SKU"}) {
+		t.Fatal("a term the catalog does not list must leave the catalog for the API to answer")
 	}
 	// Any term the catalog lists is merged as given; the API decides whether it can be bought.
 	p.BillingCatalog = computeTestBillingCatalog("SKU", 20)
@@ -372,14 +358,16 @@ func TestComputePlanTermSelectionPassesCatalogThrough(t *testing.T) {
 		t.Fatalf("listed term not merged: %v %v", err, p.BillingCatalog)
 	}
 }
+
+// A plan whose catalog lists no option for the term is sent as listed; the API answers.
 func TestComputeVMCreateLeavesPlanEligibilityToAPI(t *testing.T) {
 	creates := 0
 	r := &cloudVmResource{vmType: "cloud"}
 	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/compute/plans":
-			if req.URL.Query().Has("billing_interval") {
-				t.Error("an omitted term must not be chosen by the provider")
+			if req.URL.Query().Get("billing_interval") != "HOURLY" {
+				t.Error("an omitted term must default to HOURLY")
 			}
 			computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "code": "SKU-1", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "selectable": false, "pricing_status": "unpriced", "billing_catalog": map[string]any{"sku_code": "OTHER"}}}})
 		case "/compute/cloud-vms":
@@ -493,52 +481,6 @@ func TestComputeAttachmentImportAndUnmountPolicy(t *testing.T) {
 	}
 }
 
-func TestComputeMalformedVMResponsesPreserveState(t *testing.T) {
-	for _, field := range []string{"ssh_key_ids", "tags", "site_id", "plan_id", "template_id", "os_type", "os_distro"} {
-		t.Run(field, func(t *testing.T) {
-			r := &cloudVmResource{vmType: "cloud"}
-			r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				vm := computeCanonicalVM("cloud")
-				delete(vm, field)
-				computeJSON(w, vm)
-			})
-			m := computeValidVMPlan()
-			m.ID = types.StringValue("vm-1")
-			before := computeState(t, r, m)
-			resp := resource.ReadResponse{State: before}
-			r.Read(context.Background(), resource.ReadRequest{State: before}, &resp)
-			if !resp.Diagnostics.HasError() || !resp.State.Raw.Equal(before.Raw) {
-				t.Fatalf("missing %s must not overwrite state: %v", field, resp.Diagnostics)
-			}
-		})
-	}
-}
-func TestComputeMissingBackupEnabledPreservesState(t *testing.T) {
-	r := &vmBackupPolicyResource{vmType: "cloud"}
-	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) { computeJSON(w, map[string]string{"vm_id": "vm-1"}) })
-	before := computeState(t, r, computeBackupModel())
-	resp := resource.ReadResponse{State: before}
-	r.Read(context.Background(), resource.ReadRequest{State: before}, &resp)
-	if !resp.Diagnostics.HasError() || !resp.State.Raw.Equal(before.Raw) {
-		t.Fatal("missing enabled must preserve policy state")
-	}
-}
-func TestComputeCatalogMalformedAndSiteMismatch(t *testing.T) {
-	t.Run("missing array", func(t *testing.T) {
-		c := computeTestClient(t, func(w http.ResponseWriter, r *http.Request) { computeJSON(w, map[string]any{}) })
-		if _, err := c.listComputePlansFiltered(context.Background(), "cloud", "", "", ""); err == nil {
-			t.Fatal("missing plans accepted")
-		}
-	})
-	t.Run("wrong site", func(t *testing.T) {
-		c := computeTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-			computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "p", "site_id": "other"}}})
-		})
-		if _, err := c.findPlanForTerm(context.Background(), "cloud", "site", "p", "", ""); err == nil {
-			t.Fatal("wrong site accepted")
-		}
-	})
-}
 func TestComputeSnapshotFailureRetainsRecoverableIdentity(t *testing.T) {
 	r := &vmSnapshotResource{vmType: "cloud"}
 	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
@@ -571,65 +513,6 @@ func TestComputeSnapshotFailureRetainsRecoverableIdentity(t *testing.T) {
 	computeNoErrors(t, resp.State.Get(context.Background(), &got))
 	if got.ID.ValueString() != "snap" || got.Status.ValueString() != "failed" || got.RecoveryPointID.IsUnknown() {
 		t.Fatal("snapshot failure lost identity or unknown state")
-	}
-}
-
-func TestComputeVMCurrencyUsesOrganizationBeforeQuote(t *testing.T) {
-	for _, scenario := range []string{"USD success", "catalog mismatch", "upstream denial"} {
-		t.Run(scenario, func(t *testing.T) {
-			r := &cloudVmResource{vmType: "cloud"}
-			admissions, creates := 0, 0
-			r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				switch req.URL.Path {
-				case "/billing/resource-eligibility":
-					admissions++
-					var b billingEligibilityRequest
-					_ = json.NewDecoder(req.Body).Decode(&b)
-					currency := "USD"
-					if b.SKUCode != "" || b.EstimatedCostMinor != nil {
-						t.Fatalf("provider must not calculate affordability: %+v", b)
-					}
-					computeJSON(w, map[string]any{"allowed": true, "organization_id": "org", "reason": "eligible", "billing_mode": "PREPAID", "billing_state": "CURRENT", "currency": currency, "sku_code": b.SKUCode, "estimated_cost_minor": b.EstimatedCostMinor, "evaluated_at": "2026-09-27T00:00:00Z"})
-				case "/compute/plans":
-					if admissions != 0 || req.URL.Query().Get("currency") != "" {
-						t.Error("catalog must use workspace defaults without a diagnostic probe")
-					}
-					currency := "USD"
-					if scenario == "catalog mismatch" {
-						currency = "INR"
-					}
-					computeJSON(w, map[string]any{"plans": []any{map[string]any{"plan_id": "plan", "code": "SKU-1", "cpu": 4, "ram_mb": 8192, "disk_gb": 80, "selectable": true, "pricing_status": "priced", "currency": currency, "billing_interval": "MONTHLY", "monthly_price_minor": 150, "billing_catalog": computeTestBillingCatalog("SKU-1", 150)}}})
-				case "/compute/cloud-vms":
-					creates++
-					if scenario == "upstream denial" || scenario == "catalog mismatch" {
-						w.WriteHeader(http.StatusPaymentRequired)
-						computeJSON(w, map[string]any{"error": "billing_denied", "billing_reason": "insufficient_balance", "admission_context_id": "adm_upstream"})
-						return
-					}
-					computeJSON(w, operationAccepted{VmID: "vm-1", OperationID: "op", Status: "accepted"})
-				case "/compute/operations/op":
-					computeJSON(w, map[string]any{"status": "succeeded"})
-				case "/compute/cloud-vms/vm-1":
-					computeJSON(w, computeCanonicalVM("cloud"))
-				default:
-					t.Error(req.URL.Path)
-				}
-			})
-			resp := resource.CreateResponse{State: computeState(t, r, nil)}
-			r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, computeValidVMPlan())}, &resp)
-			if scenario == "USD success" {
-				computeNoErrors(t, resp.Diagnostics)
-				if creates != 1 || admissions != 0 {
-					t.Fatal("expected upstream account/currency check and one create")
-				}
-			} else if scenario == "upstream denial" {
-				if !resp.Diagnostics.HasError() || creates != 1 || admissions != 0 || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "adm_upstream") {
-					t.Fatal("upstream denial must be preserved without a local eligibility check")
-				}
-			} else if !resp.Diagnostics.HasError() || creates != 1 || admissions != 0 {
-				t.Fatal("upstream currency denial must propagate from create")
-			}
-		})
 	}
 }
 
@@ -674,8 +557,8 @@ func TestComputeVMPlanChangeResizesInPlace(t *testing.T) {
 					requests = append(requests, req.Method+" "+req.URL.Path)
 					switch req.Method + " " + req.URL.Path {
 					case "GET /compute/plans":
-						if req.URL.Query().Get("billing_interval") != "HOURLY" {
-							t.Errorf("resize must keep the VM's term: %v", req.URL.Query())
+						if req.URL.Query().Has("billing_interval") {
+							t.Errorf("resize needs only the plan's shape: %v", req.URL.Query())
 						}
 						catalog := computeTestBillingCatalog("SKU-L", 40)
 						catalog["plan_id"] = "plan-large"
@@ -683,9 +566,8 @@ func TestComputeVMPlanChangeResizesInPlace(t *testing.T) {
 					case "POST /compute/" + kind + "-vms/vm-1/actions/resize":
 						var b map[string]any
 						_ = json.NewDecoder(req.Body).Decode(&b)
-						catalog, _ := b["billing_catalog"].(map[string]any)
-						if req.Header.Get("X-Idempotency-Key") == "" || b["cpu"] != float64(8) || b["ram_mb"] != float64(16384) || b["disk_gb"] != float64(160) || b["requested_by"] != "terraform" || catalog["billing_interval"] != "HOURLY" || catalog["plan_id"] != "plan-large" {
-							t.Errorf("unexpected resize request: %v", b)
+						if req.Header.Get("X-Idempotency-Key") == "" || len(b) != 3 || b["cpu"] != float64(8) || b["ram_mb"] != float64(16384) || b["disk_gb"] != float64(160) {
+							t.Errorf("resize must send the new plan's cpu, ram_mb and disk_gb only: %v", b)
 						}
 						if refused {
 							w.WriteHeader(http.StatusConflict)

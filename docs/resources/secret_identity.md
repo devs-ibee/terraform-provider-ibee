@@ -41,13 +41,13 @@ output "billing_secret_id" {
 | `id` | `string` | Read-only |  |
 | `k8s_namespace` | `string` | Optional | Kubernetes namespace (kubernetes). |
 | `k8s_service_account` | `string` | Optional | Kubernetes service account (kubernetes). |
-| `name` | `string` | Required | Identity name, 1–128 characters. The API cannot rename identities, so a change replaces it. |
+| `name` | `string` | Required | Identity name. The API cannot rename identities, so a change replaces it. |
 | `openbao_role_name` | `string` | Read-only |  |
 | `role_id` | `string` | Read-only | AppRole role ID, read once at creation. |
 | `secret_id` | `string` | Read-only, Sensitive | AppRole secret ID, returned once at creation and stored in state. Null after import and for Kubernetes identities. |
 | `status` | `string` | Read-only | active or disabled, as the API reports. |
 | `store_id` | `string` | Required | Store the identity is created in and first granted access to. |
-| `token_policy_mode` | `string` | Optional, Defaulted | read_only or read_write. The API default applies when omitted. A change is applied in place; the API also aligns the identity's existing scopes and revokes its sessions. |
+| `token_policy_mode` | `string` | Optional, Defaulted | read_only or read_write. The API default applies when omitted. The public API has no operation to change it, so a change replaces the identity (and mints new login details). |
 
 ## Import
 

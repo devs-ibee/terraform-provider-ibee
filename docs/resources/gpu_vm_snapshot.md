@@ -14,12 +14,13 @@ An immutable VM snapshot. Creation waits for capture completion. Deletion remove
 ## Example Usage
 
 ```terraform
+data "ibee_snapshot_storage_plans" "all" {}
+
 resource "ibee_gpu_vm_snapshot" "worker" {
-  vm_id = "VM_ID"
-  name  = "before-upgrade"
-  mode  = "root_only"
-  # Temporary: the API expects the snapshot storage SKU until it resolves it itself.
-  billing_catalog = jsonencode({ sku_id = "SKU_ID", sku_code = "SKU_CODE" })
+  vm_id           = "VM_ID"
+  name            = "before-upgrade"
+  mode            = "root_only"
+  billing_catalog = data.ibee_snapshot_storage_plans.all.plans[0].billing_catalog
 }
 ```
 
@@ -27,13 +28,13 @@ resource "ibee_gpu_vm_snapshot" "worker" {
 
 | Attribute | Type | Behavior | Description |
 | --- | --- | --- | --- |
-| `billing_catalog` | `string` | Optional, Defaulted | Billing catalog for snapshot_storage as a JSON object (use jsonencode), passed to the API unchanged; the API decides whether it is valid. Attachments read it from the volume when omitted. Omitted values preserve prior state. Adding a previously absent value only records configuration. Changing a known value requires replacement. |
+| `billing_catalog` | `string` | Optional, Defaulted | Billing catalog for snapshot_storage (see ibee_snapshot_storage_plans) as a JSON object, passed to the API unchanged; the API requires it and decides whether it is valid. Omitted values keep the recorded value. It is sent with create only: adding a value after an import only records it, and changing a recorded value replaces the resource. |
 | `description` | `string` | Optional |  |
 | `id` | `string` | Read-only |  |
-| `mode` | `string` | Optional, Defaulted |  |
+| `mode` | `string` | Optional, Defaulted | root_only, all_attached or selective. Omit to use the API's default. |
 | `name` | `string` | Required |  |
 | `recovery_point_id` | `string` | Read-only |  |
-| `selected_data_volume_ids` | `set(string)` | Optional, Defaulted | Required for selective mode; otherwise must be empty. |
+| `selected_data_volume_ids` | `set(string)` | Optional, Defaulted | Data volumes to capture with mode selective. |
 | `status` | `string` | Read-only |  |
 | `vm_id` | `string` | Required |  |
 

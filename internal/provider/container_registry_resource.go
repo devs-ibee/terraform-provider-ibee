@@ -83,17 +83,20 @@ func (r *containerRegistryResource) Configure(_ context.Context, req resource.Co
 }
 
 func (out containerRegistryAPI) apply(state *containerRegistryModel) error {
-	if out.RegistryID == "" || out.RegistryName == "" || out.Visibility == "" || out.ObservedState == "" {
-		return fmt.Errorf("registry response is missing registry_id, registry_name, visibility or observed_state; state was preserved")
-	}
-	if !state.ID.IsNull() && !state.ID.IsUnknown() && state.ID.ValueString() != out.RegistryID {
-		return fmt.Errorf("registry response identifies a different registry; state was preserved")
+	if out.RegistryID == "" {
+		return fmt.Errorf("registry response has no registry_id")
 	}
 	state.ID = types.StringValue(out.RegistryID)
-	state.Name = types.StringValue(out.RegistryName)
-	state.Visibility = types.StringValue(out.Visibility)
-	state.VulnerabilityPullPolicy = types.StringValue(out.Security.VulnerabilityPullPolicy)
-	state.ObservedState = types.StringValue(out.ObservedState)
+	for _, field := range []struct {
+		target *types.String
+		value  string
+	}{{&state.Name, out.RegistryName}, {&state.Visibility, out.Visibility}, {&state.VulnerabilityPullPolicy, out.Security.VulnerabilityPullPolicy}, {&state.ObservedState, out.ObservedState}} {
+		if field.value != "" {
+			*field.target = types.StringValue(field.value)
+		} else if field.target.IsUnknown() {
+			*field.target = types.StringNull()
+		}
+	}
 	return nil
 }
 

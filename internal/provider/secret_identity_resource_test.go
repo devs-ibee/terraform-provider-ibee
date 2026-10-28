@@ -43,10 +43,6 @@ func TestSecretIdentityLifecycle(t *testing.T) {
 		case "POST /secret-store/identities/id-1/enable":
 			status = "active"
 			computeJSON(w, secretIdentityTestResponse(status, mode))
-		case "PATCH /secret-store/identities/id-1":
-			body := decodeBody(t, req)
-			mode = body["token_policy_mode"].(string)
-			computeJSON(w, secretIdentityTestResponse(status, mode))
 		case "GET /secret-store/identities/id-1":
 			computeJSON(w, secretIdentityTestResponse(status, mode))
 		case "DELETE /secret-store/identities/id-1":
@@ -73,13 +69,13 @@ func TestSecretIdentityLifecycle(t *testing.T) {
 	}
 
 	plan := created
-	plan.TokenPolicyMode, plan.Enabled = types.StringValue("read_write"), types.BoolValue(true)
+	plan.Enabled = types.BoolValue(true)
 	update := resource.UpdateResponse{State: create.State}
 	r.Update(ctx, resource.UpdateRequest{Plan: computePlanState(t, r, plan), State: create.State}, &update)
 	computeNoErrors(t, update.Diagnostics)
 	var updated secretIdentityModel
 	computeNoErrors(t, update.State.Get(ctx, &updated))
-	if updated.TokenPolicyMode.ValueString() != "read_write" || !updated.Enabled.ValueBool() || updated.SecretID.ValueString() != "fixture-secret-id" {
+	if updated.TokenPolicyMode.ValueString() != "read_only" || !updated.Enabled.ValueBool() || updated.SecretID.ValueString() != "fixture-secret-id" {
 		t.Fatalf("unexpected updated state: %+v", updated)
 	}
 
@@ -87,7 +83,7 @@ func TestSecretIdentityLifecycle(t *testing.T) {
 	r.Delete(ctx, resource.DeleteRequest{State: update.State}, &del)
 	computeNoErrors(t, del.Diagnostics)
 
-	want := []string{"POST /secret-store/stores/store-1/identities", "GET /secret-store/identities/id-1/access", "POST /secret-store/identities/id-1/disable", "GET /secret-store/identities/id-1", "PATCH /secret-store/identities/id-1", "POST /secret-store/identities/id-1/enable", "DELETE /secret-store/identities/id-1"}
+	want := []string{"POST /secret-store/stores/store-1/identities", "GET /secret-store/identities/id-1/access", "POST /secret-store/identities/id-1/disable", "GET /secret-store/identities/id-1", "POST /secret-store/identities/id-1/enable", "DELETE /secret-store/identities/id-1"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("login details must be read once, at creation:\n got %v\nwant %v", calls, want)
 	}

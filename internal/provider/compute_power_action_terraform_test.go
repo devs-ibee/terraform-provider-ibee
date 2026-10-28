@@ -174,7 +174,7 @@ action "ibee_vm_power" "%[1]s_%[2]s" {
 				endpoint := "/compute/" + vmType + "-vms/" + vmType + "-vm"
 				wantRequests := []string{"POST " + endpoint + "/actions/" + tc.operation}
 				if tc.diagnostic == "" {
-					wantRequests = append(wantRequests, "GET /compute/operations/power-op", "GET "+endpoint)
+					wantRequests = append(wantRequests, "GET /compute/operations/power-op")
 				}
 				fixture.mu.Lock()
 				got := append([]string(nil), fixture.requests...)
@@ -225,7 +225,7 @@ func (f *powerActionTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.R
 			return
 		}
 		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["force"] != false || body["requested_by"] != "terraform" || r.Header.Get("X-Idempotency-Key") != "fixture-"+f.vmType+"-"+f.operation {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body) != 0 || r.Header.Get("X-Idempotency-Key") != "fixture-"+f.vmType+"-"+f.operation {
 			http.Error(w, "unsafe power request or changed idempotency key", http.StatusBadRequest)
 			return
 		}

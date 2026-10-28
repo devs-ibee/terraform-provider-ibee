@@ -1,7 +1,8 @@
+data "ibee_snapshot_storage_plans" "all" {}
+
 resource "ibee_cloud_vm_snapshot" "web" {
-  vm_id = "VM_ID"
-  name  = "before-upgrade"
-  mode  = "root_only"
-  # Temporary: the API expects the snapshot storage SKU until it resolves it itself.
-  billing_catalog = jsonencode({ sku_id = "SKU_ID", sku_code = "SKU_CODE" })
+  vm_id           = "VM_ID"
+  name            = "before-upgrade"
+  mode            = "root_only"
+  billing_catalog = data.ibee_snapshot_storage_plans.all.plans[0].billing_catalog
 }

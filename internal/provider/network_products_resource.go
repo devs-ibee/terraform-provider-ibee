@@ -2,30 +2,19 @@ package provider
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"net/http"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 const networkBillingDescription = " Mutations use upstream billing and lifecycle admission without client eligibility probes. Pricing, affordability, entitlement and quota enforcement remain authoritative on the server."
 
-func networkOptionalString(def string, replace bool) schema.StringAttribute {
-	a := schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(def)}
-	if replace {
-		a.PlanModifiers = []planmodifier.String{stringplanmodifier.RequiresReplace()}
-	}
-	return a
-}
 func networkOptionalReference() schema.StringAttribute {
 	return schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace(), stringplanmodifier.UseStateForUnknown()}}
 }
@@ -40,7 +29,7 @@ func networkReservedPath(v networkValues) string {
 
 func NewReservedIPResource() resource.Resource {
 	r := &networkResource{name: "reserved_ip", description: "An independently reserved public IP. Attachments are managed separately. Import using the public IP ID." + networkBillingDescription, idField: "public_ip_id", importFields: []string{"id"},
-		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "site_id": networkRequired(true), "label": networkOptionalString("", false), "reverse_dns": networkOptionalString("", false), "address": schema.StringAttribute{Computed: true}, "status": schema.StringAttribute{Computed: true}},
+		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "site_id": networkRequired(true), "label": networkOptional(false), "reverse_dns": networkOptional(false), "address": schema.StringAttribute{Computed: true}, "status": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("site_id", "label", "reverse_dns"), responseFields: networkIdentityFields("site_id", "label", "reverse_dns", "address", "status"), createOnlyFields: map[string]bool{"site_id": true},
 		createPath: networkPath("/networking/reserved-ips"), readPath: networkReservedPath, updatePath: networkReservedPath, deletePath: networkReservedPath}
 	// reverse_dns is only supported by PATCH, not ReserveIpRequest.
@@ -63,7 +52,10 @@ func (r *reservedIPResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 	v := networkObject(object)
 	var out map[string]any
-	body := map[string]any{"site_id": v.str("site_id"), "label": v.str("label")}
+	body := map[string]any{"site_id": v.str("site_id")}
+	if label := v["label"]; known(label) {
+		body["label"] = v.str("label")
+	}
 	if err := r.client.do(ctx, http.MethodPost, "/networking/reserved-ips", body, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to reserve IP", err.Error())
 		return
@@ -80,7 +72,7 @@ func (r *reservedIPResource) Create(ctx context.Context, req resource.CreateRequ
 		}
 	}
 	resp.Diagnostics.Append(r.set(ctx, &resp.State, v)...)
-	if v.str("reverse_dns") != "" {
+	if reverse := v["reverse_dns"]; known(reverse) {
 		if err := r.client.do(ctx, http.MethodPatch, networkReservedPath(v), map[string]any{"reverse_dns": v.str("reverse_dns")}, nil); err != nil {
 			resp.Diagnostics.AddError("IP reserved but reverse DNS update failed", err.Error())
 			return
@@ -95,63 +87,19 @@ func (r *reservedIPResource) Create(ctx context.Context, req resource.CreateRequ
 
 func NewReservedIPAttachmentResource() resource.Resource {
 	base := func(v networkValues) string { return "/networking/reserved-ips/" + v.segment("reserved_ip_id") }
-	r := &networkResource{name: "reserved_ip_attachment", description: "Attaches an existing reserved IP to a VM. Changes to the VM or network use the public atomic move operation. Import as reserved_ip_id/vm_id. Detach refuses to affect an IP moved to another VM outside Terraform.", idField: "public_ip_id", readIdentity: "reserved_ip_id", importFields: []string{"reserved_ip_id", "vm_id"},
+	r := &networkResource{name: "reserved_ip_attachment", description: "Attaches an existing reserved IP to a VM (POST .../attach). A change of vm_id, vpc_id or subnet_id is sent to the move operation. Destroy calls detach. Import as reserved_ip_id/vm_id.", idField: "public_ip_id", readIdentity: "reserved_ip_id", importFields: []string{"reserved_ip_id", "vm_id"},
 		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "reserved_ip_id": networkRequired(true), "vm_id": networkRequired(false), "vpc_id": schema.StringAttribute{Optional: true, Computed: true}, "subnet_id": schema.StringAttribute{Optional: true, Computed: true}},
 		requestFields: networkIdentityFields("vm_id", "vpc_id", "subnet_id"), responseFields: map[string]string{"vm_id": "attached_resource_id", "vpc_id": "attached_vpc_id", "subnet_id": "attached_subnet_id"},
 		createPath: func(v networkValues) string { return base(v) + "/attach" }, readPath: base, updatePath: func(v networkValues) string { return base(v) + "/move" }, updateMethod: http.MethodPost, deletePath: func(v networkValues) string { return base(v) + "/detach" }, deleteMethod: http.MethodPost,
 		createResultID: func(v networkValues, _ map[string]any) (string, error) { return v.str("vm_id"), nil },
 		readTransform: func(v networkValues, out map[string]any) (map[string]any, error) {
-			if _, ok := out["attached_resource_id"]; !ok {
-				return nil, fmt.Errorf("API omitted attached_resource_id; cannot determine attachment ownership")
-			}
+			// An IP attached to no VM, or to another one, means this attachment is gone.
 			if out["attached_resource_id"] != v.str("vm_id") {
 				return nil, &apiError{Status: http.StatusNotFound, Body: "reserved IP is no longer attached to the managed VM"}
 			}
 			return out, nil
-		},
-		beforeDelete: func(ctx context.Context, c *Client, v networkValues) error {
-			var out map[string]any
-			if err := c.do(ctx, http.MethodGet, base(v), nil, &out); err != nil {
-				return err
-			}
-			if out["public_ip_id"] != v.str("reserved_ip_id") {
-				return fmt.Errorf("API returned another reserved IP; refusing detach")
-			}
-			if _, ok := out["attached_resource_id"]; !ok {
-				return fmt.Errorf("API omitted attached_resource_id; refusing detach")
-			}
-			if out["attached_resource_id"] == nil || out["attached_resource_id"] == "" {
-				return &apiError{Status: 404, Body: "already detached"}
-			}
-			if out["attached_resource_id"] != v.str("vm_id") {
-				return fmt.Errorf("reserved IP is attached to another VM; refresh state before destroying")
-			}
-			return nil
-		},
-		validate: func(v networkValues) error {
-			if (v.str("vpc_id") == "") != (v.str("subnet_id") == "") {
-				return fmt.Errorf("vpc_id and subnet_id must be supplied together")
-			}
-			return nil
 		}}
-	return &reservedIPAttachmentResource{networkResource: r}
-}
-
-// The move endpoint owns detach/attach atomically. Verify that the source
-// attachment still belongs to this state before changing its destination.
-type reservedIPAttachmentResource struct{ *networkResource }
-
-func (r *reservedIPAttachmentResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var object types.Object
-	resp.Diagnostics.Append(req.State.Get(ctx, &object)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if err := r.beforeDelete(ctx, r.client, networkObject(object)); err != nil {
-		resp.Diagnostics.AddError("Cannot move reserved IP attachment", err.Error())
-		return
-	}
-	r.networkResource.Update(ctx, req, resp)
+	return r
 }
 
 func NewFirewallAttachmentResource() resource.Resource {
@@ -165,55 +113,24 @@ func NewFirewallAttachmentResource() resource.Resource {
 }
 func NewNATGatewayResource() resource.Resource {
 	base := func(v networkValues) string { return networkVpcPath(v) + "/nat-gateways" }
-	return &networkResource{name: "nat_gateway", description: "A separately managed NAT gateway. Current deployments require a nat_gateway VPC, whose creation already creates a gateway: normally use ibee_vpc.default_nat_gateway_id directly. Use this resource to import an existing gateway or recreate one after explicit removal; creation refuses to adopt an existing gateway. Do not manage the same gateway here and as a VPC-owned default. Import as vpc_id/nat_gateway_id. Remove VM attachments and forwarding rules before deletion." + networkBillingDescription, idField: "nat_gateway_id", list: true, waitReady: true, importFields: []string{"vpc_id", "id"},
-		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "vpc_id": networkRequired(true), "name": networkOptionalString("NAT Gateway", true), "subnet_id": networkOptionalReference(), "reserved_public_ip_id": networkOptionalReference(), "public_ip_id": schema.StringAttribute{Computed: true}, "public_ip": schema.StringAttribute{Computed: true}, "status": schema.StringAttribute{Computed: true}, "site_id": schema.StringAttribute{Computed: true}},
+	return &networkResource{name: "nat_gateway", description: "A NAT gateway in a VPC. A VPC created with connectivity_type nat_gateway already has one (ibee_vpc.default_nat_gateway_id); use this resource to import a gateway or to create one, and the API decides whether it is allowed. Import as vpc_id/nat_gateway_id." + networkBillingDescription, idField: "nat_gateway_id", list: true, waitReady: true, importFields: []string{"vpc_id", "id"},
+		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "vpc_id": networkRequired(true), "name": networkOptional(true), "subnet_id": networkOptionalReference(), "reserved_public_ip_id": networkOptionalReference(), "public_ip_id": schema.StringAttribute{Computed: true}, "public_ip": schema.StringAttribute{Computed: true}, "status": schema.StringAttribute{Computed: true}, "site_id": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("name", "subnet_id", "reserved_public_ip_id"), responseFields: map[string]string{"name": "name", "subnet_id": "subnet_id", "public_ip_id": "public_ip_id", "public_ip": "public_ip", "status": "status", "site_id": "site_id", "reserved_public_ip_id": "public_ip_id"},
 		createPath: base, readPath: base, deletePath: func(v networkValues) string { return base(v) + "/" + v.segment("id") },
-		beforeCreate: func(ctx context.Context, client *Client, v networkValues) error {
-			var gateways []vpcNATGatewayAPI
-			if err := client.do(ctx, http.MethodGet, base(v), nil, &gateways); err != nil {
-				return err
-			}
-			if gateways == nil {
-				return fmt.Errorf("API omitted NAT inventory; refusing creation")
-			}
-			if len(gateways) != 0 {
-				return fmt.Errorf("VPC already has a NAT gateway; reference the VPC-owned default or import an independently owned gateway instead of adopting it through create")
-			}
-			return nil
-		},
-		beforeDelete: func(ctx context.Context, client *Client, v networkValues) error {
-			return checkNATChildrenEmpty(ctx, client, v.str("vpc_id"), v.str("id"))
-		},
 	}
 }
 func NewNATPortForwardingRuleResource() resource.Resource {
 	base := func(v networkValues) string { return networkNATPath(v) + "/port-forwarding-rules" }
 	item := func(v networkValues) string { return base(v) + "/" + v.segment("id") }
 	return &networkResource{name: "nat_port_forwarding_rule", description: "A NAT port-forwarding rule. Import as vpc_id/nat_gateway_id/port_forward_rule_id.", idField: "port_forward_rule_id", list: true, waitReady: true, importFields: []string{"vpc_id", "nat_gateway_id", "id"},
-		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "vpc_id": networkRequired(true), "nat_gateway_id": networkRequired(true), "name": networkRequired(false), "protocol": networkOptionalString("tcp", false), "external_port": schema.Int64Attribute{Required: true}, "internal_ip": networkRequired(false), "internal_port": schema.Int64Attribute{Required: true}, "note": networkOptionalString("", false), "enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)}, "status": schema.StringAttribute{Computed: true}},
+		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "vpc_id": networkRequired(true), "nat_gateway_id": networkRequired(true), "name": networkRequired(false), "protocol": networkOptional(false), "external_port": schema.Int64Attribute{Required: true}, "internal_ip": networkRequired(false), "internal_port": schema.Int64Attribute{Required: true}, "note": networkOptional(false), "enabled": schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}}, "status": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("name", "protocol", "external_port", "internal_ip", "internal_port", "note", "enabled"), responseFields: networkIdentityFields("name", "protocol", "external_port", "internal_ip", "internal_port", "note", "enabled", "status"),
-		createPath: base, readPath: base, updatePath: item, deletePath: item,
-		validate: func(v networkValues) error {
-			if v.str("protocol") != "tcp" && v.str("protocol") != "udp" {
-				return fmt.Errorf("protocol must be tcp or udp")
-			}
-			for _, k := range []string{"external_port", "internal_port"} {
-				n := v[k].(types.Int64).ValueInt64()
-				if n < 1 || n > 65535 {
-					return fmt.Errorf("%s must be between 1 and 65535", k)
-				}
-			}
-			if net.ParseIP(v.str("internal_ip")) == nil {
-				return fmt.Errorf("internal_ip must be an IP address")
-			}
-			return nil
-		}}
+		createPath: base, readPath: base, updatePath: item, deletePath: item}
 }
 
 func networkBackendAttributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
-		"target": networkRequired(false), "port": schema.Int64Attribute{Required: true}, "type": networkOptionalString("service", false), "weight": schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(100)}, "tls": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false)},
+		"target": networkRequired(false), "port": schema.Int64Attribute{Required: true}, "type": networkOptional(false), "weight": schema.Int64Attribute{Optional: true, Computed: true}, "tls": schema.BoolAttribute{Optional: true, Computed: true},
 	}
 }
 func NewL4LoadBalancerResource() resource.Resource { return newNetworkLB("l4") }
@@ -221,77 +138,21 @@ func NewL7LoadBalancerResource() resource.Resource { return newNetworkLB("l7") }
 func newNetworkLB(layer string) resource.Resource {
 	base := "/networking/load-balancers"
 	attrs := map[string]schema.Attribute{"id": networkIDAttribute(), "name": networkRequired(false), "protocol": networkRequired(true), "backends": schema.ListNestedAttribute{Required: true, NestedObject: schema.NestedAttributeObject{Attributes: networkBackendAttributes()}}, "status": schema.StringAttribute{Computed: true}, "endpoint_url": schema.StringAttribute{Computed: true}, "url": schema.StringAttribute{Computed: true}, "endpoint": schema.SingleNestedAttribute{Computed: true, Attributes: map[string]schema.Attribute{"host": schema.StringAttribute{Computed: true}, "port": schema.Int64Attribute{Computed: true}}}}
-	request := networkIdentityFields("name", "protocol", "backends")
+	attrs["tls"] = schema.SingleNestedAttribute{Optional: true, PlanModifiers: []planmodifier.Object{objectplanmodifier.RequiresReplace()}, Description: "TLS settings of the listener, sent with create (the API has no read of them). A change replaces the load balancer.", Attributes: map[string]schema.Attribute{
+		"mode":               schema.StringAttribute{Required: true, Description: "terminate or passthrough."},
+		"certificate_source": schema.StringAttribute{Optional: true, Description: "managed or custom. Omit to use the API's default."},
+		"cert_pem":           schema.StringAttribute{Optional: true, Sensitive: true, Description: "PEM certificate chain, with certificate_source custom."},
+		"key_pem":            schema.StringAttribute{Optional: true, Sensitive: true, Description: "PEM private key, with certificate_source custom."},
+	}}
+	request := networkIdentityFields("name", "protocol", "backends", "tls")
 	response := networkIdentityFields("name", "protocol", "backends", "status", "endpoint_url", "url", "endpoint")
 	if layer == "l7" {
-		attrs["rules"] = schema.ListNestedAttribute{Optional: true, Computed: true, NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{"priority": schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(1)}, "path_prefix": networkOptionalString("/", false), "headers": schema.MapAttribute{Optional: true, ElementType: types.StringType}, "backends": schema.ListNestedAttribute{Optional: true, NestedObject: schema.NestedAttributeObject{Attributes: networkBackendAttributes()}}}}}
+		attrs["rules"] = schema.ListNestedAttribute{Optional: true, Computed: true, NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{"priority": schema.Int64Attribute{Optional: true, Computed: true}, "path_prefix": networkOptional(false), "headers": schema.MapAttribute{Optional: true, ElementType: types.StringType}, "backends": schema.ListNestedAttribute{Optional: true, NestedObject: schema.NestedAttributeObject{Attributes: networkBackendAttributes()}}}}}
 		request["rules"] = "rules"
 		response["rules"] = "rules"
 	}
-	return &networkResource{name: "load_balancer_" + layer, description: "An IBEE " + layer + " load balancer. Import using the load balancer ID. Supports readable backend and routing-rule fields. HTTPS uses managed TLS termination and tls_passthrough uses passthrough TLS. Certificate material and routing-policy configuration cannot be refreshed through the public read contract." + networkBillingDescription,
-		attributes: attrs, requestFields: request, responseFields: response, createOnlyFields: map[string]bool{"protocol": true}, idField: "lb_id", importFields: []string{"id"}, waitReady: true, waitDelete: true,
+	return &networkResource{name: "load_balancer_" + layer, description: "An IBEE " + layer + " load balancer. Import using the load balancer ID. Sends name, protocol, backends (and rules for l7); the API decides defaults and what it accepts. TLS, routing-policy and health-check settings are not managed by this resource." + networkBillingDescription,
+		attributes: attrs, requestFields: request, responseFields: response, createOnlyFields: map[string]bool{"protocol": true, "tls": true}, idField: "lb_id", importFields: []string{"id"}, waitReady: true, waitDelete: true,
 		createPath: networkPath(base + "/" + layer), readPath: func(v networkValues) string { return base + "/" + v.segment("id") }, updatePath: func(v networkValues) string { return base + "/" + layer + "/" + v.segment("id") }, deletePath: func(v networkValues) string { return base + "/" + v.segment("id") },
-		requestTransform: func(v networkValues, body map[string]any, update bool) error {
-			if !update {
-				switch v.str("protocol") {
-				case "https":
-					body["tls"] = map[string]any{"mode": "terminate", "certificate_source": "managed"}
-				case "tls_passthrough":
-					body["tls"] = map[string]any{"mode": "passthrough", "certificate_source": "managed"}
-				}
-			}
-			return nil
-		},
-		readTransform: func(_ networkValues, out map[string]any) (map[string]any, error) {
-			if out["layer"] != layer {
-				return nil, fmt.Errorf("load balancer is %v, expected %s", out["layer"], layer)
-			}
-			return out, nil
-		},
-		validate: func(v networkValues) error {
-			p := v.str("protocol")
-			if (layer == "l4" && p != "tcp" && p != "tls_passthrough") || (layer == "l7" && p != "http" && p != "https") {
-				return fmt.Errorf("unsupported %s protocol %q", layer, p)
-			}
-			if err := validateNetworkBackends(v["backends"], true); err != nil {
-				return err
-			}
-			if rules, ok := v["rules"].(types.List); ok && !rules.IsUnknown() {
-				for _, r := range rules.Elements() {
-					a := r.(types.Object).Attributes()
-					if err := validateNetworkBackends(a["backends"], false); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
-		}}
-}
-func validateNetworkBackends(v attr.Value, required bool) error {
-	b, ok := v.(types.List)
-	if !ok || b.IsNull() {
-		if required {
-			return fmt.Errorf("at least one backend is required")
-		}
-		return nil
 	}
-	if required && len(b.Elements()) == 0 {
-		return fmt.Errorf("at least one backend is required")
-	}
-	for _, entry := range b.Elements() {
-		a := entry.(types.Object).Attributes()
-		port := a["port"].(types.Int64).ValueInt64()
-		if port < 1 || port > 65535 {
-			return fmt.Errorf("backend port must be between 1 and 65535")
-		}
-		weight := a["weight"].(types.Int64).ValueInt64()
-		if weight < 1 || weight > 1000 {
-			return fmt.Errorf("backend weight must be between 1 and 1000")
-		}
-		kind := a["type"].(types.String).ValueString()
-		if kind != "service" && kind != "ip" && kind != "hostname" {
-			return fmt.Errorf("backend type must be service, ip or hostname")
-		}
-	}
-	return nil
 }

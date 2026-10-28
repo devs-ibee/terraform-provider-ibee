@@ -33,24 +33,8 @@ import (
 const contractPath = "../../contract/ibee-cloud.yaml"
 
 // offContract lists routes the provider still calls although the contract has
-// no such operation. Each one is deprecated and listed in the CHANGELOG.
-var offContract = []string{
-	"GET /object-storage/buckets/{bucket_name}/cors",
-	"PUT /object-storage/buckets/{bucket_name}/cors",
-	"DELETE /object-storage/buckets/{bucket_name}/cors",
-	"GET /object-storage/buckets/{bucket_name}/lifecycle",
-	"PUT /object-storage/buckets/{bucket_name}/lifecycle",
-	"DELETE /object-storage/buckets/{bucket_name}/lifecycle",
-	"GET /object-storage/buckets/{bucket_name}/notifications",
-	"PUT /object-storage/buckets/{bucket_name}/notifications",
-	"DELETE /object-storage/buckets/{bucket_name}/notifications",
-	"GET /object-storage/buckets/{bucket_name}/object-lock-configuration",
-	"PUT /object-storage/buckets/{bucket_name}/object-lock-configuration",
-	"POST /cdn/origins",
-	"GET /cdn/origins/{origin_id}",
-	"PATCH /cdn/origins/{origin_id}",
-	"DELETE /cdn/origins/{origin_id}",
-}
+// no such operation. It is empty: every route the provider calls is in the contract.
+var offContract = []string{}
 
 type routeCall struct{ method, path string }
 
@@ -422,10 +406,15 @@ func TestContractRouteMatching(t *testing.T) {
 		"GET /compute/cloud-vms/vm-1":                           true,
 		"PATCH /compute/gpu-vms/vm-1/actions/access":            true,
 		"DELETE /object-storage/credentials/AKIA":               true,
-		"POST /object-storage/credentials/AKIA/revoke":          false,
+		"POST /object-storage/credentials/AKIA/revoke":          true,
 		"GET /compute/cloud-vm-snapshots/":                      false,
 		"PUT /compute/cloud-vms/vm-1":                           false,
-		"GET /object-storage/buckets/assets/cors":               true, // listed in offContract
+		"GET /object-storage/buckets/assets/cors":               true,
+		"PUT /object-storage/buckets/assets/object-lock":        true,
+		"PUT /object-storage/buckets/assets/object-lock-config": false,
+		"POST /billing/resource-eligibility":                    false,
+		"PATCH /compute/cloud-vms/vm-1/actions/resize-plan":     false,
+		"GET /compute/plans/backup-storage":                     true,
 		"POST /secret-store/stores/store-1/secrets:batchIngest": true,
 	} {
 		method, path, _ := strings.Cut(route, " ")

@@ -4,27 +4,24 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 var (
-	_ resource.Resource              = (*vpcSubnetResource)(nil)
-	_ resource.ResourceWithConfigure = (*vpcSubnetResource)(nil)
+	_ resource.Resource                = (*vpcSubnetResource)(nil)
+	_ resource.ResourceWithConfigure   = (*vpcSubnetResource)(nil)
+	_ resource.ResourceWithImportState = (*vpcSubnetResource)(nil)
 )
 
 type vpcSubnetResource struct {
@@ -67,33 +64,16 @@ func (r *vpcSubnetResource) Metadata(_ context.Context, req resource.MetadataReq
 
 func (r *vpcSubnetResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An additional subnet inside an IBEE VPC.",
+		Description: "A subnet inside an IBEE VPC. The public API has no subnet update operation, so every change replaces the subnet. Settings that are not configured are not sent and the API's defaults apply. Import as vpc_id/subnet_id.",
 		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			},
-			"vpc_id": schema.StringAttribute{
-				Required:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"name": schema.StringAttribute{
-				Required: true,
-			},
-			"cidr": schema.StringAttribute{
-				Optional:      true,
-				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplaceIfConfigured(), stringplanmodifier.UseStateForUnknown()},
-			},
-			"prefix_length": schema.Int64Attribute{Optional: true, Computed: true, Description: "Automatic subnet prefix, /22 through /29; inferred from CIDR when not configured. Do not configure together with cidr.", PlanModifiers: []planmodifier.Int64{int64planmodifier.RequiresReplaceIfConfigured(), int64planmodifier.UseStateForUnknown()}},
-			"dns":           schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: listdefault.StaticValue(types.ListValueMust(types.StringType, []attr.Value{types.StringValue("1.1.1.1"), types.StringValue("8.8.8.8")})), Description: "IPv4 DNS resolver addresses advertised to subnet members; updates in place."},
-			"gateway":       schema.StringAttribute{Computed: true, Description: "Gateway IPv4 address returned by the networking service."},
-			"auto_cidr": schema.BoolAttribute{
-				Optional:      true,
-				Computed:      true,
-				Default:       booldefault.StaticBool(true),
-				PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
-			},
+			"id":            schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"vpc_id":        schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"name":          schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"cidr":          schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplaceIfConfigured()}, Description: "IPv4 CIDR. Omit to let the API assign one."},
+			"auto_cidr":     schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown(), createOnlyBool()}, Description: "Sent as auto_cidr with create."},
+			"prefix_length": schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown(), int64planmodifier.RequiresReplaceIfConfigured()}, Description: "Prefix length for an automatically assigned CIDR."},
+			"dns":           schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown(), listplanmodifier.RequiresReplaceIfConfigured()}, Description: "DNS resolver addresses advertised to subnet members."},
+			"gateway":       schema.StringAttribute{Computed: true, Description: "Gateway IPv4 address returned by the API."},
 		},
 	}
 }
@@ -110,65 +90,91 @@ func (r *vpcSubnetResource) Configure(_ context.Context, req resource.ConfigureR
 	r.client = client
 }
 
+func subnetPath(vpcID, subnetID string) string {
+	return "/networking/vpcs/" + url.PathEscape(vpcID) + "/subnets/" + url.PathEscape(subnetID)
+}
+
+// apply records what the API returned; fields it omits keep their value.
+func (out subnetAPI) apply(ctx context.Context, m *vpcSubnetModel) {
+	if id := out.identifier(); id != "" {
+		m.ID = types.StringValue(id)
+	}
+	if out.Name != "" {
+		m.Name = types.StringValue(out.Name)
+	}
+	if out.Cidr != "" {
+		m.Cidr = types.StringValue(out.Cidr)
+		if _, bits, ok := strings.Cut(out.Cidr, "/"); ok {
+			var n int64
+			if _, err := fmt.Sscan(bits, &n); err == nil {
+				m.PrefixLength = types.Int64Value(n)
+			}
+		}
+	}
+	if out.DNS != nil {
+		m.DNS, _ = types.ListValueFrom(ctx, types.StringType, out.DNS)
+	}
+	m.Gateway = types.StringValue(out.Gateway)
+	if m.Cidr.IsUnknown() {
+		m.Cidr = types.StringNull()
+	}
+	if m.PrefixLength.IsUnknown() {
+		m.PrefixLength = types.Int64Null()
+	}
+	if m.DNS.IsUnknown() {
+		m.DNS = types.ListNull(types.StringType)
+	}
+	if m.AutoCidr.IsUnknown() {
+		m.AutoCidr = types.BoolNull()
+	}
+}
+
 func (r *vpcSubnetResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan vpcSubnetModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	var configuredCIDR types.String
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("cidr"), &configuredCIDR)...)
+	body := map[string]any{"name": plan.Name.ValueString()}
+	if known(plan.Cidr) {
+		body["cidr"] = plan.Cidr.ValueString()
+	}
+	if known(plan.AutoCidr) {
+		body["auto_cidr"] = plan.AutoCidr.ValueBool()
+	}
+	if known(plan.PrefixLength) {
+		body["prefix_length"] = plan.PrefixLength.ValueInt64()
+	}
+	if known(plan.DNS) {
+		var dns []string
+		resp.Diagnostics.Append(plan.DNS.ElementsAs(ctx, &dns, false)...)
+		body["dns"] = dns
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	body, err := subnetRequestBody(ctx, plan, false, !configuredCIDR.IsNull())
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid subnet configuration", err.Error())
-		return
-	}
-
 	var out subnetAPI
 	if err := r.client.do(ctx, http.MethodPost, "/networking/vpcs/"+url.PathEscape(plan.VpcID.ValueString())+"/subnets", body, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to create subnet", err.Error())
 		return
 	}
 	if out.identifier() == "" {
-		resp.Diagnostics.AddError("Invalid subnet response", "API omitted the subnet ID; inspect the portal before retrying.")
+		resp.Diagnostics.AddError("Invalid subnet response", "The API returned no subnet ID; inspect the portal before retrying.")
 		return
 	}
-	plan.ID = types.StringValue(out.identifier())
-	plan.Gateway = types.StringValue(out.Gateway)
-	plan.PrefixLength = types.Int64Null()
-	if p, err := netip.ParsePrefix(out.Cidr); err == nil {
-		plan.PrefixLength = types.Int64Value(int64(p.Bits()))
-	}
-	resp.Diagnostics.Append(setSubnetDNS(ctx, &plan, out.DNS)...)
-	if resp.Diagnostics.HasError() {
-		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-		return
-	}
-
-	if out.Cidr != "" {
-		plan.Cidr = types.StringValue(out.Cidr)
-	} else if plan.Cidr.IsUnknown() {
-		plan.Cidr = types.StringNull()
-	}
+	out.apply(ctx, &plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if out.Cidr == "" {
-		resp.Diagnostics.AddError("Invalid subnet create response", "The subnet ID was saved, but the API omitted its CIDR.")
-		return
-	}
 	if err := waitNetworkStatus(ctx, r.client, func(ctx context.Context) (string, error) {
 		var current subnetAPI
-		err := r.client.do(ctx, http.MethodGet, "/networking/vpcs/"+url.PathEscape(plan.VpcID.ValueString())+"/subnets/"+url.PathEscape(plan.ID.ValueString()), nil, &current)
-		if err == nil && current.identifier() != plan.ID.ValueString() {
-			return "", fmt.Errorf("readiness response returned another subnet ID")
+		if err := r.client.do(ctx, http.MethodGet, subnetPath(plan.VpcID.ValueString(), plan.ID.ValueString()), nil, &current); err != nil {
+			return "", err
 		}
-		return current.Status, err
+		current.apply(ctx, &plan)
+		return current.Status, nil
 	}); err != nil {
 		resp.Diagnostics.AddError("Subnet readiness failed", err.Error())
 	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *vpcSubnetResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -177,11 +183,8 @@ func (r *vpcSubnetResource) Read(ctx context.Context, req resource.ReadRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
 	var out subnetAPI
-	err := r.client.do(ctx, http.MethodGet,
-		"/networking/vpcs/"+url.PathEscape(state.VpcID.ValueString())+"/subnets/"+url.PathEscape(state.ID.ValueString()), nil, &out)
-	if err != nil {
+	if err := r.client.do(ctx, http.MethodGet, subnetPath(state.VpcID.ValueString(), state.ID.ValueString()), nil, &out); err != nil {
 		if IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
 			return
@@ -189,61 +192,17 @@ func (r *vpcSubnetResource) Read(ctx context.Context, req resource.ReadRequest, 
 		resp.Diagnostics.AddError("Failed to read subnet", err.Error())
 		return
 	}
-	if out.identifier() != state.ID.ValueString() || out.Name == "" || out.Cidr == "" {
-		resp.Diagnostics.AddError("Invalid subnet response", "API omitted required subnet fields")
-		return
-	}
-	state.Name = types.StringValue(out.Name)
-	state.Cidr = types.StringValue(out.Cidr)
-	p, err := netip.ParsePrefix(out.Cidr)
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid subnet response", "API returned an invalid CIDR")
-		return
-	}
-	state.PrefixLength = types.Int64Value(int64(p.Bits()))
-	state.Gateway = types.StringValue(out.Gateway)
-	resp.Diagnostics.Append(setSubnetDNS(ctx, &state, out.DNS)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
+	out.apply(ctx, &state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
+// Update has nothing to send: every subnet setting replaces the subnet.
 func (r *vpcSubnetResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan vpcSubnetModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	body, err := subnetRequestBody(ctx, plan, true, false)
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid subnet configuration", err.Error())
-		return
-	}
-	var out subnetAPI
-	err = r.client.do(ctx, http.MethodPatch, "/networking/vpcs/"+url.PathEscape(plan.VpcID.ValueString())+"/subnets/"+url.PathEscape(plan.ID.ValueString()), body, &out)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to update subnet", err.Error())
-		return
-	}
-	if out.identifier() != plan.ID.ValueString() || out.Cidr == "" {
-		resp.Diagnostics.AddError("Invalid subnet update response", "API omitted required subnet identity/CIDR fields")
-		return
-	}
-	plan.Cidr = types.StringValue(out.Cidr)
-	plan.Gateway = types.StringValue(out.Gateway)
-	if p, err := netip.ParsePrefix(out.Cidr); err == nil {
-		plan.PrefixLength = types.Int64Value(int64(p.Bits()))
-	} else {
-		resp.Diagnostics.AddError("Invalid subnet update response", "API returned an invalid CIDR")
-		return
-	}
-	resp.Diagnostics.Append(setSubnetDNS(ctx, &plan, out.DNS)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -253,9 +212,7 @@ func (r *vpcSubnetResource) Delete(ctx context.Context, req resource.DeleteReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	err := r.client.do(ctx, http.MethodDelete,
-		"/networking/vpcs/"+url.PathEscape(state.VpcID.ValueString())+"/subnets/"+url.PathEscape(state.ID.ValueString()), nil, nil)
-	if err != nil && !IsNotFound(err) {
+	if err := r.client.do(ctx, http.MethodDelete, subnetPath(state.VpcID.ValueString(), state.ID.ValueString()), nil, nil); err != nil && !IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to delete subnet", err.Error())
 	}
 }
@@ -268,73 +225,4 @@ func (r *vpcSubnetResource) ImportState(ctx context.Context, req resource.Import
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("vpc_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("auto_cidr"), true)...)
-}
-
-func subnetRequestBody(ctx context.Context, plan vpcSubnetModel, update, explicitCIDR bool) (map[string]any, error) {
-	var dns []string
-	if d := plan.DNS.ElementsAs(ctx, &dns, false); d.HasError() {
-		return nil, fmt.Errorf("dns must be known IPv4 resolver addresses")
-	}
-	if len(dns) == 0 {
-		return nil, fmt.Errorf("at least one DNS server is required")
-	}
-	for _, value := range dns {
-		ip, err := netip.ParseAddr(value)
-		if err != nil || !ip.Is4() {
-			return nil, fmt.Errorf("DNS server %q must be IPv4", value)
-		}
-	}
-	body := map[string]any{"name": plan.Name.ValueString(), "dns": dns}
-	if update {
-		return body, nil
-	}
-	body["auto_cidr"] = plan.AutoCidr.ValueBool()
-	if explicitCIDR {
-		body["cidr"] = plan.Cidr.ValueString()
-		body["auto_cidr"] = false
-	} else if !plan.PrefixLength.IsNull() && !plan.PrefixLength.IsUnknown() {
-		prefix := plan.PrefixLength.ValueInt64()
-		if prefix < 22 || prefix > 29 {
-			return nil, fmt.Errorf("prefix_length must be between 22 and 29")
-		}
-		body["prefix_length"] = prefix
-	}
-	return body, nil
-}
-func setSubnetDNS(ctx context.Context, model *vpcSubnetModel, addresses []string) diag.Diagnostics {
-	var diagnostics diag.Diagnostics
-	if len(addresses) == 0 {
-		diagnostics.AddError("Invalid subnet response", "API omitted DNS resolver addresses")
-		return diagnostics
-	}
-	value, d := types.ListValueFrom(ctx, types.StringType, addresses)
-	diagnostics.Append(d...)
-	model.DNS = value
-	return diagnostics
-}
-func (r *vpcSubnetResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.Plan.Raw.IsNull() {
-		return
-	}
-	var config, plan, state vpcSubnetModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if !config.Cidr.IsNull() && !config.PrefixLength.IsNull() {
-		resp.Diagnostics.AddError("Invalid subnet allocation configuration", "Configure cidr or prefix_length, not both.")
-		return
-	}
-	if req.State.Raw.IsNull() {
-		return
-	}
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if config.Cidr.IsNull() && (!plan.PrefixLength.Equal(state.PrefixLength) || !plan.VpcID.Equal(state.VpcID)) {
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("cidr"), types.StringUnknown())...)
-	}
 }

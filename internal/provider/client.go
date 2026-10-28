@@ -20,7 +20,6 @@ type Client struct {
 	endpoint         string
 	token            string
 	workspaceID      string
-	organizationID   string
 	userAgent        string
 	http             *http.Client
 	operationTimeout time.Duration
@@ -81,24 +80,21 @@ func IsNotFound(err error) bool {
 // not a safe read.
 var neverRetriedRead = regexp.MustCompile(`(^|/)secret-store/identities/[^/]+/access/?$`)
 
-// retryable allows safe reads to retry on 429, 502, 503 and 504, except the
-// credential-minting identity access read. Writes, keyed or not, retry only
-// on 429 without a billing or admission answer: after a 502, 503 or 504 the
-// write may already have been applied, and the server has not confirmed that
-// a replayed create with the same idempotency key is de-duplicated, so a
-// replay could leave a second VM or use up a registry name.
+// retryable allows reads (GET and HEAD) to retry on 429, 502, 503 and 504,
+// except the credential-minting identity access read. Writes are never
+// retried: after any error the write may already have been applied.
 func retryable(method, path string, e *apiError) bool {
-	if method == http.MethodGet || method == http.MethodHead {
-		if neverRetriedRead.MatchString(path) {
-			return false
-		}
-		switch e.Status {
-		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-			return true
-		}
+	if method != http.MethodGet && method != http.MethodHead {
 		return false
 	}
-	return e.Status == http.StatusTooManyRequests && !e.billingAnswer()
+	if neverRetriedRead.MatchString(path) {
+		return false
+	}
+	switch e.Status {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
 }
 
 // requestObserver is set only by tests: the contract route check records the

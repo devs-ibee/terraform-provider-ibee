@@ -103,48 +103,6 @@ func TestComputeRecoveryCatalogRefreshDenialsPreserveState(t *testing.T) {
 	}
 }
 
-func TestComputeAttachmentCatalogLookupDoesNotBlockDeleteOrEraseState(t *testing.T) {
-	for _, kind := range []string{"cloud", "gpu"} {
-		t.Run(kind, func(t *testing.T) {
-			attached := true
-			lookups, detaches := 0, 0
-			client := computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				switch {
-				case strings.HasPrefix(req.URL.Path, "/block-storage/"):
-					lookups++
-					http.NotFound(w, req)
-				case strings.HasSuffix(req.URL.Path, "/actions/detach-volume"):
-					attached = false
-					detaches++
-					computeJSON(w, operationAccepted{OperationID: "detach"})
-				case strings.HasPrefix(req.URL.Path, "/compute/operations/"):
-					computeJSON(w, map[string]any{"status": "succeeded"})
-				default:
-					volumes := []any{}
-					if attached {
-						volumes = append(volumes, map[string]any{"volume_id": "vol-1", "mode": "single-writer"})
-					}
-					computeJSON(w, map[string]any{"id": "vm-1", "data_volumes": volumes})
-				}
-			})
-			r, model := recoveryTestResource(kind, "block_storage", client)
-			model = recoveryTestSetCatalog(model, types.StringNull())
-			state := computeState(t, r, model)
-			read := resource.ReadResponse{State: state}
-			r.Read(context.Background(), resource.ReadRequest{State: state}, &read)
-			if !read.Diagnostics.HasError() || !read.State.Raw.Equal(state.Raw) {
-				t.Fatal("catalog 404 removed attachment state")
-			}
-			del := resource.DeleteResponse{}
-			r.Delete(context.Background(), resource.DeleteRequest{State: state}, &del)
-			computeNoErrors(t, del.Diagnostics)
-			if lookups != 1 || detaches != 1 {
-				t.Fatalf("delete needed catalog: lookups=%d detaches=%d", lookups, detaches)
-			}
-		})
-	}
-}
-
 func TestComputeRecoveryCatalogPassesThrough(t *testing.T) {
 	for _, raw := range []string{`[]`, `{} {}`, `null`} {
 		if _, err := recoveryCatalogBody(types.StringValue(raw)); err == nil {
@@ -242,7 +200,7 @@ func TestComputeRecoveryCatalogContractLifecycle(t *testing.T) {
 					case req.URL.Path == vmPath && req.Method == "GET":
 						volumes := []any{}
 						if attached {
-							volumes = append(volumes, map[string]any{"volume_id": "vol-1", "mode": "single-writer"})
+							volumes = append(volumes, map[string]any{"volume_id": "vol-1", "mode": "single-writer", "billing_catalog": catalog})
 						}
 						computeJSON(w, map[string]any{"id": "vm-1", "site_id": "site", "data_volumes": volumes})
 					case req.URL.Path == "/block-storage/volumes/vol-1":

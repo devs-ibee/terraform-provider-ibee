@@ -6,16 +6,12 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -103,26 +99,48 @@ func (r *cloudVmResource) Metadata(_ context.Context, req resource.MetadataReque
 func (r *cloudVmResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	required := func(description string) schema.StringAttribute {
-		return schema.StringAttribute{Required: true, Description: description, PlanModifiers: replace, Validators: []validator.String{computeNonEmpty()}}
+		return schema.StringAttribute{Required: true, Description: description, PlanModifiers: replace}
 	}
-	empty := types.SetValueMust(types.StringType, []attr.Value{})
-	osTypes := []string{"linux", "windows"}
-	if r.kind() == "gpu" {
-		osTypes = []string{"linux"}
-	}
-	resp.Schema = schema.Schema{Description: "A " + r.kind() + " VM. A plan_id change resizes the VM in place and an ssh_key_ids change updates its access in place; the API decides whether a change is allowed and stops and starts the VM when it must. Other configuration changes replace the VM. Imports use the VM ID.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "A " + r.kind() + " VM. A plan_id change resizes the VM in place and an ssh_key_ids change updates its access in place; the API decides whether a change is allowed. Other configuration changes replace the VM. Imports use the VM ID.", Attributes: map[string]schema.Attribute{
 		"id":   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-		"name": required("VM name."), "site_id": required("Placement site from ibee_sites."), "template_id": required("Image template from ibee_images."), "os_distro": required("Image OS distribution."),
-		"plan_id":          schema.StringAttribute{Required: true, Validators: []validator.String{computeNonEmpty()}, Description: "Plan from ibee_compute_plans. A change resizes the VM in place to the new plan's CPU, memory and disk; the API refuses changes it cannot make, such as shrinking the root disk."},
-		"billing_interval": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), billingIntervalReplace()}, Description: "Billing term from the plan's billing options, such as HOURLY or MONTHLY. Omit to send the plan's catalog unchanged and let the API decide. No API operation changes the term, so changing it replaces the VM; deleting a VM does not cancel contractual charges."},
-		"os_type":          schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("linux"), PlanModifiers: replace, Validators: []validator.String{computeOneOf(osTypes...)}},
+		"name": required("VM name."), "site_id": required("Placement site from ibee_sites."), "template_id": required("Image template from ibee_images."), "os_distro": required("Image OS distribution."), "os_type": required("Operating system family, such as linux or windows."),
+		"plan_id":          schema.StringAttribute{Required: true, Description: "Plan from ibee_compute_plans. Create sends the plan's cpu, ram_mb and disk_gb. A change resizes the VM in place to the new plan's cpu, ram_mb and disk_gb through the resize operation; the API refuses changes it cannot make."},
+		"billing_interval": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{billingIntervalDefault(), billingIntervalReplace()}, Description: "Billing term: HOURLY (default for new VMs) or MONTHLY, a one-month commitment. Create copies the plan's billing_catalog and merges in the matching entry of its billing_options; the API checks the selection. Omitting it on an existing VM keeps the recorded term. No API operation changes the term, so changing it replaces the VM; the API refuses to delete or resize a committed VM (409 VM_COMMITTED) and deleting a VM does not cancel contractual charges."},
 		"cpu":              schema.Int64Attribute{Computed: true}, "ram_mb": schema.Int64Attribute{Computed: true}, "disk_gb": schema.Int64Attribute{Computed: true}, "gpu_count": schema.Int64Attribute{Computed: true}, "gpu_model": schema.StringAttribute{Computed: true},
 		"status": schema.StringAttribute{Computed: true}, "public_ip": schema.StringAttribute{Computed: true}, "private_ip": schema.StringAttribute{Computed: true},
-		// No default: the API requires the choice for a VM with an automatically assigned public IP and answers 400 without it.
-		"delete_public_ip_action": schema.StringAttribute{Optional: true, Validators: []validator.String{computeOneOf("release", "reserve")}, Description: "What to do with the VM's automatically assigned public IP on destroy: release or reserve. The API requires it for a VM with an automatically assigned public IP and refuses the destroy with 400 when it is missing; when unset the provider sends no public_ip_action and relays that answer. Reserving an address may continue billing."},
-		"ssh_key_ids":             schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(empty), Description: "Existing Secret Store SSH key IDs. Changes are applied in place through the VM access operation (keys are added before others are removed)."},
-		"tags":                    schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(empty), PlanModifiers: []planmodifier.Set{setplanmodifier.RequiresReplace()}, Description: "VM tags. Changes replace the VM because the public API has no tag update operation."},
+		"delete_public_ip_action": schema.StringAttribute{Optional: true, Description: "What to do with the VM's automatically assigned public IP on destroy: release or reserve. The API requires it for a VM with an automatically assigned public IP and refuses the destroy with 400 when it is missing; when unset the provider sends no public_ip_action and relays that answer. Reserving an address may continue billing."},
+		"ssh_key_ids":             schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, PlanModifiers: []planmodifier.Set{setplanmodifier.UseStateForUnknown()}, Description: "Existing Secret Store SSH key IDs. Changes are applied in place through the VM access operation (keys are added before others are removed)."},
+		"tags":                    schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, PlanModifiers: []planmodifier.Set{setplanmodifier.UseStateForUnknown(), setplanmodifier.RequiresReplace()}, Description: "VM tags. Changes replace the VM because the public API has no tag update operation."},
 	}}
+}
+
+// defaultBillingInterval is the term a new VM is created with when none is configured.
+const defaultBillingInterval = "HOURLY"
+
+// billingIntervalDefault plans HOURLY for a new VM without a configured term.
+// An existing VM without one keeps its recorded term, so a VM created before
+// the default existed is never replaced for it.
+func billingIntervalDefault() planmodifier.String {
+	return billingIntervalDefaultModifier{}
+}
+
+type billingIntervalDefaultModifier struct{}
+
+func (billingIntervalDefaultModifier) Description(context.Context) string {
+	return "Defaults to HOURLY for a new VM; an existing VM keeps its recorded term."
+}
+func (m billingIntervalDefaultModifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+func (billingIntervalDefaultModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if !req.ConfigValue.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	if req.State.Raw.IsNull() {
+		resp.PlanValue = types.StringValue(defaultBillingInterval)
+		return
+	}
+	resp.PlanValue = req.StateValue
 }
 
 // A term the API never reported (legacy or imported VM) only records the
@@ -149,20 +167,25 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if plan.BillingInterval.ValueString() == "" {
+		plan.BillingInterval = types.StringValue(defaultBillingInterval)
+	}
 	p, err := r.targetPlan(ctx, plan.SiteID.ValueString(), plan.PlanID.ValueString(), plan.BillingInterval.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to resolve compute plan", err.Error())
 		return
 	}
-	var keys, tags []string
-	resp.Diagnostics.Append(plan.SSHKeyIDs.ElementsAs(ctx, &keys, false)...)
-	resp.Diagnostics.Append(plan.Tags.ElementsAs(ctx, &tags, false)...)
+	body := map[string]any{"name": plan.Name.ValueString(), "site_id": plan.SiteID.ValueString(), "os_distro": plan.OsDistro.ValueString(), "os_type": plan.OsType.ValueString(), "template_id": plan.TemplateID.ValueString(), "cpu": p.Cpu, "ram_mb": p.RamMb, "disk_gb": p.DiskGb, "plan_id": p.PlanID, "billing_catalog": p.BillingCatalog}
+	for key, set := range map[string]types.Set{"ssh_key_ids": plan.SSHKeyIDs, "tags": plan.Tags} {
+		if set.IsNull() || set.IsUnknown() {
+			continue
+		}
+		var values []string
+		resp.Diagnostics.Append(set.ElementsAs(ctx, &values, false)...)
+		body[key] = values
+	}
 	if resp.Diagnostics.HasError() {
 		return
-	}
-	body := map[string]any{"name": plan.Name.ValueString(), "site_id": plan.SiteID.ValueString(), "os_distro": plan.OsDistro.ValueString(), "os_type": plan.OsType.ValueString(), "template_id": plan.TemplateID.ValueString(), "cpu": p.Cpu, "ram_mb": p.RamMb, "disk_gb": p.DiskGb, "plan_id": p.PlanID, "ssh_key_ids": keys, "tags": tags}
-	if len(p.BillingCatalog) > 0 {
-		body["billing_catalog"] = p.BillingCatalog
 	}
 	if r.kind() == "gpu" {
 		body["gpu_count"] = p.GpuCount
@@ -186,8 +209,11 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 	plan.Status = types.StringValue(accepted.Status)
 	plan.PublicIP = types.StringNull()
 	plan.PrivateIP = types.StringNull()
-	if plan.BillingInterval.IsUnknown() {
-		plan.BillingInterval = types.StringNull()
+	if plan.SSHKeyIDs.IsUnknown() {
+		plan.SSHKeyIDs = types.SetNull(types.StringType)
+	}
+	if plan.Tags.IsUnknown() {
+		plan.Tags = types.SetNull(types.StringType)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -208,7 +234,9 @@ func (r *cloudVmResource) Create(ctx context.Context, req resource.CreateRequest
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Temporary: the plan's billing_catalog is looked up and sent until the API resolves the SKU from plan_id itself.
+// targetPlan reads the plan from the compute catalog and builds the
+// ComputeBillingSelection VM create sends: the plan's billing_catalog with the
+// chosen billing_options entry merged in.
 func (r *cloudVmResource) targetPlan(ctx context.Context, siteID, planID, interval string) (*computePlan, error) {
 	p, err := r.client.findPlanForTerm(ctx, r.kind(), siteID, planID, "", interval)
 	if err != nil {
@@ -232,21 +260,19 @@ func (r *cloudVmResource) submit(ctx context.Context, method, id, action string,
 	return r.client.waitOperation(ctx, accepted.OperationID, 0)
 }
 
-// resize moves the VM to another plan in place. The API runs its own precheck,
+// resize moves the VM to another plan's shape in place: the resize operation
+// takes the new plan's cpu, ram_mb and disk_gb. The API runs its own precheck,
 // stops and starts the VM when it must, and answers with an error otherwise.
 func (r *cloudVmResource) resize(ctx context.Context, state cloudVmModel, planID string) error {
-	p, err := r.targetPlan(ctx, state.SiteID.ValueString(), planID, state.BillingInterval.ValueString())
+	p, err := r.client.findPlanForTerm(ctx, r.kind(), state.SiteID.ValueString(), planID, "", "")
 	if err != nil {
 		return err
 	}
-	body := map[string]any{"requested_by": "terraform"}
+	body := map[string]any{}
 	for key, value := range map[string]int64{"cpu": p.Cpu, "ram_mb": p.RamMb, "disk_gb": p.DiskGb} {
 		if value > 0 {
 			body[key] = value
 		}
-	}
-	if len(p.BillingCatalog) > 0 {
-		body["billing_catalog"] = p.BillingCatalog
 	}
 	return r.submit(ctx, http.MethodPost, state.ID.ValueString(), "resize", body)
 }
@@ -267,7 +293,7 @@ func (r *cloudVmResource) updateSSHKeys(ctx context.Context, id string, from, to
 		if len(change.ids) == 0 {
 			continue
 		}
-		if err := r.submit(ctx, http.MethodPatch, id, "access", map[string]any{"ssh_key_mode": change.mode, "ssh_key_ids": change.ids, "requested_by": "terraform"}); err != nil {
+		if err := r.submit(ctx, http.MethodPatch, id, "access", map[string]any{"ssh_key_mode": change.mode, "ssh_key_ids": change.ids}); err != nil {
 			return fmt.Errorf("%s SSH keys: %w", change.mode, err)
 		}
 	}
@@ -292,15 +318,8 @@ func (r *cloudVmResource) refresh(ctx context.Context, state *cloudVmModel) erro
 	if err := r.client.do(ctx, http.MethodGet, r.route(state.ID.ValueString()), nil, &vm); err != nil {
 		return err
 	}
-	if vm.identifier() == "" || vm.Name == "" || vm.Status == "" {
-		return fmt.Errorf("incomplete VM response; refusing to overwrite state")
-	}
-	if vm.identifier() != state.ID.ValueString() {
-		return fmt.Errorf("VM response ID does not match requested VM")
-	}
-	// The deployed backend's VirtualMachine model returns these fields, unlike older public OpenAPI revisions.
-	if vm.SiteID == nil || vm.PlanID == nil || vm.TemplateID == nil || *vm.SiteID == "" || *vm.PlanID == "" || *vm.TemplateID == "" {
-		return fmt.Errorf("VM read must expose site_id, plan_id and template_id for reliable refresh/import; upgrade the public API contract")
+	if vm.identifier() == "" {
+		return fmt.Errorf("VM response has no id")
 	}
 	// The term is whatever the API reports; a read without one keeps the recorded value.
 	if vm.BillingCatalog != nil && vm.BillingCatalog.BillingInterval != "" {
@@ -308,12 +327,24 @@ func (r *cloudVmResource) refresh(ctx context.Context, state *cloudVmModel) erro
 	} else if state.BillingInterval.IsUnknown() {
 		state.BillingInterval = types.StringNull()
 	}
-	state.Name = types.StringValue(vm.Name)
-	state.SiteID = types.StringPointerValue(vm.SiteID)
-	state.PlanID = types.StringPointerValue(vm.PlanID)
-	state.TemplateID = types.StringPointerValue(vm.TemplateID)
-	state.OsType = types.StringValue(vm.OsType)
-	state.OsDistro = types.StringValue(vm.OsDistro)
+	// Fields the read omits keep their recorded value.
+	keep := func(target *types.String, value *string) {
+		if value != nil {
+			*target = types.StringValue(*value)
+		} else if target.IsUnknown() {
+			*target = types.StringNull()
+		}
+	}
+	keep(&state.Name, &vm.Name)
+	keep(&state.SiteID, vm.SiteID)
+	keep(&state.PlanID, vm.PlanID)
+	keep(&state.TemplateID, vm.TemplateID)
+	if vm.OsType != "" {
+		state.OsType = types.StringValue(vm.OsType)
+	}
+	if vm.OsDistro != "" {
+		state.OsDistro = types.StringValue(vm.OsDistro)
+	}
 	state.Cpu = types.Int64Value(vm.Cpu)
 	state.RamMb = types.Int64Value(vm.RamMb)
 	state.DiskGb = types.Int64Value(vm.DiskGb)
@@ -322,19 +353,22 @@ func (r *cloudVmResource) refresh(ctx context.Context, state *cloudVmModel) erro
 	state.Status = types.StringValue(vm.Status)
 	state.PublicIP = types.StringPointerValue(vm.PublicIP)
 	state.PrivateIP = types.StringPointerValue(vm.PrivateIP)
-	if vm.SSHKeyIDs == nil || vm.Tags == nil || vm.OsType == "" || vm.OsDistro == "" {
-		return fmt.Errorf("VM read must expose ssh_key_ids, tags and OS fields for reliable drift detection")
+	for _, field := range []struct {
+		target *types.Set
+		value  *[]string
+	}{{&state.SSHKeyIDs, vm.SSHKeyIDs}, {&state.Tags, vm.Tags}} {
+		if field.value == nil {
+			if field.target.IsUnknown() {
+				*field.target = types.SetNull(types.StringType)
+			}
+			continue
+		}
+		values, d := types.SetValueFrom(ctx, types.StringType, *field.value)
+		if d.HasError() {
+			return fmt.Errorf("invalid list in VM response: %v", d)
+		}
+		*field.target = values
 	}
-	keys, d := types.SetValueFrom(ctx, types.StringType, *vm.SSHKeyIDs)
-	if d.HasError() {
-		return fmt.Errorf("invalid SSH keys in VM response: %v", d)
-	}
-	state.SSHKeyIDs = keys
-	tags, d := types.SetValueFrom(ctx, types.StringType, *vm.Tags)
-	if d.HasError() {
-		return fmt.Errorf("invalid tags in VM response: %v", d)
-	}
-	state.Tags = tags
 	return nil
 }
 func (r *cloudVmResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
