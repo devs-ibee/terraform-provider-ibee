@@ -35,6 +35,7 @@ output "block_storage_sku_codes" {
 | `plans.description` | `string` | Read-only |  |
 | `plans.id` | `string` | Read-only |  |
 | `plans.included_usage` | `string` | Read-only | The plan's included_usage object (sizes, performance, prices) as JSON, as the API returns it. Use jsondecode to read other fields. |
+| `plans.iops` | `string` | Read-only | From included_usage: display text, for example Up to 10K. |
 | `plans.max_size_gb` | `number` | Read-only | From included_usage, when the API reports it as a number. |
 | `plans.min_size_gb` | `number` | Read-only | From included_usage, when the API reports it as a number. |
 | `plans.name` | `string` | Read-only |  |
@@ -44,4 +45,5 @@ output "block_storage_sku_codes" {
 | `plans.sku_code` | `string` | Read-only | Send as sku_code of ibee_block_volume. |
 | `plans.status` | `string` | Read-only |  |
 | `plans.storage_type` | `string` | Read-only |  |
+| `plans.throughput` | `string` | Read-only | From included_usage: display text, for example Up to 400 MiB/s. |
 | `site_id` | `string` | Optional | Return only plans offered at this site. |

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: IBEE Solutions API
-  version: 0.6.2
+  version: 0.6.3
   description: |
     Public API reference for IBEE Solutions.
 
@@ -10186,8 +10186,17 @@ components:
           maxLength: 128
           default: Default Key
         permission_type:
-          description: "Permission level: `admin_rw`, `admin_ro`, `object_rw` or `object_ro`. Default `admin_rw`."
+          description: |-
+            - `admin_rw`: manage buckets and read/write objects (default).
+            - `admin_ro`: read buckets and objects.
+            - `object_rw`: read and write objects only.
+            - `object_ro`: read objects only.
           type: string
+          enum:
+            - admin_rw
+            - admin_ro
+            - object_rw
+            - object_ro
           default: admin_rw
         bucket_scope:
           description: |-
@@ -13188,8 +13197,12 @@ components:
           items: { type: integer }
         price_per_gb_month: { type: number }
         price_per_gb_month_minor: { type: integer }
-        iops: { type: integer }
-        throughput_mibps: { type: integer }
+        iops:
+          type: string
+          description: Display text from the catalog, for example `Up to 10K`.
+        throughput:
+          type: string
+          description: Display text from the catalog, for example `Up to 400 MiB/s`.
 
     BlockStoragePlan:
       description: A block storage plan.

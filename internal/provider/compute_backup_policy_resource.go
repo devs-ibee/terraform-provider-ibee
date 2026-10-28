@@ -246,8 +246,7 @@ func (r *vmBackupPolicyResource) Delete(ctx context.Context, req resource.Delete
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// The API answers 422 to a disable without a JSON body, so send {}.
-	err := r.client.do(ctx, http.MethodPost, r.route(m.VmID.ValueString(), "disable"), map[string]any{}, nil)
+	err := r.client.do(ctx, http.MethodPost, r.route(m.VmID.ValueString(), "disable"), nil, nil)
 	if err != nil && !IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to disable backups", err.Error())
 	}

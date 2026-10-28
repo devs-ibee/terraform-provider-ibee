@@ -30,7 +30,7 @@ resource "ibee_s3_credential" "reader" {
 | `bucket_scope` | `string` | Optional, Defaulted | all or specific. |
 | `id` | `string` | Read-only | S3 access key ID; also used for import. |
 | `name` | `string` | Optional, Defaulted | Display name of the key pair. |
-| `permission_type` | `string` | Optional, Defaulted | admin_rw, admin_ro, object_rw or object_ro. |
+| `permission_type` | `string` | Optional, Defaulted | admin_rw (the API's default), admin_ro, object_rw or object_ro. |
 | `secret_access_key` | `string` | Read-only, Sensitive | Secret key, returned once at creation and kept in state. Null after import. |
 | `status` | `string` | Read-only | active or revoked. |
 

@@ -195,6 +195,8 @@ type blockStoragePlanModel struct {
 	MaxSizeGb            types.Int64  `tfsdk:"max_size_gb"`
 	AllowedSizesGb       types.List   `tfsdk:"allowed_sizes_gb"`
 	PricePerGbMonthMinor types.Int64  `tfsdk:"price_per_gb_month_minor"`
+	Iops                 types.String `tfsdk:"iops"`
+	Throughput           types.String `tfsdk:"throughput"`
 	IncludedUsage        types.String `tfsdk:"included_usage"`
 	BillingCatalog       types.String `tfsdk:"billing_catalog"`
 }
@@ -228,6 +230,8 @@ func (d *blockStoragePlansDataSource) Schema(_ context.Context, _ datasource.Sch
 				"max_size_gb":              schema.Int64Attribute{Computed: true, Description: "From included_usage, when the API reports it as a number."},
 				"allowed_sizes_gb":         schema.ListAttribute{Computed: true, ElementType: types.Int64Type, Description: "From included_usage, when the API reports it."},
 				"price_per_gb_month_minor": schema.Int64Attribute{Computed: true, Description: "From included_usage, in the currency's minor unit."},
+				"iops":                     schema.StringAttribute{Computed: true, Description: "From included_usage: display text, for example Up to 10K."},
+				"throughput":               schema.StringAttribute{Computed: true, Description: "From included_usage: display text, for example Up to 400 MiB/s."},
 				"included_usage":           schema.StringAttribute{Computed: true, Description: "The plan's included_usage object (sizes, performance, prices) as JSON, as the API returns it. Use jsondecode to read other fields."},
 				"billing_catalog":          schema.StringAttribute{Computed: true, Description: "The plan's billing_catalog as a JSON object, when the API returns one."},
 			},
@@ -241,6 +245,14 @@ func (d *blockStoragePlansDataSource) Schema(_ context.Context, _ datasource.Sch
 
 func (d *blockStoragePlansDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	d.client = configureDataSource(req, resp)
+}
+
+// usageString reads one text field of included_usage, or null.
+func usageString(usage map[string]any, key string) types.String {
+	if text, ok := usage[key].(string); ok {
+		return types.StringValue(text)
+	}
+	return types.StringNull()
 }
 
 // usageInt reads one integer field of included_usage, or null when the API
@@ -327,6 +339,8 @@ func (d *blockStoragePlansDataSource) Read(ctx context.Context, req datasource.R
 			MaxSizeGb:            usageInt(usage, "max_size_gb"),
 			AllowedSizesGb:       sizes,
 			PricePerGbMonthMinor: usageInt(usage, "price_per_gb_month_minor"),
+			Iops:                 usageString(usage, "iops"),
+			Throughput:           usageString(usage, "throughput"),
 			IncludedUsage:        usageJSON,
 			BillingCatalog:       catalog,
 		})

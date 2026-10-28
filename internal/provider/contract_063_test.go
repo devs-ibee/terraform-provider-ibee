@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -13,12 +14,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
-// Tests for the behaviour public API contract 0.6.2 asks of the provider.
+// Tests for the behaviour public API contract 0.6.3 asks of the provider.
 
 // dataSourceRead runs a data source with the given configuration values.
 func dataSourceRead(t *testing.T, d datasource.DataSource, values map[string]attr.Value) datasource.ReadResponse {
@@ -118,7 +120,8 @@ func computeValidVMPlanKnown(interval string) cloudVmModel {
 
 func TestBackupPolicyUpdateAndDisableBodies(t *testing.T) {
 	var requests []string
-	var patched, disabled map[string]any
+	var patched map[string]any
+	disableBody := "unset"
 	r := &vmBackupPolicyResource{vmType: "gpu"}
 	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		requests = append(requests, req.Method+" "+req.URL.Path)
@@ -131,7 +134,8 @@ func TestBackupPolicyUpdateAndDisableBodies(t *testing.T) {
 			policy["retention_days"] = 14
 			computeJSON(w, policy)
 		case "POST /compute/gpu-vms/vm-1/backups/disable":
-			disabled = decodeBody(t, req)
+			raw, _ := io.ReadAll(req.Body)
+			disableBody = string(raw)
 			computeJSON(w, computeBackupResponse(false))
 		default:
 			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
@@ -150,8 +154,8 @@ func TestBackupPolicyUpdateAndDisableBodies(t *testing.T) {
 	del := resource.DeleteResponse{}
 	r.Delete(context.Background(), resource.DeleteRequest{State: update.State}, &del)
 	computeNoErrors(t, del.Diagnostics)
-	if disabled == nil || len(disabled) != 0 {
-		t.Fatalf("backups/disable must send {}: %v", disabled)
+	if disableBody != "" {
+		t.Fatalf("backups/disable is bodyless in the contract, got %q", disableBody)
 	}
 }
 
@@ -207,8 +211,8 @@ func TestStoragePlanDataSources(t *testing.T) {
 				t.Errorf("unexpected request %s", req.URL)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			// The API reports iops as text although the contract says integer.
-			_, _ = w.Write([]byte(`{"items":[{"id":"p1","sku_code":"BLOCKSTO-NVME","plan_code":"BLOCKSTO-NVME","name":"NVMe SSD","storage_type":"nvme","status":"ACTIVE","selectable":true,"included_usage":{"min_size_gb":10,"max_size_gb":2000,"price_per_gb_month_minor":700,"iops":"Up to 10K","allowed_sizes_gb":[10,50,100]},"billing_catalog":{"sku_code":"BLOCKSTO-NVME"}}],"currency":"INR","billing_interval":"MONTHLY"}`))
+			// iops and throughput are display text (contract 0.6.3).
+			_, _ = w.Write([]byte(`{"items":[{"id":"p1","sku_code":"BLOCKSTO-NVME","plan_code":"BLOCKSTO-NVME","name":"NVMe SSD","storage_type":"nvme","status":"ACTIVE","selectable":true,"included_usage":{"min_size_gb":10,"max_size_gb":2000,"price_per_gb_month_minor":700,"iops":"Up to 10K","throughput":"Up to 400 MiB/s","allowed_sizes_gb":[10,50,100]},"billing_catalog":{"sku_code":"BLOCKSTO-NVME"}}],"currency":"INR","billing_interval":"MONTHLY"}`))
 		})
 		resp := dataSourceRead(t, d, map[string]attr.Value{"site_id": types.StringValue("site-1")})
 		computeNoErrors(t, resp.Diagnostics)
@@ -220,7 +224,7 @@ func TestStoragePlanDataSources(t *testing.T) {
 		p := got.Plans[0]
 		var sizes []int64
 		computeNoErrors(t, p.AllowedSizesGb.ElementsAs(context.Background(), &sizes, false))
-		if p.SkuCode.ValueString() != "BLOCKSTO-NVME" || p.MinSizeGb.ValueInt64() != 10 || p.MaxSizeGb.ValueInt64() != 2000 || p.PricePerGbMonthMinor.ValueInt64() != 700 || !reflect.DeepEqual(sizes, []int64{10, 50, 100}) || !strings.Contains(p.IncludedUsage.ValueString(), `"iops":"Up to 10K"`) || p.BillingCatalog.ValueString() != `{"sku_code":"BLOCKSTO-NVME"}` {
+		if p.SkuCode.ValueString() != "BLOCKSTO-NVME" || p.MinSizeGb.ValueInt64() != 10 || p.MaxSizeGb.ValueInt64() != 2000 || p.PricePerGbMonthMinor.ValueInt64() != 700 || p.Iops.ValueString() != "Up to 10K" || p.Throughput.ValueString() != "Up to 400 MiB/s" || !reflect.DeepEqual(sizes, []int64{10, 50, 100}) || !strings.Contains(p.IncludedUsage.ValueString(), `"iops":"Up to 10K"`) || p.BillingCatalog.ValueString() != `{"sku_code":"BLOCKSTO-NVME"}` {
 			t.Fatalf("unexpected plan: %+v", p)
 		}
 	})
@@ -337,5 +341,20 @@ func TestCDNPurgeAndVerifyActions(t *testing.T) {
 	computeNoErrors(t, resp.Diagnostics)
 	if len(progress) != 1 || !strings.Contains(progress[0], "pending_validation") {
 		t.Fatalf("verify must report the API's status: %v", progress)
+	}
+}
+
+func TestS3CredentialPermissionTypeListsContractValues(t *testing.T) {
+	var sch resource.SchemaResponse
+	(&s3CredentialResource{}).Schema(context.Background(), resource.SchemaRequest{}, &sch)
+	validators := sch.Schema.Attributes["permission_type"].(interface {
+		StringValidators() []validator.String
+	}).StringValidators()
+	for value, valid := range map[string]bool{"admin_rw": true, "admin_ro": true, "object_rw": true, "object_ro": true, "read_only": false} {
+		resp := validator.StringResponse{}
+		validators[0].ValidateString(context.Background(), validator.StringRequest{Path: path.Root("permission_type"), ConfigValue: types.StringValue(value)}, &resp)
+		if resp.Diagnostics.HasError() == valid {
+			t.Errorf("%s: valid=%v, diagnostics=%v", value, valid, resp.Diagnostics)
+		}
 	}
 }

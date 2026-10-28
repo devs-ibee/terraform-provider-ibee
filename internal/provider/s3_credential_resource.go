@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -53,7 +54,7 @@ func (r *s3CredentialResource) Schema(_ context.Context, _ resource.SchemaReques
 	resp.Schema = schema.Schema{Description: "An S3 access key pair. The API has no update operation, so any input change replaces the key. Settings that are not configured are not sent and the API's defaults apply. The secret_access_key is returned once, at creation, and kept in Terraform state (sensitive, not encrypted by the provider; use an encrypted state backend); imports leave it null. Destroy revokes the key (POST .../revoke) and then deletes it (DELETE). Import using the access key ID.", Attributes: map[string]schema.Attribute{
 		"id":                schema.StringAttribute{Computed: true, Description: "S3 access key ID; also used for import.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 		"name":              schema.StringAttribute{Optional: true, Computed: true, Description: "Display name of the key pair.", PlanModifiers: replace},
-		"permission_type":   schema.StringAttribute{Optional: true, Computed: true, Description: "admin_rw, admin_ro, object_rw or object_ro.", PlanModifiers: replace},
+		"permission_type":   schema.StringAttribute{Optional: true, Computed: true, Description: "admin_rw (the API's default), admin_ro, object_rw or object_ro.", PlanModifiers: replace, Validators: []validator.String{contractEnum{"admin_rw", "admin_ro", "object_rw", "object_ro"}}},
 		"bucket_scope":      schema.StringAttribute{Optional: true, Computed: true, Description: "all or specific.", PlanModifiers: replace},
 		"allowed_buckets":   schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "Bucket names the key may use when bucket_scope is specific.", PlanModifiers: []planmodifier.Set{setplanmodifier.UseStateForUnknown(), setplanmodifier.RequiresReplace()}},
 		"secret_access_key": schema.StringAttribute{Computed: true, Sensitive: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "Secret key, returned once at creation and kept in state. Null after import."},
