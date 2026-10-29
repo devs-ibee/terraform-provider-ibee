@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0
+## 0.7.0 (2026-10-30)
 
 Moves the provider to public API contract 0.7.1 (vendored at `contract/ibee-cloud.yaml`) and adds Container Registry. The public API now runs the portal's own checks, so the provider is a thin layer over it: each change is one API operation, settings that are not configured are not sent (the API's defaults apply and the API's values are recorded), and the API decides prices, eligibility, limits and lifecycle. The provider has no validation, defaults or rules of its own; the only value check is a contract enum (`ibee_s3_credential.permission_type`). The one convenience left is the VM `billing_interval`: the provider builds `billing_catalog` from `GET /compute/plans`, as the portal does. Server errors are shown as the server sent them (status, code, message, request id).
 
