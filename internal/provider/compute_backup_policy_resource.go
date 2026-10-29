@@ -3,18 +3,19 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
+	"reflect"
+
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"net/http"
-	"net/url"
-	"time"
 )
 
 type vmBackupPolicyResource struct {
@@ -28,7 +29,6 @@ func NewCloudVmBackupPolicyResource() resource.Resource {
 func NewGpuVmBackupPolicyResource() resource.Resource { return &vmBackupPolicyResource{vmType: "gpu"} }
 
 var _ resource.ResourceWithImportState = (*vmBackupPolicyResource)(nil)
-var _ resource.ResourceWithValidateConfig = (*vmBackupPolicyResource)(nil)
 
 type vmBackupPolicyModel struct {
 	ID                     types.String `tfsdk:"id"`
@@ -52,16 +52,16 @@ type vmBackupPolicyAPI struct {
 	Enabled        *bool           `json:"enabled"`
 	BillingCatalog recoveryCatalog `json:"billing_catalog"`
 	Schedule       struct {
-		Frequency     string `json:"frequency"`
-		Timezone      string `json:"timezone"`
-		Hour          int64  `json:"hour"`
-		Minute        int64  `json:"minute"`
-		DayOfWeek     *int64 `json:"day_of_week"`
-		WindowMinutes int64  `json:"window_minutes"`
+		Frequency     *string `json:"frequency"`
+		Timezone      *string `json:"timezone"`
+		Hour          *int64  `json:"hour"`
+		Minute        *int64  `json:"minute"`
+		DayOfWeek     *int64  `json:"day_of_week"`
+		WindowMinutes *int64  `json:"window_minutes"`
 	} `json:"schedule"`
-	RetentionDays          int64   `json:"retention_days"`
-	FullBackupIntervalDays int64   `json:"full_backup_interval_days"`
-	IncrementalEnabled     bool    `json:"incremental_enabled"`
+	RetentionDays          *int64  `json:"retention_days"`
+	FullBackupIntervalDays *int64  `json:"full_backup_interval_days"`
+	IncrementalEnabled     *bool   `json:"incremental_enabled"`
 	NextRunAt              *string `json:"next_run_at"`
 }
 
@@ -69,18 +69,27 @@ func (r *vmBackupPolicyResource) Metadata(_ context.Context, req resource.Metada
 	resp.TypeName = req.ProviderTypeName + "_" + r.vmType + "_vm_backup_policy"
 }
 func (r *vmBackupPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	integer := func(value, min, max int64) schema.Int64Attribute {
-		return schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(value), Validators: []validator.Int64{computeIntValidator{min, max}}}
+	str := func(description string) schema.StringAttribute {
+		return schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: description}
 	}
-	scheduleInteger := func(min, max int64) schema.Int64Attribute {
-		return schema.Int64Attribute{Optional: true, Computed: true, Validators: []validator.Int64{computeIntValidator{min, max}}}
+	integer := func(description string) schema.Int64Attribute {
+		return schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}, Description: description}
 	}
-	resp.Schema = schema.Schema{Description: "Enables and manages automated VM backups. Destroy disables future backups and retains existing recovery points, which may continue incurring storage charges. Import using the VM ID. The upstream mutation decides billing and lifecycle admission.", Attributes: map[string]schema.Attribute{
-		"id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "VM ID, used as the stable identity of its singleton policy."}, "vm_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Validators: []validator.String{computeNonEmpty()}}, "policy_id": schema.StringAttribute{Computed: true},
-		"billing_catalog": recoveryCatalogAttribute("backup_storage", false),
-		"frequency":       schema.StringAttribute{Optional: true, Computed: true, Validators: []validator.String{computeOneOf("hourly", "daily", "weekly")}, Description: "New schedules support daily (default) or weekly. An existing hourly schedule is preserved only while unchanged; explicitly select daily/weekly to migrate."}, "timezone": schema.StringAttribute{Optional: true, Computed: true, Description: "Defaults to UTC for new policies; omission preserves an existing timezone."},
-		"hour": schema.Int64Attribute{Optional: true, Computed: true, Validators: []validator.Int64{computeIntValidator{0, 23}}, Description: "Hour in the selected timezone. Defaults to 12 for new policies; omission preserves existing/imported hours, including the old default 20."}, "minute": scheduleInteger(0, 59), "window_minutes": scheduleInteger(5, 180), "retention_days": integer(7, 1, 365), "full_backup_interval_days": integer(7, 1, 30),
-		"day_of_week": schema.Int64Attribute{Optional: true, Computed: true, Validators: []validator.Int64{computeIntValidator{0, 6}}, Description: "Only for weekly schedules: Monday=0 through Sunday=6. Required for new weekly schedules; omission preserves an existing weekly day."}, "incremental_enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)}, "next_run_at": schema.StringAttribute{Computed: true},
+	resp.Schema = schema.Schema{Description: "Enables (backups/enable) and updates (PATCH backups/policy) automated backups of a VM. Settings that are not configured are not sent, so the API's defaults apply, and are read back from the API. Destroy disables backups (backups/disable); existing recovery points are kept and may continue to be billed. Import using the VM ID.", Attributes: map[string]schema.Attribute{
+		"id":                        schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "VM ID, used as the identity of its policy."},
+		"vm_id":                     schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+		"policy_id":                 schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+		"billing_catalog":           recoveryCatalogAttribute("backup_storage (see ibee_backup_storage_plans)", true),
+		"frequency":                 str("Schedule frequency, such as daily or weekly."),
+		"timezone":                  str("IANA time zone of the schedule."),
+		"hour":                      integer("Hour of the day in timezone."),
+		"minute":                    integer("Minute of the hour."),
+		"day_of_week":               integer("Day of the week for weekly schedules (Monday=0)."),
+		"window_minutes":            integer("Length of the backup window in minutes."),
+		"retention_days":            integer("Days recovery points are kept."),
+		"full_backup_interval_days": integer("Days between full backups."),
+		"incremental_enabled":       schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}},
+		"next_run_at":               schema.StringAttribute{Computed: true},
 	}}
 }
 func (r *vmBackupPolicyResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -94,31 +103,41 @@ func (r *vmBackupPolicyResource) Configure(_ context.Context, req resource.Confi
 	}
 	r.client = c
 }
-func (r *vmBackupPolicyResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var m vmBackupPolicyModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &m)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if !m.Timezone.IsUnknown() && !m.Timezone.IsNull() {
-		if _, err := time.LoadLocation(m.Timezone.ValueString()); err != nil || m.Timezone.ValueString() == "" || m.Timezone.ValueString() == "Local" || len(m.Timezone.ValueString()) > 128 {
-			resp.Diagnostics.AddAttributeError(path.Root("timezone"), "Invalid timezone", "Use a valid IANA timezone, for example UTC or Asia/Kolkata.")
-		}
-	}
-	if !m.Frequency.IsNull() && !m.Frequency.IsUnknown() && m.Frequency.ValueString() != "weekly" && !m.DayOfWeek.IsNull() && !m.DayOfWeek.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(path.Root("day_of_week"), "Unexpected day", "day_of_week is only used with frequency = weekly.")
-	}
-}
 func (r *vmBackupPolicyResource) route(vmID string, action string) string {
 	return "/compute/" + r.vmType + "-vms/" + url.PathEscape(vmID) + "/backups/" + action
 }
+
+func known(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
+
+// body sends the schedule and retention settings that have a value.
 func (m *vmBackupPolicyModel) body() map[string]any {
-	schedule := map[string]any{"frequency": m.Frequency.ValueString(), "timezone": m.Timezone.ValueString(), "hour": m.Hour.ValueInt64(), "minute": m.Minute.ValueInt64(), "window_minutes": m.WindowMinutes.ValueInt64()}
-	if !m.DayOfWeek.IsNull() {
-		schedule["day_of_week"] = m.DayOfWeek.ValueInt64()
+	schedule := map[string]any{}
+	for key, value := range map[string]types.String{"frequency": m.Frequency, "timezone": m.Timezone} {
+		if known(value) {
+			schedule[key] = value.ValueString()
+		}
 	}
-	return map[string]any{"schedule": schedule, "retention_days": m.RetentionDays.ValueInt64(), "full_backup_interval_days": m.FullBackupIntervalDays.ValueInt64(), "incremental_enabled": m.IncrementalEnabled.ValueBool(), "requested_by": "terraform"}
+	for key, value := range map[string]types.Int64{"hour": m.Hour, "minute": m.Minute, "day_of_week": m.DayOfWeek, "window_minutes": m.WindowMinutes} {
+		if known(value) {
+			schedule[key] = value.ValueInt64()
+		}
+	}
+	body := map[string]any{}
+	if len(schedule) > 0 {
+		body["schedule"] = schedule
+	}
+	for key, value := range map[string]types.Int64{"retention_days": m.RetentionDays, "full_backup_interval_days": m.FullBackupIntervalDays} {
+		if known(value) {
+			body[key] = value.ValueInt64()
+		}
+	}
+	if known(m.IncrementalEnabled) {
+		body["incremental_enabled"] = m.IncrementalEnabled.ValueBool()
+	}
+	return body
 }
+
+// refresh reads the policy; it reports false when backups are disabled.
 func (r *vmBackupPolicyResource) refresh(ctx context.Context, m *vmBackupPolicyModel) (bool, error) {
 	id := m.VmID.ValueString()
 	if id == "" {
@@ -128,17 +147,8 @@ func (r *vmBackupPolicyResource) refresh(ctx context.Context, m *vmBackupPolicyM
 	if err := r.client.do(ctx, http.MethodGet, r.route(id, "policy"), nil, &p); err != nil {
 		return false, err
 	}
-	if p.VmID != id {
-		return false, fmt.Errorf("backup policy response has unexpected VM identity")
-	}
-	if p.Enabled == nil {
-		return false, fmt.Errorf("backup policy response omitted enabled; refusing to remove state")
-	}
-	if !*p.Enabled {
+	if p.Enabled != nil && !*p.Enabled {
 		return false, nil
-	}
-	if p.PolicyID == "" || p.Schedule.Frequency == "" || p.Schedule.Timezone == "" || p.RetentionDays < 1 {
-		return false, fmt.Errorf("incomplete backup policy response")
 	}
 	if err := hydrateRecoveryCatalog(&m.BillingCatalog, p.BillingCatalog); err != nil {
 		return false, err
@@ -146,16 +156,19 @@ func (r *vmBackupPolicyResource) refresh(ctx context.Context, m *vmBackupPolicyM
 	m.ID = types.StringValue(id)
 	m.VmID = types.StringValue(id)
 	m.PolicyID = types.StringValue(p.PolicyID)
-	m.Frequency = types.StringValue(p.Schedule.Frequency)
-	m.Timezone = types.StringValue(p.Schedule.Timezone)
-	m.Hour = types.Int64Value(p.Schedule.Hour)
-	m.Minute = types.Int64Value(p.Schedule.Minute)
-	m.DayOfWeek = types.Int64PointerValue(p.Schedule.DayOfWeek)
-	m.WindowMinutes = types.Int64Value(p.Schedule.WindowMinutes)
-	m.RetentionDays = types.Int64Value(p.RetentionDays)
-	m.FullBackupIntervalDays = types.Int64Value(p.FullBackupIntervalDays)
-	m.IncrementalEnabled = types.BoolValue(p.IncrementalEnabled)
-	m.NextRunAt = types.StringPointerValue(p.NextRunAt)
+	for _, field := range []struct {
+		target *types.String
+		value  *string
+	}{{&m.Frequency, p.Schedule.Frequency}, {&m.Timezone, p.Schedule.Timezone}, {&m.NextRunAt, p.NextRunAt}} {
+		*field.target = types.StringPointerValue(field.value)
+	}
+	for _, field := range []struct {
+		target *types.Int64
+		value  *int64
+	}{{&m.Hour, p.Schedule.Hour}, {&m.Minute, p.Schedule.Minute}, {&m.DayOfWeek, p.Schedule.DayOfWeek}, {&m.WindowMinutes, p.Schedule.WindowMinutes}, {&m.RetentionDays, p.RetentionDays}, {&m.FullBackupIntervalDays, p.FullBackupIntervalDays}} {
+		*field.target = types.Int64PointerValue(field.value)
+	}
+	m.IncrementalEnabled = types.BoolPointerValue(p.IncrementalEnabled)
 	return true, nil
 }
 func (r *vmBackupPolicyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -164,38 +177,22 @@ func (r *vmBackupPolicyResource) Create(ctx context.Context, req resource.Create
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := validateBackupSchedule(m, nil); err != nil {
-		resp.Diagnostics.AddError("Invalid backup schedule", err.Error())
-		return
-	}
 	catalog, err := recoveryCatalogBody(m.BillingCatalog)
 	if err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid backup billing catalog", err.Error())
 		return
 	}
-	var p vmBackupPolicyAPI
 	body := m.body()
 	if catalog != nil {
 		body["billing_catalog"] = catalog
 	}
+	var p vmBackupPolicyAPI
 	if err := r.client.do(ctx, http.MethodPost, r.route(m.VmID.ValueString(), "enable"), body, &p); err != nil {
 		resp.Diagnostics.AddError("Failed to enable VM backups", err.Error())
 		return
 	}
-	m.ID = m.VmID
-	m.PolicyID = types.StringValue(p.PolicyID)
-	m.NextRunAt = types.StringPointerValue(p.NextRunAt)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	enabled, err := r.refresh(ctx, &m)
-	if err != nil {
+	if _, err := r.refresh(ctx, &m); err != nil {
 		resp.Diagnostics.AddError("Failed to refresh backup policy", err.Error())
-		return
-	}
-	if !enabled {
-		resp.Diagnostics.AddError("Backups were not enabled", "API returned a disabled policy after enable.")
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
@@ -217,6 +214,9 @@ func (r *vmBackupPolicyResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
+
+// Update sends the settings that changed: the whole schedule when any part of
+// it changed, and each retention setting that changed.
 func (r *vmBackupPolicyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var m, old vmBackupPolicyModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &m)...)
@@ -224,38 +224,18 @@ func (r *vmBackupPolicyResource) Update(ctx context.Context, req resource.Update
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := validateBackupSchedule(m, &old); err != nil {
-		resp.Diagnostics.AddError("Invalid backup schedule", err.Error())
+	body, before := m.body(), old.body()
+	for key, value := range body {
+		if reflect.DeepEqual(before[key], value) {
+			delete(body, key)
+		}
+	}
+	if err := r.client.do(ctx, http.MethodPatch, r.route(m.VmID.ValueString(), "policy"), body, nil); err != nil {
+		resp.Diagnostics.AddError("Failed to update backup policy", err.Error())
 		return
 	}
-	body := m.body()
-	if backupScheduleEqual(old, m) {
-		delete(body, "schedule")
-	}
-	catalogChanged := !recoveryCatalogSelectionUnchanged(old.BillingCatalog, m.BillingCatalog)
-	if catalogChanged {
-		catalog, err := recoveryCatalogBody(m.BillingCatalog)
-		if err != nil {
-			resp.Diagnostics.AddAttributeError(path.Root("billing_catalog"), "Invalid backup billing catalog", err.Error())
-			return
-		}
-		if catalog != nil {
-			body["billing_catalog"] = catalog
-		}
-	}
-	if catalogChanged || !backupScheduleEqual(old, m) || !old.RetentionDays.Equal(m.RetentionDays) || !old.FullBackupIntervalDays.Equal(m.FullBackupIntervalDays) || !old.IncrementalEnabled.Equal(m.IncrementalEnabled) {
-		if err := r.client.do(ctx, http.MethodPatch, r.route(m.VmID.ValueString(), "policy"), body, nil); err != nil {
-			resp.Diagnostics.AddError("Failed to update backup policy", err.Error())
-			return
-		}
-	}
-	enabled, err := r.refresh(ctx, &m)
-	if err != nil {
+	if _, err := r.refresh(ctx, &m); err != nil {
 		resp.Diagnostics.AddError("Failed to refresh backup policy", err.Error())
-		return
-	}
-	if !enabled {
-		resp.Diagnostics.AddError("Backup policy is disabled", "Refresh the resource and apply to re-enable backups.")
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
@@ -266,17 +246,10 @@ func (r *vmBackupPolicyResource) Delete(ctx context.Context, req resource.Delete
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var p vmBackupPolicyAPI
-	err := r.client.do(ctx, http.MethodPost, r.route(m.VmID.ValueString(), "disable"), map[string]any{"requested_by": "terraform"}, &p)
-	if IsNotFound(err) {
-		return
-	}
-	if err != nil {
+	// Contract 0.7.1: send an empty JSON object; the virtualization engine refuses a request with no body.
+	err := r.client.do(ctx, http.MethodPost, r.route(m.VmID.ValueString(), "disable"), map[string]any{}, nil)
+	if err != nil && !IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to disable backups", err.Error())
-		return
-	}
-	if p.VmID != m.VmID.ValueString() || p.Enabled == nil || *p.Enabled {
-		resp.Diagnostics.AddError("Backup disable unconfirmed", "API did not confirm a disabled policy for the requested VM; resource remains tracked.")
 	}
 }
 func (r *vmBackupPolicyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

@@ -87,17 +87,12 @@ provider "ibee" {
  endpoint = %q
  token = "cdn-fixture-only-token"
  workspace_id = "cdn-fixture-workspace"
- organization_id = "cdn-fixture-org"
  operation_timeout = "5s"
-}
-resource "ibee_cdn_origin" "test" {
- name = "fixture-origin"
- origin_url = %q
 }
 resource "ibee_cdn_distribution" "custom" {
  name = "custom-distribution"
  origin_type = "custom"
- origin_id = ibee_cdn_origin.test.id
+ origin_id = "origin-1"
  cache_policy = %q
  enabled = %t
 }
@@ -114,7 +109,8 @@ resource "ibee_cdn_domain" "test" {
  distribution_id = ibee_cdn_distribution.custom.id
  domain = "cdn.fixture.example"
 }
-`, server.URL, originURL, policy, enabled, bucketOriginID, index))
+`, server.URL, policy, enabled, bucketOriginID, index))
+		_ = originURL
 	}
 	assertAttribute := func(resourceType, name, attribute, want string) {
 		t.Helper()
@@ -190,7 +186,7 @@ action "ibee_cdn_verify_domain" "test" {
 		run(0, "validate", "-no-color")
 		run(0, "apply", "-invoke=action.ibee_cdn_purge.test", "-auto-approve", "-input=false", "-no-color")
 		pending := run(0, "apply", "-invoke=action.ibee_cdn_verify_domain.test", "-auto-approve", "-input=false", "-no-color")
-		if !strings.Contains(pending, "Domain is still pending") {
+		if !strings.Contains(pending, "pending_validation") {
 			t.Fatal("native verification action did not report pending DNS")
 		}
 		f.mu.Lock()
@@ -207,7 +203,6 @@ action "ibee_cdn_verify_domain" "test" {
 	bucketOriginID = "canonical-bucket-7"
 	config(false, "static-assets", "https://origin.fixture.example", "index.html")
 	for _, item := range []struct{ address, id string }{
-		{"ibee_cdn_origin.test", "origin-1"},
 		{"ibee_cdn_distribution.custom", "custom-distribution"},
 		{"ibee_cdn_distribution.bucket", "bucket-distribution"},
 		{"ibee_cdn_website.test", "bucket-distribution"},
@@ -223,16 +218,16 @@ action "ibee_cdn_verify_domain" "test" {
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	f.mu.Lock()
-	if f.distributions["custom-distribution"]["enabled"] != true || f.distributions["custom-distribution"]["cache_policy"] != "media" || f.origin["origin_url"] != "https://new-origin.fixture.example/assets" || f.website["index_document"] != "home.html" {
+	if f.distributions["custom-distribution"]["enabled"] != true || f.distributions["custom-distribution"]["cache_policy"] != "media" || f.website["index_document"] != "home.html" {
 		t.Error("mutable CDN fields did not converge")
 	}
 	f.distributions["custom-distribution"]["cache_policy"] = "short"
 	f.mu.Unlock()
 	run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
-	// Missing fields and access failures must retain all managed identities.
-	for _, faultPath := range []string{"/cdn/origins/origin-1", "/cdn/distributions/custom-distribution", "/cdn/distributions/bucket-distribution/website-config", "/cdn/distributions/custom-distribution/custom-domains/cdn.fixture.example"} {
-		for _, kind := range []string{"malformed", "forbidden"} {
+	// Access failures must retain all managed identities.
+	for _, faultPath := range []string{"/cdn/distributions/custom-distribution", "/cdn/distributions/bucket-distribution/website-config", "/cdn/distributions/custom-distribution/custom-domains/cdn.fixture.example"} {
+		for _, kind := range []string{"forbidden"} {
 			before, err := os.ReadFile(filepath.Join(work, "terraform.tfstate"))
 			if err != nil {
 				t.Fatal(err)
@@ -291,8 +286,8 @@ action "ibee_cdn_verify_domain" "test" {
 	run(0, "destroy", "-auto-approve", "-input=false", "-no-color")
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.origin != nil || f.domain != nil || f.website["enabled"] != false || f.admissions != beforeAdmission {
-		t.Errorf("cleanup/blocked billing invariant failed: origin=%v domain=%v website=%v admissions=%d/%d", f.origin, f.domain, f.website, f.admissions, beforeAdmission)
+	if f.domain != nil || f.website["enabled"] != false || f.admissions != beforeAdmission {
+		t.Errorf("cleanup/blocked billing invariant failed: domain=%v website=%v admissions=%d/%d", f.domain, f.website, f.admissions, beforeAdmission)
 	}
 	for id, d := range f.distributions {
 		if d["status"] != "deleted" {

@@ -123,7 +123,7 @@ resource "ibee_s3_credential" "test" {
 	if stateSecret() != "fixture-only-generated-s3-secret" {
 		t.Fatal("creation-only secret did not persist in sensitive Terraform state")
 	}
-	for _, fault := range []string{"forbidden", "malformed"} {
+	for _, fault := range []string{"forbidden"} {
 		before := string(stateBytes())
 		f.mu.Lock()
 		f.fault = fault
@@ -152,7 +152,7 @@ resource "ibee_s3_credential" "test" {
 	}
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-	// An explicitly chosen all-bucket scope serializes an empty list, not null.
+	// allowed_buckets left out of the configuration is not sent; the API's value is recorded.
 	config("object_ro", "all", "")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
@@ -166,10 +166,8 @@ resource "ibee_s3_credential" "test" {
 	if f.admissions != before || f.creates != 3 {
 		t.Errorf("unexpected billing/creation counts: %d/%d creates=%d", f.admissions, before, f.creates)
 	}
-	for id, key := range f.keys {
-		if key["status"] != "revoked" {
-			t.Errorf("key %s remains active after destroy/replacement", id)
-		}
+	if len(f.keys) != 0 {
+		t.Errorf("keys remain after destroy and replacement: %v", f.keys)
 	}
 }
 
@@ -201,9 +199,13 @@ func (f *s3TerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/object-storage/credentials" && r.Method == http.MethodPost {
 		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["allowed_buckets"] == nil || !f.allowed {
-			http.Error(w, "missing scope or denied admission", 422)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !f.allowed {
+			http.Error(w, "invalid body or denied admission", 422)
 			return
+		}
+		// Like the API, apply defaults to what the request leaves out.
+		if body["allowed_buckets"] == nil {
+			body["allowed_buckets"] = []any{}
 		}
 		f.creates++
 		id := fmt.Sprintf("AKIAFIXTURE%d", f.creates)
@@ -219,14 +221,24 @@ func (f *s3TerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/object-storage/credentials/")
+	id, revoke := strings.CutSuffix(id, "/revoke")
 	key := f.keys[id]
 	if key == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if r.Method == http.MethodDelete {
+	if revoke && r.Method == http.MethodPost {
 		key["status"] = "revoked"
 		send(map[string]any{"success": true, "message": "revoked"})
+		return
+	}
+	if r.Method == http.MethodDelete {
+		if key["status"] != "revoked" {
+			http.Error(w, "revoke the credential first", 400)
+			return
+		}
+		delete(f.keys, id)
+		send(map[string]any{"success": true, "message": "deleted"})
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -234,11 +246,7 @@ func (f *s3TerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f.fault == "forbidden" {
-		http.Error(w, "fixture-only-generated-s3-secret", 403)
-		return
-	}
-	if f.fault == "malformed" {
-		send(map[string]any{"access_key_id": id})
+		http.Error(w, `{"detail":"access denied"}`, 403)
 		return
 	}
 	send(key)

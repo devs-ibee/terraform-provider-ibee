@@ -50,6 +50,6 @@ output "domain_cname" {
   }
 }
 
-# Custom origins use ibee_cdn_origin with name and origin_url (HTTPS).
+# For a custom origin set origin_type = "custom" and origin_id to the origin's ID.
 # The inspected development gateway returned 404 for /cdn/origins; confirm that
 # route is deployed before selecting origin_type="custom".

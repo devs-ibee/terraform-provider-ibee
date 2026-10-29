@@ -10,7 +10,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -30,34 +29,17 @@ func (c *recoveryCatalog) UnmarshalJSON(raw []byte) error {
 	return err
 }
 
-// Temporary: snapshots, backups and attachments pass billing_catalog through unchanged until the API resolves these SKUs itself.
+// recoveryCatalogAttribute is the billing_catalog snapshots, backups and
+// volume attachments send unchanged; the API requires it and checks it.
 func recoveryCatalogAttribute(product string, immutable bool) schema.StringAttribute {
 	behavior := "Changes are sent with the next policy update."
 	if immutable {
-		behavior = "Adding a previously absent value only records configuration. Changing a known value requires replacement."
+		behavior = "It is sent with create only: adding a value after an import only records it, and changing a recorded value replaces the resource."
 	}
 	return schema.StringAttribute{
 		Optional: true, Computed: true,
-		Description:   "Billing catalog for " + product + " as a JSON object (use jsonencode), passed to the API unchanged; the API decides whether it is valid. Attachments read it from the volume when omitted. Omitted values preserve prior state. " + behavior,
-		Validators:    []validator.String{recoveryCatalogValidator{}},
+		Description:   "Billing catalog for " + product + " as a JSON object, passed to the API unchanged; the API requires it and decides whether it is valid. Omitted values keep the recorded value. " + behavior,
 		PlanModifiers: []planmodifier.String{recoveryCatalogPlan{immutable: immutable}},
-	}
-}
-
-type recoveryCatalogValidator struct{}
-
-func (recoveryCatalogValidator) Description(context.Context) string {
-	return "must be one JSON object"
-}
-func (v recoveryCatalogValidator) MarkdownDescription(ctx context.Context) string {
-	return v.Description(ctx)
-}
-func (v recoveryCatalogValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
-	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
-		return
-	}
-	if _, err := decodeRecoveryCatalog(req.ConfigValue.ValueString()); err != nil {
-		resp.Diagnostics.AddAttributeError(req.Path, "Invalid billing catalog", err.Error())
 	}
 }
 

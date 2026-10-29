@@ -68,7 +68,7 @@ func storageTestCheck(t *testing.T, diagnostics diag.Diagnostics) {
 }
 
 func storageTestBucketModel() bucketResourceModel {
-	return bucketResourceModel{ID: types.StringValue("assets"), Name: types.StringValue("assets"), Region: types.StringValue("in-south-2"), IsPublic: types.BoolValue(false), ObjectLockEnabled: types.BoolValue(false), ForceDestroy: types.BoolValue(false), Status: types.StringValue("active"), ObjectCount: types.Int64Value(0), TotalSize: types.Int64Value(0)}
+	return bucketResourceModel{ID: types.StringValue("assets"), Name: types.StringValue("assets"), Region: types.StringValue("in-south-2"), IsPublic: types.BoolValue(false), ObjectLockEnabled: types.BoolValue(false), DefaultRetention: types.ObjectNull(bucketRetentionTypes), Status: types.StringValue("active"), ObjectCount: types.Int64Value(0), TotalSize: types.Int64Value(0)}
 }
 
 func storageTestBucketJSON(public bool, counters string) string {
@@ -148,72 +148,6 @@ func TestBucketLifecycle(t *testing.T) {
 	storageTestCheck(t, remove.Diagnostics)
 	if !deleted || billingCalls != 0 {
 		t.Fatalf("delete=%v billing calls=%d", deleted, billingCalls)
-	}
-}
-
-func TestBucketDeleteFailsClosed(t *testing.T) {
-	for _, tc := range []struct {
-		name, counters               string
-		status                       int
-		force, wantDelete, wantError bool
-	}{
-		{name: "objects", counters: `,"object_count":1,"total_size":0`, status: 200, wantError: true},
-		{name: "bytes", counters: `,"object_count":0,"total_size":1`, status: 200, wantError: true},
-		{name: "missing counters", status: 200, wantError: true},
-		{name: "negative counters", counters: `,"object_count":-1,"total_size":0`, status: 200, wantError: true},
-		{name: "forbidden", status: 403, wantError: true},
-		{name: "gone", status: 404},
-		{name: "empty", counters: `,"object_count":0,"total_size":0`, status: 200, wantDelete: true},
-		{name: "explicit force", force: true, wantDelete: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			deleted := false
-			r := &bucketResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				if req.Method == http.MethodGet {
-					w.WriteHeader(tc.status)
-					fmt.Fprint(w, storageTestBucketJSON(false, tc.counters))
-					return
-				}
-				if req.Method != http.MethodDelete || req.URL.Path != "/object-storage/buckets/assets" {
-					t.Errorf("unexpected request %s %s", req.Method, req.URL)
-				}
-				deleted = true
-				fmt.Fprint(w, `{"detail":"deleted"}`)
-			})}
-			model := storageTestBucketModel()
-			model.ForceDestroy = types.BoolValue(tc.force)
-			state := storageTestState(t, r, model)
-			response := resource.DeleteResponse{State: state}
-			r.Delete(storageTestContext, resource.DeleteRequest{State: state}, &response)
-			if response.Diagnostics.HasError() != tc.wantError || deleted != tc.wantDelete {
-				t.Fatalf("deleted=%v diagnostics=%v", deleted, response.Diagnostics)
-			}
-		})
-	}
-}
-
-func TestBucketReadDoesNotForgetOnForbiddenOrMalformed(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		status     int
-		removed    bool
-	}{
-		{"forbidden", `{"detail":"blocked"}`, 403, false},
-		{"malformed", `{}`, 200, false},
-		{"gone", `{"detail":"not found"}`, 404, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := &bucketResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(tc.status); fmt.Fprint(w, tc.body) })}
-			state := storageTestState(t, r, storageTestBucketModel())
-			response := resource.ReadResponse{State: state}
-			r.Read(storageTestContext, resource.ReadRequest{State: state}, &response)
-			if response.State.Raw.IsNull() != tc.removed {
-				t.Fatalf("wrong removal behavior: %v", response.Diagnostics)
-			}
-			if !tc.removed && !response.Diagnostics.HasError() {
-				t.Fatal("expected error preserving state")
-			}
-		})
 	}
 }
 
@@ -445,39 +379,5 @@ func TestSecretValueValidationDoesNotLeak(t *testing.T) {
 	value, err := decodeSecretValue(types.StringValue(`{"count":9007199254740993,"nested":{"list":[true,1]}}`))
 	if err != nil || value["count"].(json.Number).String() != "9007199254740993" {
 		t.Fatal("large numeric secret was not preserved")
-	}
-}
-
-func TestStorageImportsHaveSafeLocalDefaults(t *testing.T) {
-	for _, tc := range []struct {
-		r     resource.ResourceWithImportState
-		id    string
-		model any
-	}{
-		{&bucketResource{}, "assets", &bucketResourceModel{}},
-		{&secretStoreResource{}, "store-1", &secretStoreResourceModel{}},
-		{&secretResource{}, "secret-1", &secretResourceModel{}},
-	} {
-		t.Run(tc.id, func(t *testing.T) {
-			state := storageTestState(t, tc.r, tc.model)
-			response := resource.ImportStateResponse{State: state}
-			tc.r.ImportState(storageTestContext, resource.ImportStateRequest{ID: tc.id}, &response)
-			storageTestCheck(t, response.Diagnostics)
-			storageTestCheck(t, response.State.Get(storageTestContext, tc.model))
-			switch model := tc.model.(type) {
-			case *bucketResourceModel:
-				if model.ID.ValueString() != tc.id || model.ForceDestroy.ValueBool() || model.ForceDestroy.IsNull() {
-					t.Fatalf("bad bucket import: %+v", model)
-				}
-			case *secretStoreResourceModel:
-				if model.ID.ValueString() != tc.id {
-					t.Fatalf("bad store import: %+v", model)
-				}
-			case *secretResourceModel:
-				if model.ID.ValueString() != tc.id || model.ValueWOVersion.ValueInt64() != 0 || !model.ValueWO.IsNull() {
-					t.Fatalf("bad secret import: %+v", model)
-				}
-			}
-		})
 	}
 }

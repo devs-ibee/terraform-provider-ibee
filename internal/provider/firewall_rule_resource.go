@@ -4,21 +4,19 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"reflect"
 	"strings"
 	"sync"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -73,50 +71,21 @@ func (r *firewallRuleResource) Metadata(_ context.Context, req resource.Metadata
 
 func (r *firewallRuleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
+	keep := []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{
-		Description: "A rule inside an IBEE firewall group.",
+		Description: "A rule inside an IBEE firewall group. Settings that are not configured are not sent and the API's defaults apply. direction, protocol and action replace the rule; other changes are sent with PATCH. Import as firewall_group_id/rule_id.",
 		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			},
+			"id":                schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"firewall_group_id": schema.StringAttribute{Required: true, PlanModifiers: replace},
-			"direction": schema.StringAttribute{
-				Optional: true, Computed: true,
-				Default:       stringdefault.StaticString("ingress"),
-				PlanModifiers: replace,
-			},
-			"protocol": schema.StringAttribute{
-				Optional: true, Computed: true,
-				Default:       stringdefault.StaticString("tcp"),
-				Description:   "tcp, udp, icmp, or any.",
-				PlanModifiers: replace,
-			},
-			"port_start": schema.Int64Attribute{
-				Optional:      true,
-				PlanModifiers: nil,
-			},
-			"port_end": schema.Int64Attribute{
-				Optional: true, Computed: true,
-			},
-			"remote_targets": schema.ListAttribute{
-				ElementType: types.StringType,
-				Optional:    true, Computed: true, Default: listdefault.StaticValue(types.ListValueMust(types.StringType, []attr.Value{types.StringValue("0.0.0.0/0")})),
-				Description: `CIDR blocks, e.g. ["0.0.0.0/0"].`,
-			},
-			"action": schema.StringAttribute{
-				Optional: true, Computed: true,
-				Default:       stringdefault.StaticString("allow"),
-				Description:   "allow or drop.",
-				PlanModifiers: replace,
-			},
-			"description": schema.StringAttribute{Optional: true},
-			"priority":    schema.Int64Attribute{Optional: true, Computed: true},
-			"enabled": schema.BoolAttribute{
-				Optional: true, Computed: true,
-				Default:     booldefault.StaticBool(true),
-				Description: "The public create API initially enables rules. When false, the provider immediately disables the rule via PATCH; attach the group only after its rules are created.",
-			},
+			"direction":         schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: keep, Description: "ingress or egress."},
+			"protocol":          schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: keep, Description: "tcp, udp, icmp or any."},
+			"port_start":        schema.Int64Attribute{Optional: true},
+			"port_end":          schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}},
+			"remote_targets":    schema.ListAttribute{ElementType: types.StringType, Optional: true, Computed: true, PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}, Description: `CIDR blocks, for example ["0.0.0.0/0"].`},
+			"action":            schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: keep, Description: "allow or drop."},
+			"description":       schema.StringAttribute{Optional: true},
+			"priority":          schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}},
+			"enabled":           schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}, Description: "The create operation has no enabled field, so false is sent in a PATCH after create."},
 		},
 	}
 }
@@ -139,99 +108,65 @@ func (r *firewallRuleResource) Configure(_ context.Context, req resource.Configu
 // fail explicitly; the provider never adopts the newest-looking rule.
 var firewallMutationMu sync.Mutex
 
-func (r *firewallRuleResource) ruleBody(ctx context.Context, m *firewallRuleModel) map[string]any {
-	b := map[string]any{"direction": m.Direction.ValueString(), "protocol": m.Protocol.ValueString(), "action": m.Action.ValueString(), "port_start": nil, "port_end": nil, "description": nil, "priority": nil}
-	if !m.PortStart.IsNull() && !m.PortStart.IsUnknown() {
-		b["port_start"] = m.PortStart.ValueInt64()
+// ruleBody sends the rule fields that have a value. On update a removed
+// description, port or priority is sent as null.
+func (r *firewallRuleResource) ruleBody(ctx context.Context, m *firewallRuleModel, update bool) map[string]any {
+	b := map[string]any{}
+	for key, value := range map[string]types.String{"direction": m.Direction, "protocol": m.Protocol, "action": m.Action, "description": m.Description} {
+		if known(value) {
+			b[key] = value.ValueString()
+		} else if update && value.IsNull() {
+			b[key] = nil
+		}
 	}
-	if !m.PortEnd.IsNull() && !m.PortEnd.IsUnknown() {
-		b["port_end"] = m.PortEnd.ValueInt64()
+	for key, value := range map[string]types.Int64{"port_start": m.PortStart, "port_end": m.PortEnd, "priority": m.Priority} {
+		if known(value) {
+			b[key] = value.ValueInt64()
+		} else if update && value.IsNull() {
+			b[key] = nil
+		}
 	}
-	if !m.Description.IsNull() {
-		b["description"] = m.Description.ValueString()
+	if known(m.RemoteTargets) {
+		var targets []string
+		m.RemoteTargets.ElementsAs(ctx, &targets, false)
+		b["remote_targets"] = targets
 	}
-	if !m.Priority.IsNull() && !m.Priority.IsUnknown() {
-		b["priority"] = m.Priority.ValueInt64()
-	}
-	var targets []string
-	m.RemoteTargets.ElementsAs(ctx, &targets, false)
-	b["remote_targets"] = targets
 	return b
 }
-func firewallValidate(ctx context.Context, m *firewallRuleModel) error {
-	if m.Direction.ValueString() != "ingress" && m.Direction.ValueString() != "egress" {
-		return fmt.Errorf("direction must be ingress or egress")
-	}
-	if m.Action.ValueString() != "allow" && m.Action.ValueString() != "drop" {
-		return fmt.Errorf("action must be allow or drop")
-	}
-	p := m.Protocol.ValueString()
-	if p != "tcp" && p != "udp" && p != "icmp" && p != "any" {
-		return fmt.Errorf("protocol must be tcp, udp, icmp or any")
-	}
-	if p == "tcp" || p == "udp" {
-		if m.PortStart.IsNull() || m.PortStart.ValueInt64() < 1 || m.PortStart.ValueInt64() > 65535 {
-			return fmt.Errorf("tcp/udp port_start must be between 1 and 65535")
-		}
-		if !m.PortEnd.IsNull() && !m.PortEnd.IsUnknown() && (m.PortEnd.ValueInt64() < m.PortStart.ValueInt64() || m.PortEnd.ValueInt64() > 65535) {
-			return fmt.Errorf("port_end must be between port_start and 65535")
-		}
-	} else if !m.PortStart.IsNull() || (!m.PortEnd.IsNull() && !m.PortEnd.IsUnknown()) {
-		return fmt.Errorf("icmp/any rules cannot specify ports")
-	}
-	var targets []string
-	if d := m.RemoteTargets.ElementsAs(ctx, &targets, false); d.HasError() {
-		return fmt.Errorf("remote_targets are invalid")
-	}
-	if len(targets) == 0 {
-		return fmt.Errorf("remote_targets must not be empty; use 0.0.0.0/0 explicitly")
-	}
-	seen := map[string]bool{}
-	for _, target := range targets {
-		if seen[target] {
-			return fmt.Errorf("duplicate remote target %q", target)
-		}
-		seen[target] = true
-		if p, err := netip.ParsePrefix(target); err == nil {
-			if p.Masked().String() != target {
-				return fmt.Errorf("remote target %q must be a canonical CIDR (%s)", target, p.Masked())
-			}
-		}
-	}
-	return nil
-}
+
+// firewallRuleMatches reports whether a rule in the group has every value the
+// plan knows. The create response is the whole group, not the new rule.
 func firewallRuleMatches(ctx context.Context, rule firewallRuleAPI, m *firewallRuleModel) bool {
-	if rule.SystemManaged || rule.RuleID == "" || rule.Direction != m.Direction.ValueString() || rule.Protocol != m.Protocol.ValueString() || rule.Action != m.Action.ValueString() {
+	if rule.SystemManaged || rule.RuleID == "" {
 		return false
 	}
-	if (rule.PortStart == nil) != m.PortStart.IsNull() {
+	for _, field := range []struct {
+		want types.String
+		got  string
+	}{{m.Direction, rule.Direction}, {m.Protocol, rule.Protocol}, {m.Action, rule.Action}} {
+		if known(field.want) && field.want.ValueString() != field.got {
+			return false
+		}
+	}
+	for _, field := range []struct {
+		want types.Int64
+		got  *int64
+	}{{m.PortStart, rule.PortStart}, {m.PortEnd, rule.PortEnd}, {m.Priority, rule.Priority}} {
+		if known(field.want) && (field.got == nil || *field.got != field.want.ValueInt64()) {
+			return false
+		}
+	}
+	if known(m.Description) && (rule.Description == nil || *rule.Description != m.Description.ValueString()) {
 		return false
 	}
-	if rule.PortStart != nil && *rule.PortStart != m.PortStart.ValueInt64() {
-		return false
+	if known(m.RemoteTargets) {
+		var targets []string
+		m.RemoteTargets.ElementsAs(ctx, &targets, false)
+		if !reflect.DeepEqual(rule.RemoteTargets, targets) {
+			return false
+		}
 	}
-	expectedEnd := m.PortEnd
-	if expectedEnd.IsUnknown() || expectedEnd.IsNull() {
-		expectedEnd = m.PortStart
-	}
-	if (rule.PortEnd == nil) != expectedEnd.IsNull() {
-		return false
-	}
-	if rule.PortEnd != nil && *rule.PortEnd != expectedEnd.ValueInt64() {
-		return false
-	}
-	if (rule.Description == nil) != m.Description.IsNull() {
-		return false
-	}
-	if rule.Description != nil && *rule.Description != m.Description.ValueString() {
-		return false
-	}
-	if !m.Priority.IsNull() && !m.Priority.IsUnknown() && (rule.Priority == nil || *rule.Priority != m.Priority.ValueInt64()) {
-		return false
-	}
-	var targets []string
-	m.RemoteTargets.ElementsAs(ctx, &targets, false)
-	return reflect.DeepEqual(rule.RemoteTargets, targets)
+	return true
 }
 func identifyNewFirewallRule(ctx context.Context, before, after []firewallRuleAPI, m *firewallRuleModel) (*firewallRuleAPI, error) {
 	existing := map[string]bool{}
@@ -283,10 +218,6 @@ func (r *firewallRuleResource) Create(ctx context.Context, req resource.CreateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := firewallValidate(ctx, &plan); err != nil {
-		resp.Diagnostics.AddError("Invalid firewall rule", err.Error())
-		return
-	}
 	firewallMutationMu.Lock()
 	defer firewallMutationMu.Unlock()
 	before, err := r.group(ctx, plan.GroupID.ValueString())
@@ -295,7 +226,7 @@ func (r *firewallRuleResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 	var group firewallGroupWithRules
-	if err = r.client.do(ctx, http.MethodPost, "/networking/firewall-groups/"+url.PathEscape(plan.GroupID.ValueString())+"/rules", r.ruleBody(ctx, &plan), &group); err != nil {
+	if err = r.client.do(ctx, http.MethodPost, "/networking/firewall-groups/"+url.PathEscape(plan.GroupID.ValueString())+"/rules", r.ruleBody(ctx, &plan, false), &group); err != nil {
 		resp.Diagnostics.AddError("Failed to create firewall rule", err.Error())
 		return
 	}
@@ -308,11 +239,12 @@ func (r *firewallRuleResource) Create(ctx context.Context, req resource.CreateRe
 		resp.Diagnostics.AddError("Cannot identify created firewall rule", err.Error())
 		return
 	}
-	desiredEnabled := plan.Enabled.ValueBool()
+	desired := plan.Enabled
 	plan.ID = types.StringValue(rule.RuleID)
 	resp.Diagnostics.Append(firewallRuleState(ctx, &plan, *rule)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if rule.Enabled != desiredEnabled {
+	if known(desired) && rule.Enabled != desired.ValueBool() {
+		desiredEnabled := desired.ValueBool()
 		if err = r.client.do(ctx, http.MethodPatch, "/networking/firewall-groups/"+url.PathEscape(plan.GroupID.ValueString())+"/rules/"+url.PathEscape(plan.ID.ValueString()), map[string]any{"enabled": desiredEnabled}, nil); err != nil {
 			resp.Diagnostics.AddError("Rule created but enabled state could not be set", err.Error())
 			return
@@ -351,14 +283,12 @@ func (r *firewallRuleResource) Update(ctx context.Context, req resource.UpdateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := firewallValidate(ctx, &plan); err != nil {
-		resp.Diagnostics.AddError("Invalid firewall rule", err.Error())
-		return
-	}
 	firewallMutationMu.Lock()
 	defer firewallMutationMu.Unlock()
-	body := r.ruleBody(ctx, &plan)
-	body["enabled"] = plan.Enabled.ValueBool()
+	body := r.ruleBody(ctx, &plan, true)
+	if known(plan.Enabled) {
+		body["enabled"] = plan.Enabled.ValueBool()
+	}
 	if err := r.client.do(ctx, http.MethodPatch, "/networking/firewall-groups/"+url.PathEscape(plan.GroupID.ValueString())+"/rules/"+url.PathEscape(plan.ID.ValueString()), body, nil); err != nil {
 		resp.Diagnostics.AddError("Failed to update firewall rule", err.Error())
 		return

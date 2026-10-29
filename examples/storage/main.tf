@@ -36,22 +36,15 @@ variable "database_password" {
 }
 
 variable "secret_rotation_version" {
-  description = "Increase when changing database_password. Changing a write-only value alone cannot trigger an update."
+  description = "Change when changing database_password. Changing a write-only value alone cannot trigger an update."
   type        = number
   default     = 0
-
-  validation {
-    condition     = var.secret_rotation_version >= 0 && floor(var.secret_rotation_version) == var.secret_rotation_version
-    error_message = "Use a nonnegative integer and increase it for every rotation."
-  }
 }
 
 resource "ibee_bucket" "assets" {
-  name                = var.bucket_name
-  region              = var.storage_region
-  is_public           = false
-  object_lock_enabled = false
-  force_destroy       = false
+  name      = var.bucket_name
+  region    = var.storage_region
+  is_public = false
 }
 
 resource "ibee_secret_store" "application" {
@@ -74,8 +67,6 @@ output "secret_id" {
   value = ibee_secret.database.id
 }
 
-# Destroy soft-deletes the latest secret value, then archives the store; history
-# and reserved names remain. Buckets refuse destroy while reported nonempty.
-# Stop object writers before destroy: the API has no atomic empty-bucket delete.
-# force_destroy=true skips the local usage check but does not empty the bucket;
-# the service may still reject nonempty buckets or retained historical versions.
+# Destroy soft-deletes the secret, then archives the store; history and reserved
+# names remain. Destroy deletes the bucket; the API decides whether it can be
+# deleted (it refuses a bucket with object lock).

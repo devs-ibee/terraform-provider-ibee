@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/action/schema"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -26,14 +24,13 @@ func (a *vmAccessAction) Metadata(_ context.Context, req action.MetadataRequest,
 
 func (a *vmAccessAction) Schema(_ context.Context, _ action.SchemaRequest, resp *action.SchemaResponse) {
 	attrs := vmActionAttributes()
-	attrs["admin_username"] = schema.StringAttribute{Optional: true, Description: "Linux account to update. The API uses the VM's admin user when omitted."}
-	attrs["ssh_key_mode"] = schema.StringAttribute{Optional: true, Description: "add or remove, for ssh_keys and ssh_key_ids.", Validators: []validator.String{computeOneOf("add", "remove")}}
+	attrs["ssh_key_mode"] = schema.StringAttribute{Optional: true, Description: "add or remove, for ssh_keys and ssh_key_ids."}
 	attrs["ssh_keys"] = schema.ListAttribute{Optional: true, ElementType: types.StringType, Description: "Inline public SSH keys to add or remove."}
 	attrs["ssh_key_ids"] = schema.ListAttribute{Optional: true, ElementType: types.StringType, Description: "Secret Store SSH key IDs to add or remove. For keys an ibee_cloud_vm or ibee_gpu_vm manages, change its ssh_key_ids instead, or the next apply reverts the change."}
 	attrs["new_password"] = schema.StringAttribute{Optional: true, Description: "New password for the Linux account. Pass it from a sensitive variable."}
 	attrs["password_auth_enabled"] = schema.BoolAttribute{Optional: true, Description: "Turn SSH password login on or off."}
 	attrs["confirm_remove_last_ssh_key"] = schema.BoolAttribute{Optional: true, Description: "Confirm a removal that leaves the account without SSH keys."}
-	attrs["idempotency_key"] = schema.StringAttribute{Optional: true, Description: "Optional unique request key. Reuse only when recovering the same invocation after a lost response."}
+	attrs["idempotency_key"] = schema.StringAttribute{Optional: true, Description: "X-Idempotency-Key for the request. A new key is generated when omitted."}
 	resp.Schema = schema.Schema{Description: "Updates access on a cloud or GPU VM without rebooting it: adds or removes SSH keys, resets the Linux user password, or turns SSH password login on or off. Requires Terraform 1.14 or later. Invoke manually or with an explicit action trigger. Sends the fields that are set; the API decides whether the change is allowed. Waits for the operation to finish.", Attributes: attrs}
 }
 
@@ -45,7 +42,6 @@ func (a *vmAccessAction) Invoke(ctx context.Context, req action.InvokeRequest, r
 	var m struct {
 		VmType              types.String `tfsdk:"vm_type"`
 		VmID                types.String `tfsdk:"vm_id"`
-		AdminUsername       types.String `tfsdk:"admin_username"`
 		SSHKeyMode          types.String `tfsdk:"ssh_key_mode"`
 		SSHKeys             types.List   `tfsdk:"ssh_keys"`
 		SSHKeyIDs           types.List   `tfsdk:"ssh_key_ids"`
@@ -58,12 +54,8 @@ func (a *vmAccessAction) Invoke(ctx context.Context, req action.InvokeRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !m.IdempotencyKey.IsNull() && strings.TrimSpace(m.IdempotencyKey.ValueString()) == "" {
-		resp.Diagnostics.AddError("Invalid idempotency key", "Provide a nonempty key or omit it to generate one.")
-		return
-	}
-	body := map[string]any{"requested_by": "terraform"}
-	for key, value := range map[string]types.String{"admin_username": m.AdminUsername, "ssh_key_mode": m.SSHKeyMode, "new_password": m.NewPassword} {
+	body := map[string]any{}
+	for key, value := range map[string]types.String{"ssh_key_mode": m.SSHKeyMode, "new_password": m.NewPassword} {
 		if !value.IsNull() && !value.IsUnknown() {
 			body[key] = value.ValueString()
 		}

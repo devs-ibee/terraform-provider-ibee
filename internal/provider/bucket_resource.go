@@ -5,23 +5,22 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 var (
-	_ resource.Resource                   = (*bucketResource)(nil)
-	_ resource.ResourceWithConfigure      = (*bucketResource)(nil)
-	_ resource.ResourceWithImportState    = (*bucketResource)(nil)
-	_ resource.ResourceWithValidateConfig = (*bucketResource)(nil)
+	_ resource.Resource                = (*bucketResource)(nil)
+	_ resource.ResourceWithConfigure   = (*bucketResource)(nil)
+	_ resource.ResourceWithImportState = (*bucketResource)(nil)
 )
 
 type bucketResource struct{ client *Client }
@@ -34,7 +33,7 @@ type bucketResourceModel struct {
 	Region            types.String `tfsdk:"region"`
 	IsPublic          types.Bool   `tfsdk:"is_public"`
 	ObjectLockEnabled types.Bool   `tfsdk:"object_lock_enabled"`
-	ForceDestroy      types.Bool   `tfsdk:"force_destroy"`
+	DefaultRetention  types.Object `tfsdk:"default_retention"`
 	Status            types.String `tfsdk:"status"`
 	Plan              types.String `tfsdk:"plan"`
 	SiteID            types.String `tfsdk:"site_id"`
@@ -42,7 +41,6 @@ type bucketResourceModel struct {
 	TotalSize         types.Int64  `tfsdk:"total_size"`
 }
 
-// Pointer fields distinguish missing usage counters from a verified empty bucket.
 type bucketAPI struct {
 	Name              string  `json:"name"`
 	Region            *string `json:"region"`
@@ -55,25 +53,43 @@ type bucketAPI struct {
 	TotalSize         *int64  `json:"total_size"`
 }
 
+// bucketRetention is the contract's DefaultRetention.
+type bucketRetention struct {
+	Mode  string `json:"mode"`
+	Days  *int64 `json:"days,omitempty"`
+	Years *int64 `json:"years,omitempty"`
+}
+
+var bucketRetentionTypes = map[string]attr.Type{"mode": types.StringType, "days": types.Int64Type, "years": types.Int64Type}
+
 func (r *bucketResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_bucket"
 }
 
 func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An IBEE object storage bucket. By default the provider refuses deletion unless both reported usage counters are zero. This preflight is not atomic; stop writers before destroy. The provider never empties a bucket itself, and the service may reject deletion when objects or retained versions remain. Imported buckets use force_destroy=false.",
+		Description: "An IBEE object storage bucket. Destroy deletes the bucket (DELETE /object-storage/buckets/{name}); the API decides whether it can be deleted, for example it refuses a bucket with object lock. Manage lifecycle, CORS and notification rules with ibee_bucket_lifecycle, ibee_bucket_cors and ibee_bucket_notifications. Import using the bucket name.",
 		Attributes: map[string]schema.Attribute{
 			"id":                  schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"name":                schema.StringAttribute{Required: true, Description: "Bucket name, 3–63 characters. Import using this name.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"region":              schema.StringAttribute{Required: true, Description: "Object Storage region identifier, not a compute site ID.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"is_public":           schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Allow unauthenticated read access."},
-			"object_lock_enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()}, Description: "Enable object lock at creation. Manage a default retention rule separately with ibee_bucket_retention; the service cannot clear that rule after creation."},
-			"force_destroy":       schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Skip the provider's usage-counter deletion guard and permit the bucket delete API call. This does not purge objects or bypass server emptiness/retention checks. Apply before destroy. On API versions that delete recursively, this permits content deletion."},
-			"status":              schema.StringAttribute{Computed: true},
-			"plan":                schema.StringAttribute{Computed: true, Description: "Storage plan returned by the API."},
-			"site_id":             schema.StringAttribute{Computed: true},
-			"object_count":        schema.Int64Attribute{Computed: true},
-			"total_size":          schema.Int64Attribute{Computed: true, Description: "Reported storage usage in bytes."},
+			"name":                schema.StringAttribute{Required: true, Description: "Bucket name.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"region":              schema.StringAttribute{Required: true, Description: "Object Storage region identifier, such as in-south-2.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"is_public":           schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}, Description: "Allow unauthenticated read access. Changes are sent with PATCH. Omit to use the API's default."},
+			"object_lock_enabled": schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown(), boolplanmodifier.RequiresReplace()}, Description: "Create the bucket with object lock. It is chosen at creation only, so a change replaces the bucket."},
+			"default_retention": schema.SingleNestedAttribute{
+				Optional: true, Computed: true,
+				PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
+				Description:   "Default retention for new objects of a bucket with object lock: sent with create, and changes are sent to PUT .../object-lock. Read back from GET .../object-lock. The API decides what it accepts (it currently refuses to remove a rule).",
+				Attributes: map[string]schema.Attribute{
+					"mode":  schema.StringAttribute{Required: true, Description: "GOVERNANCE or COMPLIANCE."},
+					"days":  schema.Int64Attribute{Optional: true, Description: "Retention in days. Give this or years."},
+					"years": schema.Int64Attribute{Optional: true, Description: "Retention in years. Give this or days."},
+				},
+			},
+			"status":       schema.StringAttribute{Computed: true},
+			"plan":         schema.StringAttribute{Computed: true, Description: "Storage plan returned by the API."},
+			"site_id":      schema.StringAttribute{Computed: true},
+			"object_count": schema.Int64Attribute{Computed: true},
+			"total_size":   schema.Int64Attribute{Computed: true, Description: "Reported storage usage in bytes."},
 		},
 	}
 }
@@ -89,39 +105,67 @@ func (r *bucketResource) Configure(_ context.Context, req resource.ConfigureRequ
 	}
 }
 
-func (r *bucketResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var cfg bucketResourceModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if !cfg.Name.IsUnknown() && !cfg.Name.IsNull() && (len(cfg.Name.ValueString()) < 3 || len(cfg.Name.ValueString()) > 63 || strings.ContainsAny(cfg.Name.ValueString(), "/\\")) {
-		resp.Diagnostics.AddAttributeError(path.Root("name"), "Invalid bucket name", "Use a bucket name between 3 and 63 characters without path separators.")
-	}
-	if !cfg.Region.IsUnknown() && !cfg.Region.IsNull() && strings.TrimSpace(cfg.Region.ValueString()) == "" {
-		resp.Diagnostics.AddAttributeError(path.Root("region"), "Missing storage region", "Specify the Object Storage region configured for the target environment.")
-	}
-}
-
 func bucketPath(name string) string { return "/object-storage/buckets/" + url.PathEscape(name) }
 
-func (out bucketAPI) apply(state *bucketResourceModel) error {
-	if out.Name == "" || out.Region == nil || *out.Region == "" || out.IsPublic == nil || out.ObjectLockEnabled == nil {
-		return fmt.Errorf("bucket response is missing name, region, is_public or bucket_lock_enabled; state was preserved")
+func (out bucketAPI) apply(state *bucketResourceModel) {
+	if out.Name != "" {
+		state.ID = types.StringValue(out.Name)
+		state.Name = types.StringValue(out.Name)
 	}
-	if !state.ID.IsNull() && !state.ID.IsUnknown() && state.ID.ValueString() != out.Name {
-		return fmt.Errorf("bucket response identifies a different bucket; state was preserved")
+	if out.Region != nil {
+		state.Region = types.StringValue(*out.Region)
 	}
-	state.ID = types.StringValue(out.Name)
-	state.Name = types.StringValue(out.Name)
-	state.Region = types.StringPointerValue(out.Region)
-	state.IsPublic = types.BoolPointerValue(out.IsPublic)
-	state.ObjectLockEnabled = types.BoolPointerValue(out.ObjectLockEnabled)
+	if out.IsPublic != nil {
+		state.IsPublic = types.BoolValue(*out.IsPublic)
+	}
+	if out.ObjectLockEnabled != nil {
+		state.ObjectLockEnabled = types.BoolValue(*out.ObjectLockEnabled)
+	}
 	state.Status = types.StringPointerValue(out.Status)
 	state.Plan = types.StringPointerValue(out.Plan)
 	state.SiteID = types.StringPointerValue(out.SiteID)
 	state.ObjectCount = types.Int64PointerValue(out.ObjectCount)
 	state.TotalSize = types.Int64PointerValue(out.TotalSize)
+}
+
+// retentionBody is the configured default_retention as the API's DefaultRetention, or nil.
+func retentionBody(value types.Object) *bucketRetention {
+	if value.IsNull() || value.IsUnknown() {
+		return nil
+	}
+	a := value.Attributes()
+	rule := &bucketRetention{Mode: a["mode"].(types.String).ValueString()}
+	if days := a["days"].(types.Int64); known(days) {
+		n := days.ValueInt64()
+		rule.Days = &n
+	}
+	if years := a["years"].(types.Int64); known(years) {
+		n := years.ValueInt64()
+		rule.Years = &n
+	}
+	return rule
+}
+
+// refresh reads the bucket and, for a bucket with object lock, its default retention.
+func (r *bucketResource) refresh(ctx context.Context, state *bucketResourceModel) error {
+	var out bucketAPI
+	if err := r.client.do(ctx, http.MethodGet, bucketPath(state.ID.ValueString()), nil, &out); err != nil {
+		return err
+	}
+	out.apply(state)
+	retention := types.ObjectNull(bucketRetentionTypes)
+	if out.ObjectLockEnabled != nil && *out.ObjectLockEnabled {
+		var lock struct {
+			Rule *bucketRetention `json:"rule"`
+		}
+		if err := r.client.do(ctx, http.MethodGet, bucketPath(state.ID.ValueString())+"/object-lock", nil, &lock); err != nil {
+			return fmt.Errorf("read object lock: %w", err)
+		}
+		if lock.Rule != nil {
+			retention = types.ObjectValueMust(bucketRetentionTypes, map[string]attr.Value{"mode": types.StringValue(lock.Rule.Mode), "days": types.Int64PointerValue(lock.Rule.Days), "years": types.Int64PointerValue(lock.Rule.Years)})
+		}
+	}
+	state.DefaultRetention = retention
 	return nil
 }
 
@@ -131,31 +175,35 @@ func (r *bucketResource) Create(ctx context.Context, req resource.CreateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// The published contract has no storage catalog/quote. This is account
-	// admission only; the product service must enforce actual usage pricing.
-	body := map[string]any{"name": plan.Name.ValueString(), "region": plan.Region.ValueString(), "is_public": plan.IsPublic.ValueBool(), "object_lock_enabled": plan.ObjectLockEnabled.ValueBool()}
+	body := map[string]any{"name": plan.Name.ValueString(), "region": plan.Region.ValueString()}
+	if known(plan.IsPublic) {
+		body["is_public"] = plan.IsPublic.ValueBool()
+	}
+	if known(plan.ObjectLockEnabled) {
+		body["object_lock_enabled"] = plan.ObjectLockEnabled.ValueBool()
+	}
+	if rule := retentionBody(plan.DefaultRetention); rule != nil {
+		body["default_retention"] = rule
+	}
 	var out bucketAPI
 	if err := r.client.do(ctx, http.MethodPost, "/object-storage/buckets", body, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to create bucket", err.Error())
 		return
 	}
-	// Name is the stable public identity. Keep it even if a successful create
-	// returned incomplete metadata so the resource can be refreshed or removed.
+	// The name is the bucket's identity; keep it even if the refresh fails.
 	plan.ID = plan.Name
-	plan.Status, plan.Plan, plan.SiteID = types.StringNull(), types.StringNull(), types.StringNull()
-	plan.ObjectCount, plan.TotalSize = types.Int64Null(), types.Int64Null()
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if err := out.apply(&plan); err != nil {
-		resp.Diagnostics.AddError("Invalid created bucket response", err.Error())
-		return
+	out.apply(&plan)
+	for _, value := range []*types.Bool{&plan.IsPublic, &plan.ObjectLockEnabled} {
+		if value.IsUnknown() {
+			*value = types.BoolNull()
+		}
+	}
+	if plan.DefaultRetention.IsUnknown() {
+		plan.DefaultRetention = types.ObjectNull(bucketRetentionTypes)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if err := r.client.do(ctx, http.MethodGet, bucketPath(plan.ID.ValueString()), nil, &out); err != nil {
+	if err := r.refresh(ctx, &plan); err != nil {
 		resp.Diagnostics.AddError("Bucket created but refresh failed", err.Error())
-		return
-	}
-	if err := out.apply(&plan); err != nil {
-		resp.Diagnostics.AddError("Invalid bucket response", err.Error())
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -167,21 +215,13 @@ func (r *bucketResource) Read(ctx context.Context, req resource.ReadRequest, res
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var out bucketAPI
-	if err := r.client.do(ctx, http.MethodGet, bucketPath(state.ID.ValueString()), nil, &out); err != nil {
+	if err := r.refresh(ctx, &state); err != nil {
 		if IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
 		resp.Diagnostics.AddError("Failed to read bucket", err.Error())
 		return
-	}
-	if err := out.apply(&state); err != nil {
-		resp.Diagnostics.AddError("Invalid bucket response", err.Error())
-		return
-	}
-	if state.ForceDestroy.IsNull() {
-		state.ForceDestroy = types.BoolValue(false)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -193,18 +233,25 @@ func (r *bucketResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var out bucketAPI
-	if !plan.IsPublic.Equal(state.IsPublic) {
-		if err := r.client.do(ctx, http.MethodPatch, bucketPath(state.ID.ValueString()), map[string]any{"is_public": plan.IsPublic.ValueBool()}, &out); err != nil {
+	if known(plan.IsPublic) && !plan.IsPublic.Equal(state.IsPublic) {
+		if err := r.client.do(ctx, http.MethodPatch, bucketPath(state.ID.ValueString()), map[string]any{"is_public": plan.IsPublic.ValueBool()}, nil); err != nil {
 			resp.Diagnostics.AddError("Failed to update bucket", err.Error())
 			return
 		}
-	} else if err := r.client.do(ctx, http.MethodGet, bucketPath(state.ID.ValueString()), nil, &out); err != nil {
-		resp.Diagnostics.AddError("Failed to refresh bucket", err.Error())
-		return
 	}
-	if err := out.apply(&plan); err != nil {
-		resp.Diagnostics.AddError("Invalid bucket response", err.Error())
+	if !plan.DefaultRetention.IsUnknown() && !plan.DefaultRetention.Equal(state.DefaultRetention) {
+		// A rule removed from the configuration is sent as null; the API decides.
+		var rule any
+		if configured := retentionBody(plan.DefaultRetention); configured != nil {
+			rule = configured
+		}
+		if err := r.client.do(ctx, http.MethodPut, bucketPath(state.ID.ValueString())+"/object-lock", map[string]any{"rule": rule}, nil); err != nil {
+			resp.Diagnostics.AddError("Failed to set bucket default retention", err.Error())
+			return
+		}
+	}
+	if err := r.refresh(ctx, &plan); err != nil {
+		resp.Diagnostics.AddError("Failed to refresh bucket", err.Error())
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -216,34 +263,11 @@ func (r *bucketResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !state.ForceDestroy.ValueBool() {
-		var out bucketAPI
-		if err := r.client.do(ctx, http.MethodGet, bucketPath(state.ID.ValueString()), nil, &out); err != nil {
-			if IsNotFound(err) {
-				return
-			}
-			resp.Diagnostics.AddError("Cannot verify bucket is empty", err.Error())
-			return
-		}
-		if err := out.apply(&state); err != nil {
-			resp.Diagnostics.AddError("Cannot verify bucket is empty", err.Error())
-			return
-		}
-		if out.ObjectCount == nil || out.TotalSize == nil || *out.ObjectCount != 0 || *out.TotalSize != 0 {
-			resp.Diagnostics.AddError("Bucket deletion blocked", "Bucket is nonempty or usage is unavailable. Empty it and stop writers before retrying. If counters are stale after emptying, explicitly apply force_destroy=true to skip this local check; the API may still reject a nonempty or retained bucket.")
-			return
-		}
-	}
 	if err := r.client.do(ctx, http.MethodDelete, bucketPath(state.ID.ValueString()), nil, nil); err != nil && !IsNotFound(err) {
-		resp.Diagnostics.AddError("Failed to delete bucket", err.Error()+" The provider does not purge objects, historical versions or retained data; empty the bucket through the supported storage workflow before retrying.")
+		resp.Diagnostics.AddError("Failed to delete bucket", err.Error())
 	}
 }
 
 func (r *bucketResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if strings.TrimSpace(req.ID) == "" || strings.ContainsAny(req.ID, "/\\") {
-		resp.Diagnostics.AddError("Invalid bucket import ID", "Import with the bucket name.")
-		return
-	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("force_destroy"), false)...)
 }

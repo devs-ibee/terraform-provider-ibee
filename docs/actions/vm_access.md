@@ -46,9 +46,8 @@ action "ibee_vm_access" "add_key" {
 
 | Attribute | Type | Behavior | Description |
 | --- | --- | --- | --- |
-| `admin_username` | `string` | Optional | Linux account to update. The API uses the VM's admin user when omitted. |
 | `confirm_remove_last_ssh_key` | `bool` | Optional | Confirm a removal that leaves the account without SSH keys. |
-| `idempotency_key` | `string` | Optional | Optional unique request key. Reuse only when recovering the same invocation after a lost response. |
+| `idempotency_key` | `string` | Optional | X-Idempotency-Key for the request. A new key is generated when omitted. |
 | `new_password` | `string` | Optional | New password for the Linux account. Pass it from a sensitive variable. |
 | `password_auth_enabled` | `bool` | Optional | Turn SSH password login on or off. |
 | `ssh_key_ids` | `list(string)` | Optional | Secret Store SSH key IDs to add or remove. For keys an ibee_cloud_vm or ibee_gpu_vm manages, change its ssh_key_ids instead, or the next apply reverts the change. |

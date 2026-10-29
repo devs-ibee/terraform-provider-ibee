@@ -3,12 +3,13 @@ package provider
 import (
 	"context"
 	"fmt"
-	"github.com/hashicorp/terraform-plugin-framework/action"
 	"net"
 	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/terraform-plugin-framework/action"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -44,9 +45,9 @@ func (p *ibeeProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 		"endpoint":          schema.StringAttribute{Optional: true, Description: "Public API base URL. Precedence: explicit value, IBEE_ENDPOINT, IBEE_BASE_URL, IBEE_ENV (dev/development uses https://api.ibee.co.in/v1; prod/production or unset uses https://api.ibee.ai/v1). HTTPS is required except for local test servers."},
 		"token":             schema.StringAttribute{Optional: true, Sensitive: true, Description: "IBEE API token. Falls back to IBEE_TOKEN. Prefer the environment variable to avoid saving a token in configuration."},
 		"workspace_id":      schema.StringAttribute{Optional: true, Description: "Workspace identifier attached to every API request. Falls back to IBEE_WORKSPACE_ID."},
-		"organization_id":   schema.StringAttribute{Optional: true, Description: "Optional expected organization for billing decisions. Falls back to IBEE_ORGANIZATION_ID. A mismatched decision fails closed."},
-		"request_timeout":   schema.StringAttribute{Optional: true, Description: "Timeout for each HTTP request, as a Go duration (for example 90s). Defaults to 90s. Must be between 1s and 10m."},
-		"operation_timeout": schema.StringAttribute{Optional: true, Description: "Timeout for asynchronous provisioning and deletion, as a Go duration. Defaults to 20m. Must be between 1s and 2h."},
+		"organization_id":   schema.StringAttribute{Optional: true, DeprecationMessage: "organization_id is no longer used and will be removed in a future release.", Description: "Deprecated and unused."},
+		"request_timeout":   schema.StringAttribute{Optional: true, Description: "Timeout for each HTTP request, as a Go duration (for example 90s). Defaults to 90s."},
+		"operation_timeout": schema.StringAttribute{Optional: true, Description: "Timeout for waiting on asynchronous operations, as a Go duration. Defaults to 20m."},
 	}}
 }
 func resolvedValue(value types.String, env string) string {
@@ -110,26 +111,18 @@ func configuredClient(cfg ibeeProviderModel) (*Client, diag.Diagnostics) {
 	if workspace == "" {
 		diagnostics.AddError("Missing workspace_id", "Set workspace_id or the IBEE_WORKSPACE_ID environment variable.")
 	}
-	host := ""
-	if u != nil {
-		host = strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
-	}
-	if (host == "api.ibee.ai" && strings.HasPrefix(token, "ibee_dev_key_")) || (host == "api.ibee.co.in" && strings.HasPrefix(token, "ibee_prod_key_")) {
-		diagnostics.AddError("Token environment mismatch", "The API token environment does not match the configured IBEE endpoint.")
-	}
 	requestTimeout, operationTimeout := 90*time.Second, 20*time.Minute
 	for _, setting := range []struct {
 		name   string
 		value  types.String
 		target *time.Duration
-		max    time.Duration
-	}{{"request_timeout", cfg.RequestTimeout, &requestTimeout, 10 * time.Minute}, {"operation_timeout", cfg.OperationTimeout, &operationTimeout, 2 * time.Hour}} {
+	}{{"request_timeout", cfg.RequestTimeout, &requestTimeout}, {"operation_timeout", cfg.OperationTimeout, &operationTimeout}} {
 		if setting.value.IsNull() {
 			continue
 		}
 		duration, e := time.ParseDuration(setting.value.ValueString())
-		if e != nil || duration < time.Second || duration > setting.max {
-			diagnostics.AddError("Invalid timeout", fmt.Sprintf("%s must be a duration between 1s and %s.", setting.name, setting.max))
+		if e != nil {
+			diagnostics.AddError("Invalid timeout", fmt.Sprintf("%s must be a Go duration, such as 90s or 20m.", setting.name))
 			continue
 		}
 		*setting.target = duration
@@ -138,7 +131,6 @@ func configuredClient(cfg ibeeProviderModel) (*Client, diag.Diagnostics) {
 		return nil, diagnostics
 	}
 	client := NewClient(endpoint, token, workspace)
-	client.organizationID = resolvedValue(cfg.OrganizationID, "IBEE_ORGANIZATION_ID")
 	client.http.Timeout = requestTimeout
 	client.operationTimeout = operationTimeout
 	return client, diagnostics
@@ -164,26 +156,28 @@ func (p *ibeeProvider) Resources(_ context.Context) []func() resource.Resource {
 		NewVpcResource, NewVpcSubnetResource, NewVpcNodeAttachmentResource,
 		NewFirewallGroupResource, NewFirewallRuleResource, NewCloudVmResource,
 		NewBlockVolumeResource,
-		NewBlockVolumeAttachmentResource,
 		NewBucketCORSResource, NewBucketLifecycleResource, NewBucketNotificationsResource,
-		NewCDNDistributionResource, NewCDNOriginResource, NewCDNWebsiteResource, NewCDNDomainResource,
+		NewCDNDistributionResource, NewCDNWebsiteResource, NewCDNDomainResource,
 		NewFirewallAttachmentResource, NewReservedIPResource, NewReservedIPAttachmentResource,
 		NewNATGatewayResource, NewNATPortForwardingRuleResource, NewL4LoadBalancerResource, NewL7LoadBalancerResource,
 		NewGpuVmResource, NewCloudVmSnapshotResource, NewGpuVmSnapshotResource,
 		NewCloudVmBackupPolicyResource, NewGpuVmBackupPolicyResource,
 		NewCloudVmVolumeAttachmentResource, NewGpuVmVolumeAttachmentResource,
-		NewBucketResource, NewBucketRetentionResource, NewS3CredentialResource, NewSecretStoreResource, NewSecretResource,
+		NewBucketResource, NewS3CredentialResource, NewSecretStoreResource, NewSecretResource,
 		NewSecretIdentityResource, NewSecretIdentityScopeResource,
+		NewContainerRegistryResource, NewContainerRegistryAccessTokenResource,
 	}
 }
 func (p *ibeeProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewSitesDataSource, NewNetworkSitesDataSource, NewComputePlansDataSource, NewImagesDataSource, NewBillingEligibilityDataSource,
+		NewSitesDataSource, NewNetworkSitesDataSource, NewComputePlansDataSource, NewImagesDataSource,
+		NewSnapshotStoragePlansDataSource, NewBackupStoragePlansDataSource, NewBlockStoragePlansDataSource,
+		NewContainerRegistriesDataSource,
 	}
 }
 
 func (p *ibeeProvider) Actions(_ context.Context) []func() action.Action {
 	return []func() action.Action{NewCDNPurgeAction, NewCDNVerifyDomainAction,
-		NewVmPowerAction, NewVmAccessAction, NewVmSnapshotRestoreAction, NewVmBackupRestoreAction, NewVmBackupRunAction,
+		NewVmPowerAction, NewVmAccessAction, NewVmSnapshotRestoreAction, NewVmBackupRestoreAction,
 	}
 }

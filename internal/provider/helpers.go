@@ -10,6 +10,10 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 )
 
 func idempotencyKey() string {
@@ -107,10 +111,10 @@ type computePlan struct {
 }
 
 func (c *Client) listComputePlansFiltered(ctx context.Context, vmType, siteID, currency, interval string) ([]computePlan, error) {
-	if vmType != "cloud" && vmType != "gpu" {
-		return nil, fmt.Errorf("vm_type must be cloud or gpu")
+	query := url.Values{}
+	if vmType != "" {
+		query.Set("vm_type", vmType)
 	}
-	query := url.Values{"vm_type": {vmType}}
 	if currency != "" {
 		query.Set("currency", currency)
 	}
@@ -132,8 +136,8 @@ func (c *Client) listComputePlansFiltered(ctx context.Context, vmType, siteID, c
 	return *out.Plans, nil
 }
 
-// findPlanForTerm resolves a plan by ID; the plan carries the billing_catalog
-// the create endpoints require (the portal copies it the same way).
+// findPlanForTerm finds a plan in GET /compute/plans by plan_id. VM create
+// and resize take the plan's shape and billing_catalog from it, as the portal does.
 func (c *Client) findPlanForTerm(ctx context.Context, vmType, siteID, planID, currency, interval string) (*computePlan, error) {
 	plans, err := c.listComputePlansFiltered(ctx, vmType, siteID, currency, interval)
 	if err != nil {
@@ -141,14 +145,23 @@ func (c *Client) findPlanForTerm(ctx context.Context, vmType, siteID, planID, cu
 	}
 	for i := range plans {
 		if plans[i].PlanID == planID {
-			if currency != "" && !strings.EqualFold(plans[i].Currency, currency) {
-				return nil, fmt.Errorf("catalog currency %q does not match organization currency %q", plans[i].Currency, currency)
-			}
-			if plans[i].SiteID != "" && plans[i].SiteID != siteID {
-				return nil, fmt.Errorf("catalog plan belongs to a different site")
-			}
 			return &plans[i], nil
 		}
 	}
-	return nil, fmt.Errorf("plan %q not found for vm_type=%s site_id=%s", planID, vmType, siteID)
+	return nil, fmt.Errorf("GET /compute/plans (vm_type=%s, site_id=%s) lists no plan %q", vmType, siteID, planID)
+}
+
+// Create-only settings the API does not read back: a change to a recorded
+// value replaces the resource, while a value first set after an import is
+// only recorded.
+func createOnlyBool() planmodifier.Bool {
+	return boolplanmodifier.RequiresReplaceIf(func(_ context.Context, req planmodifier.BoolRequest, resp *boolplanmodifier.RequiresReplaceIfFuncResponse) {
+		resp.RequiresReplace = !req.StateValue.IsNull() && !req.PlanValue.IsUnknown() && !req.PlanValue.Equal(req.StateValue)
+	}, "Changing a recorded create-only value replaces the resource.", "Changing a recorded create-only value replaces the resource.")
+}
+
+func createOnlyString() planmodifier.String {
+	return stringplanmodifier.RequiresReplaceIf(func(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+		resp.RequiresReplace = !req.StateValue.IsNull() && !req.PlanValue.IsUnknown() && !req.PlanValue.Equal(req.StateValue)
+	}, "Changing a recorded create-only value replaces the resource.", "Changing a recorded create-only value replaces the resource.")
 }

@@ -100,12 +100,14 @@ resource "ibee_%[1]s_vm" "test" {
  plan_id = "%[1]s-plan"
  template_id = "image"
  os_distro = "ubuntu"
+ os_type = "linux"
  ssh_key_ids = ["key-1"]
  tags = ["terraform"]
 }
 resource "ibee_%[1]s_vm_volume_attachment" "test" {
  vm_id = ibee_%[1]s_vm.test.id
  volume_id = "%[1]s-volume"
+ billing_catalog = jsonencode({ sku_id = "block-sku", sku_code = "BLOCK-STD", product_code = "block_storage", site_id = "site", currency = "INR" })
 }
 resource "ibee_%[1]s_vm_snapshot" "test" {
  vm_id = ibee_%[1]s_vm.test.id
@@ -120,7 +122,7 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 }
 `, kind)
 	}
-	// The term is chosen explicitly for new VMs; the provider has no default.
+	// The term is set explicitly here; a new VM without one is created HOURLY.
 	hourly := strings.ReplaceAll(config, " tags = [\"terraform\"]", " tags = [\"terraform\"]\n billing_interval = \"HOURLY\"")
 	writeTestFile(t, filepath.Join(work, "main.tf"), hourly)
 	run(0, "validate", "-no-color")
@@ -129,7 +131,7 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	for kind, policy := range f.policies {
 		schedule := policy["schedule"].(map[string]any)
 		if schedule["hour"] != float64(12) || schedule["frequency"] != "daily" || schedule["timezone"] != "UTC" {
-			t.Errorf("%s new policy did not use SDK defaults: %v", kind, schedule)
+			t.Errorf("%s new policy did not get the API's defaults: %v", kind, schedule)
 		}
 	}
 	f.mu.Unlock()
@@ -218,6 +220,30 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	// as well so the compatibility regression cannot strand an hourly VM.
 	for _, kind := range []string{"cloud", "gpu"} {
 		f.vms[kind]["billing_catalog"] = computeTestSelectedBillingTerm("HOURLY")
+	}
+	f.mu.Unlock()
+	// The VMs were created without delete_public_ip_action: the provider has no
+	// default, and the API requires the choice to delete a VM with an automatic
+	// public IP (the fixture answers 400 without it, as the API does). Adding it
+	// is an in-place change that sends no mutation; destroy then sends it.
+	withAction := strings.ReplaceAll(larger, " tags = [\"terraform\"]", " tags = [\"terraform\"]\n delete_public_ip_action = \"release\"")
+	writeTestFile(t, filepath.Join(work, "main.tf"), withAction)
+	added := run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	for _, kind := range []string{"cloud", "gpu"} {
+		if !strings.Contains(added, "ibee_"+kind+"_vm.test will be updated in-place") || strings.Contains(added, "ibee_"+kind+"_vm.test must be replaced") {
+			t.Fatalf("adding delete_public_ip_action must be an in-place change for the %s VM:\n%s", kind, added)
+		}
+	}
+	if !strings.Contains(added, `+ delete_public_ip_action = "release"`) {
+		t.Fatalf("delete_public_ip_action not planned:\n%s", added)
+	}
+	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
+	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	f.mu.Lock()
+	for _, kind := range []string{"cloud", "gpu"} {
+		if f.resizes[kind] != 1 || f.vms[kind]["plan_id"] != kind+"-plan-large" {
+			t.Errorf("adding delete_public_ip_action mutated the %s VM: resizes=%d vm=%v", kind, f.resizes[kind], f.vms[kind])
+		}
 	}
 	f.mu.Unlock()
 	run(0, "destroy", "-auto-approve", "-input=false", "-no-color")
@@ -323,6 +349,12 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 				return
 			}
 			if r.Method == "DELETE" {
+				// The API refuses to delete a VM with an automatic public IP unless the caller chooses.
+				if action, _ := body()["public_ip_action"].(string); action != "release" && action != "reserve" {
+					w.WriteHeader(400)
+					send(map[string]any{"error": "public_ip_action_required"})
+					return
+				}
 				delete(f.vms, kind)
 				send(operationAccepted{VmID: kind + "-vm-id", OperationID: kind + "-delete", Status: "accepted"})
 				return
@@ -349,20 +381,20 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if p == vmPath+"/actions/resize" && r.Method == "POST" {
-			// Like the VM engine: the target shape is applied and plan_id follows the sent catalog.
+			// The contract's resize takes cpu, ram_mb and disk_gb only. The fixture
+			// applies the shape and reports the plan that has it.
 			b := body()
-			catalog, _ := b["billing_catalog"].(map[string]any)
-			current, _ := f.vms[kind]["billing_catalog"].(map[string]any)
-			if r.Header.Get("X-Idempotency-Key") == "" || catalog == nil || current == nil || catalog["billing_interval"] != current["billing_interval"] {
-				http.Error(w, "resize must carry a key and the target plan's catalog for the VM's term", 400)
+			if r.Header.Get("X-Idempotency-Key") == "" || len(b) != 3 || b["cpu"] == nil || b["ram_mb"] == nil || b["disk_gb"] == nil {
+				http.Error(w, "resize must carry a key and only cpu, ram_mb and disk_gb", 400)
 				return
 			}
 			f.resizes[kind]++
 			for _, key := range []string{"cpu", "ram_mb", "disk_gb"} {
 				f.vms[kind][key] = b[key]
 			}
-			f.vms[kind]["plan_id"] = catalog["plan_id"]
-			f.vms[kind]["billing_catalog"] = catalog
+			if b["cpu"] == float64(8) {
+				f.vms[kind]["plan_id"] = kind + "-plan-large"
+			}
 			send(operationAccepted{VmID: kind + "-vm-id", OperationID: kind + "-resize", Status: "accepted"})
 			return
 		}
@@ -371,14 +403,14 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			if !computeFixtureCatalog(w, b, "block_storage", "BLOCK-STD") {
 				return
 			}
-			f.vms[kind]["data_volumes"] = []any{map[string]any{"volume_id": b["volume_id"], "mode": b["mode"], "guest_device": "/dev/vdb", "mount_instructions": "Mount the volume"}}
+			f.vms[kind]["data_volumes"] = []any{map[string]any{"volume_id": b["volume_id"], "mode": "single-writer", "billing_catalog": b["billing_catalog"], "guest_device": "/dev/vdb", "mount_instructions": "Mount the volume"}}
 			send(operationAccepted{VmID: kind + "-vm-id", OperationID: kind + "-attach", Status: "accepted"})
 			return
 		}
 		if p == vmPath+"/actions/detach-volume" {
 			b := body()
-			if b["force"] != false {
-				http.Error(w, "unsafe force detach", 400)
+			if b["force"] != nil || b["volume_id"] == nil {
+				http.Error(w, "detach must send volume_id and must not send force", 400)
 				return
 			}
 			f.vms[kind]["data_volumes"] = []any{}
@@ -416,6 +448,15 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 				b := body()
 				if !computeFixtureCatalog(w, b, "backup_storage", "BACKUP-STD") {
 					return
+				}
+				// Like the API, fill in the settings the request leaves out.
+				if b["schedule"] == nil {
+					b["schedule"] = map[string]any{"frequency": "daily", "timezone": "UTC", "hour": float64(12), "minute": float64(0), "window_minutes": float64(30)}
+				}
+				for key, value := range map[string]any{"full_backup_interval_days": float64(7), "incremental_enabled": true} {
+					if b[key] == nil {
+						b[key] = value
+					}
 				}
 				b["vm_id"] = kind + "-vm-id"
 				b["policy_id"] = kind + "-policy"

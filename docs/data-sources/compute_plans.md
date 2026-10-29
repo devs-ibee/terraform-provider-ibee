@@ -25,7 +25,7 @@ data "ibee_compute_plans" "cloud" {
 
 | Attribute | Type | Behavior | Description |
 | --- | --- | --- | --- |
-| `billing_interval` | `string` | Optional | Catalog billing interval, such as HOURLY or MONTHLY. Omit to use the API's default. |
+| `billing_interval` | `string` | Optional | HOURLY or MONTHLY: the interval prices are quoted for. Omit to use the API's default. |
 | `currency` | `string` | Optional | Catalog currency, such as INR. Omit to use the API's default. |
 | `plans` | `list(object)` | Read-only |  |
 | `plans.billing_interval` | `string` | Read-only |  |
@@ -43,4 +43,4 @@ data "ibee_compute_plans" "cloud" {
 | `plans.ram_mb` | `number` | Read-only |  |
 | `plans.selectable` | `bool` | Read-only |  |
 | `site_id` | `string` | Optional | Restrict plans to one placement site. |
-| `vm_type` | `string` | Optional, Defaulted | cloud (default) or gpu. |
+| `vm_type` | `string` | Required | cloud or gpu. |

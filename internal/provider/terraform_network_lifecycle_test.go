@@ -152,6 +152,13 @@ resource "ibee_load_balancer_l7" "test" {
 		run(0, "state", "rm", address)
 		run(0, "import", "-input=false", "-no-color", address, item.id)
 	}
+	// The API does not read back create_default_subnet, so the first apply after
+	// the import only records it in state; nothing is replaced.
+	imported := run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	if strings.Contains(imported, "must be replaced") || !strings.Contains(imported, "create_default_subnet") {
+		t.Fatalf("import must only record create-only settings:\n%s", imported)
+	}
+	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	// Exercise mutable fields and nullable optional L7 rules removal.
 	config = strings.Replace(config, "port = 8080", "port = 8082", 1)
@@ -160,8 +167,8 @@ resource "ibee_load_balancer_l7" "test" {
 	config = strings.Replace(config, `name = "fixture"`, `name = "renamed-vpc"`, 1)
 	config = strings.Replace(config, `dns = ["1.1.1.1", "8.8.8.8"]`, `dns = ["9.9.9.9"]`, 1)
 	config = strings.Replace(config, `vm_id = "vm-public"`, `vm_id = "vm-public-2"`, 1)
-	config = strings.Replace(config, `protocol = "tcp"`, `protocol = "tls_passthrough"`, 1)
-	config = strings.Replace(config, `protocol = "http"`, `protocol = "https"`, 1)
+	config = strings.Replace(config, `protocol = "tcp"`, `protocol = "tls_passthrough"`+"\n tls = { mode = \"passthrough\", certificate_source = \"managed\" }", 1)
+	config = strings.Replace(config, `protocol = "http"`, `protocol = "https"`+"\n tls = { mode = \"terminate\", certificate_source = \"managed\" }", 1)
 	writeTestFile(t, filepath.Join(dir, "main.tf"), config)
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")

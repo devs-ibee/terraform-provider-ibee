@@ -13,7 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -87,9 +86,9 @@ func (r *secretIdentityResource) Schema(_ context.Context, _ resource.SchemaRequ
 		Attributes: map[string]schema.Attribute{
 			"id":                  schema.StringAttribute{Computed: true, PlanModifiers: keep},
 			"store_id":            schema.StringAttribute{Required: true, PlanModifiers: replace, Description: "Store the identity is created in and first granted access to."},
-			"name":                schema.StringAttribute{Required: true, PlanModifiers: replace, Description: "Identity name, 1–128 characters. The API cannot rename identities, so a change replaces it."},
-			"auth_method":         schema.StringAttribute{Required: true, PlanModifiers: replace, Description: "approle or kubernetes.", Validators: []validator.String{computeOneOf("approle", "kubernetes")}},
-			"token_policy_mode":   schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: keep, Description: "read_only or read_write. The API default applies when omitted. A change is applied in place; the API also aligns the identity's existing scopes and revokes its sessions.", Validators: []validator.String{computeOneOf("read_only", "read_write")}},
+			"name":                schema.StringAttribute{Required: true, PlanModifiers: replace, Description: "Identity name. The API cannot rename identities, so a change replaces it."},
+			"auth_method":         schema.StringAttribute{Required: true, PlanModifiers: replace, Description: "approle or kubernetes."},
+			"token_policy_mode":   schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()}, Description: "read_only or read_write. The API default applies when omitted. The public API has no operation to change it, so a change replaces the identity (and mints new login details)."},
 			"k8s_namespace":       schema.StringAttribute{Optional: true, PlanModifiers: replace, Description: "Kubernetes namespace (kubernetes)."},
 			"k8s_service_account": schema.StringAttribute{Optional: true, PlanModifiers: replace, Description: "Kubernetes service account (kubernetes)."},
 			"enabled":             schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}, Description: "Set false to disable the identity and revoke its sessions; true enables it again. New identities are enabled."},
@@ -106,11 +105,8 @@ func (r *secretIdentityResource) Configure(_ context.Context, req resource.Confi
 }
 
 func (out secretIdentityAPI) apply(state *secretIdentityModel) error {
-	if out.ID == "" || out.Name == "" || out.AuthMethod == "" || out.Status == "" || out.TokenPolicyMode == "" {
-		return fmt.Errorf("identity response is missing id, name, auth_method, status or token_policy_mode; state was preserved")
-	}
-	if !state.ID.IsNull() && !state.ID.IsUnknown() && state.ID.ValueString() != out.ID {
-		return fmt.Errorf("identity response identifies a different identity; state was preserved")
+	if out.ID == "" {
+		return fmt.Errorf("identity response has no id")
 	}
 	state.ID = types.StringValue(out.ID)
 	state.Name = types.StringValue(out.Name)
@@ -217,18 +213,7 @@ func (r *secretIdentityResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 	id := state.ID.ValueString()
-	if !plan.TokenPolicyMode.IsUnknown() && !plan.TokenPolicyMode.Equal(state.TokenPolicyMode) {
-		var out secretIdentityAPI
-		if err := r.client.do(ctx, http.MethodPatch, secretIdentityPath(id), map[string]any{"token_policy_mode": plan.TokenPolicyMode.ValueString()}, &out); err != nil {
-			resp.Diagnostics.AddError("Failed to update secret identity", err.Error())
-			return
-		}
-		if err := out.apply(&state); err != nil {
-			resp.Diagnostics.AddError("Invalid secret identity response", err.Error())
-			return
-		}
-		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-	}
+	// enabled is the only setting the API changes in place (enable/disable).
 	if !plan.Enabled.IsUnknown() && !plan.Enabled.IsNull() && plan.Enabled.ValueBool() != state.Enabled.ValueBool() {
 		out, err := r.setEnabled(ctx, id, plan.Enabled.ValueBool())
 		if err != nil {
@@ -298,17 +283,17 @@ func (r *secretIdentityScopeResource) Metadata(_ context.Context, req resource.M
 
 func (r *secretIdentityScopeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
-	keepBool := []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}
+	keepBool := []planmodifier.Bool{boolplanmodifier.UseStateForUnknown(), boolplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{
-		Description: "Grants a Secret Store application identity access to a store. The API decides which combinations are allowed. Permissions change in place. Destroy removes the permission. Import with IDENTITY_ID/SCOPE_ID.",
+		Description: "Grants a Secret Store application identity access to a store. The API decides which combinations are allowed. The public API has no operation to change a scope, so a permission change replaces it (the grant is removed and created again). Destroy removes the permission. Import with IDENTITY_ID/SCOPE_ID.",
 		Attributes: map[string]schema.Attribute{
 			"id":                 schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"identity_id":        schema.StringAttribute{Required: true, PlanModifiers: replace, Description: "Identity to grant access, such as ibee_secret_identity.id."},
 			"store_id":           schema.StringAttribute{Required: true, PlanModifiers: replace, Description: "Store to grant access to."},
-			"access_mode":        schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "read_only or read_write. The API default applies when omitted.", Validators: []validator.String{computeOneOf("read_only", "read_write")}},
-			"allow_version_read": schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: keepBool, Description: "Allow reading older secret versions. The API default applies when omitted."},
-			"allow_rollback":     schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: keepBool, Description: "Allow rolling secrets back. The API default applies when omitted."},
-			"allow_destroy":      schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: keepBool, Description: "Allow destroying secret versions. The API default applies when omitted."},
+			"access_mode":        schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()}, Description: "read_only or read_write. The API default applies when omitted. A change replaces the scope."},
+			"allow_version_read": schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: keepBool, Description: "Allow reading older secret versions. The API default applies when omitted. A change replaces the scope."},
+			"allow_rollback":     schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: keepBool, Description: "Allow rolling secrets back. The API default applies when omitted. A change replaces the scope."},
+			"allow_destroy":      schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: keepBool, Description: "Allow destroying secret versions. The API default applies when omitted. A change replaces the scope."},
 		},
 	}
 }
@@ -318,19 +303,16 @@ func (r *secretIdentityScopeResource) Configure(_ context.Context, req resource.
 }
 
 func (out secretIdentityScopeAPI) apply(state *secretIdentityScopeModel) error {
-	if out.ID == "" || out.IdentityID == "" || out.StoreID == "" || out.AccessMode == "" || out.AllowVersionRead == nil || out.AllowRollback == nil || out.AllowDestroy == nil {
-		return fmt.Errorf("scope response is missing id, identity_id, store_id, access_mode or a permission; state was preserved")
-	}
-	if !state.ID.IsNull() && !state.ID.IsUnknown() && state.ID.ValueString() != out.ID {
-		return fmt.Errorf("scope response identifies a different scope; state was preserved")
+	if out.ID == "" {
+		return fmt.Errorf("scope response has no id")
 	}
 	state.ID = types.StringValue(out.ID)
 	state.IdentityID = types.StringValue(out.IdentityID)
 	state.StoreID = types.StringValue(out.StoreID)
 	state.AccessMode = types.StringValue(out.AccessMode)
-	state.AllowVersionRead = types.BoolValue(*out.AllowVersionRead)
-	state.AllowRollback = types.BoolValue(*out.AllowRollback)
-	state.AllowDestroy = types.BoolValue(*out.AllowDestroy)
+	state.AllowVersionRead = types.BoolPointerValue(out.AllowVersionRead)
+	state.AllowRollback = types.BoolPointerValue(out.AllowRollback)
+	state.AllowDestroy = types.BoolPointerValue(out.AllowDestroy)
 	return nil
 }
 
@@ -400,23 +382,14 @@ func (r *secretIdentityScopeResource) Read(ctx context.Context, req resource.Rea
 	resp.State.RemoveResource(ctx)
 }
 
+// Update has nothing to send: every setting of a scope replaces it.
 func (r *secretIdentityScopeResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state secretIdentityScopeModel
+	var plan secretIdentityScopeModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var out secretIdentityScopeAPI
-	if err := r.client.do(ctx, http.MethodPatch, "/secret-store/scopes/"+url.PathEscape(state.ID.ValueString()), plan.permissions(map[string]any{}), &out); err != nil {
-		resp.Diagnostics.AddError("Failed to update secret identity scope", err.Error())
-		return
-	}
-	if err := out.apply(&state); err != nil {
-		resp.Diagnostics.AddError("Invalid secret identity scope response", err.Error())
-		return
-	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *secretIdentityScopeResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

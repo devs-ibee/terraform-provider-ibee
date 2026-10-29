@@ -5,22 +5,19 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 var (
-	_ resource.Resource                   = (*secretStoreResource)(nil)
-	_ resource.ResourceWithConfigure      = (*secretStoreResource)(nil)
-	_ resource.ResourceWithImportState    = (*secretStoreResource)(nil)
-	_ resource.ResourceWithValidateConfig = (*secretStoreResource)(nil)
+	_ resource.Resource                = (*secretStoreResource)(nil)
+	_ resource.ResourceWithConfigure   = (*secretStoreResource)(nil)
+	_ resource.ResourceWithImportState = (*secretStoreResource)(nil)
 )
 
 type secretStoreResource struct{ client *Client }
@@ -49,11 +46,11 @@ func (r *secretStoreResource) Metadata(_ context.Context, req resource.MetadataR
 
 func (r *secretStoreResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An IBEE secret store. Destroy archives the store, including any secrets it still holds, blocking access and revoking sessions; the API decides whether the archive is allowed. Archiving does not permanently erase secrets or free the name.",
+		Description: "An IBEE secret store. The public API has no operation to change a store, so a change to name or description replaces it. Destroy (and replacement) archives the store, including any secrets it still holds, blocking access and revoking sessions; the API decides whether the archive is allowed. Archiving does not permanently erase secrets or free the name, so a replacement store needs a new name.",
 		Attributes: map[string]schema.Attribute{
 			"id":          schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"name":        schema.StringAttribute{Required: true, Description: "Store display name, 1–128 characters."},
-			"description": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("")},
+			"name":        schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Store display name. A change replaces the store."},
+			"description": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()}, Description: "A change replaces the store."},
 			"store_key":   schema.StringAttribute{Computed: true, Description: "Stable store key assigned by the service."},
 			"status":      schema.StringAttribute{Computed: true},
 		},
@@ -71,28 +68,16 @@ func (r *secretStoreResource) Configure(_ context.Context, req resource.Configur
 	}
 }
 
-func (r *secretStoreResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var cfg secretStoreResourceModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if !cfg.Name.IsNull() && !cfg.Name.IsUnknown() && (strings.TrimSpace(cfg.Name.ValueString()) == "" || len([]rune(cfg.Name.ValueString())) > 128) {
-		resp.Diagnostics.AddAttributeError(path.Root("name"), "Invalid store name", "Store names must contain 1–128 characters.")
-	}
-}
-
 func secretStorePath(id string) string { return "/secret-store/stores/" + url.PathEscape(id) }
 
 func (out secretStoreAPI) apply(state *secretStoreResourceModel) error {
-	if out.ID == "" || out.Name == "" || out.StoreKey == "" || out.Status == "" {
-		return fmt.Errorf("secret store response is missing id, name, store_key or status; state was preserved")
-	}
-	if !state.ID.IsNull() && !state.ID.IsUnknown() && state.ID.ValueString() != out.ID {
-		return fmt.Errorf("secret store response identifies a different store; state was preserved")
+	if out.ID == "" {
+		return fmt.Errorf("secret store response has no id")
 	}
 	state.ID = types.StringValue(out.ID)
-	state.Name = types.StringValue(out.Name)
+	if out.Name != "" {
+		state.Name = types.StringValue(out.Name)
+	}
 	state.Description = types.StringValue(out.Description)
 	state.StoreKey = types.StringValue(out.StoreKey)
 	state.Status = types.StringValue(out.Status)
@@ -107,14 +92,14 @@ func (r *secretStoreResource) Create(ctx context.Context, req resource.CreateReq
 	}
 	// No public secret-manager catalog/quote is available. Server-side pricing,
 	// entitlement and quota admission remain authoritative.
+	body := map[string]any{"name": plan.Name.ValueString()}
+	if known(plan.Description) {
+		body["description"] = plan.Description.ValueString()
+	}
 	var out secretStoreAPI
-	if err := r.client.do(ctx, http.MethodPost, "/secret-store/stores", map[string]any{"name": plan.Name.ValueString(), "description": plan.Description.ValueString()}, &out); err != nil {
+	if err := r.client.do(ctx, http.MethodPost, "/secret-store/stores", body, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to create secret store", err.Error())
 		return
-	}
-	if out.ID != "" {
-		plan.ID, plan.StoreKey, plan.Status = types.StringValue(out.ID), types.StringValue(out.StoreKey), types.StringValue(out.Status)
-		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	}
 	if err := out.apply(&plan); err != nil {
 		resp.Diagnostics.AddError("Invalid created secret store response", err.Error())
@@ -142,9 +127,6 @@ func (r *secretStoreResource) Read(ctx context.Context, req resource.ReadRequest
 		resp.Diagnostics.AddError("Invalid secret store response", err.Error())
 		return
 	}
-	if out.Status == "archived" {
-		resp.Diagnostics.AddWarning("Secret store is archived", "The record and its reserved name still exist. Unarchive it before modifying it.")
-	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -155,13 +137,9 @@ func (r *secretStoreResource) Update(ctx context.Context, req resource.UpdateReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// name and description replace the store; there is nothing to change in place.
 	var out secretStoreAPI
-	if !plan.Name.Equal(state.Name) || !plan.Description.Equal(state.Description) {
-		if err := r.client.do(ctx, http.MethodPatch, secretStorePath(state.ID.ValueString()), map[string]any{"name": plan.Name.ValueString(), "description": plan.Description.ValueString()}, &out); err != nil {
-			resp.Diagnostics.AddError("Failed to update secret store", err.Error())
-			return
-		}
-	} else if err := r.client.do(ctx, http.MethodGet, secretStorePath(state.ID.ValueString()), nil, &out); err != nil {
+	if err := r.client.do(ctx, http.MethodGet, secretStorePath(state.ID.ValueString()), nil, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to refresh secret store", err.Error())
 		return
 	}
@@ -172,42 +150,18 @@ func (r *secretStoreResource) Update(ctx context.Context, req resource.UpdateReq
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
+// Delete archives the store (POST .../archive); a store already archived is left as it is.
 func (r *secretStoreResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state secretStoreResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
+	if resp.Diagnostics.HasError() || state.Status.ValueString() == "archived" {
 		return
 	}
-	var out secretStoreAPI
-	if err := r.client.do(ctx, http.MethodGet, secretStorePath(state.ID.ValueString()), nil, &out); err != nil {
-		if IsNotFound(err) {
-			return
-		}
-		resp.Diagnostics.AddError("Cannot read secret store before archive", err.Error())
-		return
-	}
-	if err := out.apply(&state); err != nil {
-		resp.Diagnostics.AddError("Cannot verify secret store before archive", err.Error())
-		return
-	}
-	if out.Status == "archived" {
-		return
-	}
-	if err := r.client.do(ctx, http.MethodPost, secretStorePath(state.ID.ValueString())+"/archive", nil, &out); err != nil {
-		if !IsNotFound(err) {
-			resp.Diagnostics.AddError("Failed to archive secret store", err.Error())
-		}
-		return
-	}
-	if out.ID != state.ID.ValueString() || out.Status != "archived" {
-		resp.Diagnostics.AddError("Secret store archive not confirmed", "The response did not confirm this store is archived. State is preserved for retry.")
+	if err := r.client.do(ctx, http.MethodPost, secretStorePath(state.ID.ValueString())+"/archive", nil, nil); err != nil && !IsNotFound(err) {
+		resp.Diagnostics.AddError("Failed to archive secret store", err.Error())
 	}
 }
 
 func (r *secretStoreResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if strings.TrimSpace(req.ID) == "" || strings.ContainsAny(req.ID, "/\\") {
-		resp.Diagnostics.AddError("Invalid secret store import ID", "Import with the store ID.")
-		return
-	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 }

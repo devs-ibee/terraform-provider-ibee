@@ -33,29 +33,3 @@ func TestNetworkSitesDiscoveryUsesNetworkingContract(t *testing.T) {
 		t.Fatalf("incorrect networking catalog mapping: %+v", actual)
 	}
 }
-func TestNetworkSitesRejectsMalformedAvailability(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		wantError  bool
-	}{
-		{"empty-valid", `[]`, false},
-		{"null", `null`, true},
-		{"compute-wrapper", `{"sites":[]}`, true},
-		{"missing-availability", `[{"site_id":"site","site_name":"Site"}]`, true},
-		{"wrong-availability-type", `[{"site_id":"site","site_name":"Site","available":"true"}]`, true},
-		{"missing-site-name", `[{"site_id":"site","name":"Site","available":true}]`, true},
-		{"duplicate-site", `[{"site_id":"site","site_name":"Site","available":true},{"site_id":"site","site_name":"Site","available":false}]`, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			d := NewNetworkSitesDataSource().(*networkSitesDataSource)
-			d.client = networkTestClient(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, tc.body) })
-			var sch datasource.SchemaResponse
-			d.Schema(context.Background(), datasource.SchemaRequest{}, &sch)
-			resp := datasource.ReadResponse{State: tfsdk.State{Schema: sch.Schema}}
-			d.Read(context.Background(), datasource.ReadRequest{}, &resp)
-			if resp.Diagnostics.HasError() != tc.wantError {
-				t.Fatalf("diagnostics=%v expected error=%v", resp.Diagnostics, tc.wantError)
-			}
-		})
-	}
-}

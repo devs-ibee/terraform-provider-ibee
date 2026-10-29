@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -20,11 +19,9 @@ import (
 )
 
 var (
-	_                 resource.Resource                   = (*secretResource)(nil)
-	_                 resource.ResourceWithConfigure      = (*secretResource)(nil)
-	_                 resource.ResourceWithImportState    = (*secretResource)(nil)
-	_                 resource.ResourceWithValidateConfig = (*secretResource)(nil)
-	secretNamePattern                                     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,63}$`)
+	_ resource.Resource                = (*secretResource)(nil)
+	_ resource.ResourceWithConfigure   = (*secretResource)(nil)
+	_ resource.ResourceWithImportState = (*secretResource)(nil)
 )
 
 type secretResource struct{ client *Client }
@@ -64,14 +61,14 @@ func (r *secretResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *secretResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An IBEE secret with a write-only JSON value (Terraform 1.11+). Values are never stored in plan or state. Increase value_wo_version to rotate; value changes alone cannot be detected. Destroy soft-deletes the latest value, preserving history and the reserved name. Import with the secret ID; imported value_wo_version starts at 0.",
+		Description: "An IBEE secret with a write-only JSON value (Terraform 1.11+). Values are never stored in plan or state. Change value_wo_version to send a new value; value changes alone cannot be detected. Destroy soft-deletes the secret (DELETE). Import with the secret ID.",
 		Attributes: map[string]schema.Attribute{
 			"id":               schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"store_id":         schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"secret_name":      schema.StringAttribute{Required: true, Description: "2–64 lowercase letters, digits and hyphens; first character must be a letter or digit.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"secret_name":      schema.StringAttribute{Required: true, Description: "Secret name.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"value_wo":         schema.StringAttribute{Required: true, Sensitive: true, WriteOnly: true, Description: "JSON object containing the secret data. Use jsonencode with an ephemeral sensitive input. Never persisted by this resource."},
-			"value_wo_version": schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(0), Description: "Nonnegative rotation trigger. Increase it whenever changing value_wo. Initial/imported value is 0; the API version is separate."},
-			"current_version":  schema.Int64Attribute{Computed: true, Description: "Current API version, refreshed without persisting secret data. Updates use this version for check-and-set to prevent overwriting concurrent changes."},
+			"value_wo_version": schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(0), Description: "Rotation trigger kept only in Terraform state (never sent to the API): any change sends value_wo as a new version (PUT .../value). Change it whenever value_wo changes. Starts at 0, also after import."},
+			"current_version":  schema.Int64Attribute{Computed: true, Description: "Current API version, refreshed without persisting secret data. A rotation sends it as cas."},
 			"store_key":        schema.StringAttribute{Computed: true},
 			"status":           schema.StringAttribute{Computed: true},
 		},
@@ -102,28 +99,6 @@ func decodeSecretValue(raw types.String) (map[string]any, error) {
 	return value, nil
 }
 
-func (r *secretResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var cfg secretResourceModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if !cfg.SecretName.IsNull() && !cfg.SecretName.IsUnknown() && !secretNamePattern.MatchString(cfg.SecretName.ValueString()) {
-		resp.Diagnostics.AddAttributeError(path.Root("secret_name"), "Invalid secret name", "Use 2–64 lowercase letters, digits and hyphens, beginning with a letter or digit.")
-	}
-	if !cfg.StoreID.IsNull() && !cfg.StoreID.IsUnknown() && (strings.TrimSpace(cfg.StoreID.ValueString()) == "" || strings.ContainsAny(cfg.StoreID.ValueString(), "/\\")) {
-		resp.Diagnostics.AddAttributeError(path.Root("store_id"), "Invalid store ID", "Specify a nonempty secret store ID without path separators.")
-	}
-	if !cfg.ValueWO.IsNull() && !cfg.ValueWO.IsUnknown() {
-		if _, err := decodeSecretValue(cfg.ValueWO); err != nil {
-			resp.Diagnostics.AddAttributeError(path.Root("value_wo"), "Invalid secret value", err.Error())
-		}
-	}
-	if !cfg.ValueWOVersion.IsUnknown() && cfg.ValueWOVersion.ValueInt64() < 0 {
-		resp.Diagnostics.AddAttributeError(path.Root("value_wo_version"), "Invalid rotation version", "The rotation trigger must be a nonnegative integer.")
-	}
-}
-
 func secretPath(id string) string { return "/secret-store/secrets/" + url.PathEscape(id) }
 
 func (out secretAPI) isDeleted() bool {
@@ -133,14 +108,20 @@ func (out secretAPI) isDeleted() bool {
 }
 
 func (out secretAPI) apply(state *secretResourceModel) error {
-	if out.ID == "" || out.StoreID == "" || out.SecretName == "" || out.StoreKey == "" || out.Status == "" {
-		return fmt.Errorf("secret metadata is missing required identity or status fields; state was preserved")
+	if out.ID == "" {
+		return fmt.Errorf("secret response has no id")
 	}
-	if !state.ID.IsNull() && !state.ID.IsUnknown() && state.ID.ValueString() != out.ID {
-		return fmt.Errorf("secret metadata identifies a different secret; state was preserved")
+	state.ID = types.StringValue(out.ID)
+	for _, field := range []struct {
+		target *types.String
+		value  string
+	}{{&state.StoreID, out.StoreID}, {&state.SecretName, out.SecretName}, {&state.StoreKey, out.StoreKey}, {&state.Status, out.Status}} {
+		if field.value != "" {
+			*field.target = types.StringValue(field.value)
+		} else if field.target.IsUnknown() {
+			*field.target = types.StringNull()
+		}
 	}
-	state.ID, state.StoreID = types.StringValue(out.ID), types.StringValue(out.StoreID)
-	state.SecretName, state.StoreKey, state.Status = types.StringValue(out.SecretName), types.StringValue(out.StoreKey), types.StringValue(out.Status)
 	state.ValueWO = types.StringNull()
 	return nil
 }
@@ -166,10 +147,7 @@ func (r *secretResource) readVersion(ctx context.Context, id string) (types.Int6
 	if err := r.client.do(ctx, http.MethodGet, secretPath(id)+"/value", nil, &out); err != nil {
 		return types.Int64Null(), fmt.Errorf("%s", secretSafeError(err))
 	}
-	if out.ID != id || out.Metadata.Version == nil || *out.Metadata.Version < 1 {
-		return types.Int64Null(), fmt.Errorf("secret value response did not provide a valid matching identity and positive version")
-	}
-	return types.Int64Value(*out.Metadata.Version), nil
+	return types.Int64PointerValue(out.Metadata.Version), nil
 }
 
 func (r *secretResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -192,10 +170,6 @@ func (r *secretResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 	plan.ValueWO, plan.CurrentVersion = types.StringNull(), types.Int64Null()
-	if out.ID != "" {
-		plan.ID, plan.StoreKey, plan.Status = types.StringValue(out.ID), types.StringValue(out.StoreKey), types.StringValue(out.Status)
-		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	}
 	if err := out.apply(&plan); err != nil {
 		resp.Diagnostics.AddError("Invalid created secret response", err.Error())
 		return
@@ -234,7 +208,6 @@ func (r *secretResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 	if out.isDeleted() {
 		state.CurrentVersion = types.Int64Null()
-		resp.Diagnostics.AddWarning("Secret is soft-deleted", "The record, reserved name and historical versions remain. Restore it through the portal before rotating it. Terraform preserves its identity instead of attempting to create a duplicate.")
 	} else {
 		version, err := r.readVersion(ctx, state.ID.ValueString())
 		if err != nil {
@@ -259,14 +232,6 @@ func (r *secretResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
-	if plan.ValueWOVersion.ValueInt64() <= state.ValueWOVersion.ValueInt64() {
-		resp.Diagnostics.AddError("Rotation version must increase", "Increase value_wo_version to rotate the secret; decreasing the trigger is not allowed.")
-		return
-	}
-	if state.Status.ValueString() != "active" || state.CurrentVersion.IsNull() || state.CurrentVersion.IsUnknown() || state.CurrentVersion.ValueInt64() < 1 {
-		resp.Diagnostics.AddError("Cannot safely rotate secret", "Refresh an active secret with a valid current_version before rotation. Restore a soft-deleted secret through the portal first.")
-		return
-	}
 	var valueWO types.String
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("value_wo"), &valueWO)...)
 	if resp.Diagnostics.HasError() {
@@ -278,56 +243,31 @@ func (r *secretResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 	var out secretVersionAPI
-	body := map[string]any{"value": value, "cas": state.CurrentVersion.ValueInt64()}
+	body := map[string]any{"value": value}
+	if known(state.CurrentVersion) {
+		body["cas"] = state.CurrentVersion.ValueInt64()
+	}
 	if err := r.client.do(ctx, http.MethodPut, secretPath(state.ID.ValueString())+"/value", body, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to rotate secret", secretSafeError(err)+" On a version conflict, refresh and review the external change before retrying.")
 		return
 	}
-	if out.ID != state.ID.ValueString() || out.Metadata.Version == nil || *out.Metadata.Version <= state.CurrentVersion.ValueInt64() {
-		resp.Diagnostics.AddError("Secret rotation response invalid", "The API did not return a matching ID and a newer version. Refresh and review the current secret before retrying.")
-		return
-	}
-	plan.CurrentVersion, plan.StoreKey, plan.Status = types.Int64Value(*out.Metadata.Version), state.StoreKey, types.StringValue("active")
+	plan.CurrentVersion, plan.StoreKey, plan.Status = types.Int64PointerValue(out.Metadata.Version), state.StoreKey, state.Status
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
+// Delete soft-deletes the secret; a secret already deleted is left as it is.
 func (r *secretResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state secretResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
+	if resp.Diagnostics.HasError() || (secretAPI{Status: state.Status.ValueString()}).isDeleted() {
 		return
 	}
-	var out secretAPI
-	if err := r.client.do(ctx, http.MethodGet, secretPath(state.ID.ValueString()), nil, &out); err != nil {
-		if IsNotFound(err) {
-			return
-		}
-		resp.Diagnostics.AddError("Cannot read secret before deletion", secretSafeError(err))
-		return
-	}
-	if err := out.apply(&state); err != nil {
-		resp.Diagnostics.AddError("Cannot verify secret before deletion", err.Error())
-		return
-	}
-	if out.isDeleted() {
-		return
-	}
-	if err := r.client.do(ctx, http.MethodDelete, secretPath(state.ID.ValueString()), nil, &out); err != nil {
-		if !IsNotFound(err) {
-			resp.Diagnostics.AddError("Failed to soft-delete secret", secretSafeError(err))
-		}
-		return
-	}
-	if out.ID != state.ID.ValueString() || !out.isDeleted() {
-		resp.Diagnostics.AddError("Secret deletion not confirmed", "The response did not confirm soft deletion of this secret. State is preserved for retry.")
+	if err := r.client.do(ctx, http.MethodDelete, secretPath(state.ID.ValueString()), nil, nil); err != nil && !IsNotFound(err) {
+		resp.Diagnostics.AddError("Failed to delete secret", secretSafeError(err))
 	}
 }
 
 func (r *secretResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if strings.TrimSpace(req.ID) == "" || strings.ContainsAny(req.ID, "/\\") {
-		resp.Diagnostics.AddError("Invalid secret import ID", "Import with the secret ID.")
-		return
-	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("value_wo_version"), 0)...)
 }

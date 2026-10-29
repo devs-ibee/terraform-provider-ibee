@@ -36,7 +36,6 @@ func (v networkValues) segment(k string) string { return url.PathEscape(v.str(k)
 type networkResource struct {
 	client            *Client
 	name, description string
-	deprecation       string
 	attributes        map[string]schema.Attribute
 	// requestFields and responseFields map Terraform attributes to JSON fields.
 	requestFields, responseFields                map[string]string
@@ -51,9 +50,6 @@ type networkResource struct {
 	waitReady, waitDelete bool
 	createResultID        func(networkValues, map[string]any) (string, error)
 	readTransform         func(networkValues, map[string]any) (map[string]any, error)
-	beforeDelete          func(context.Context, *Client, networkValues) error
-	beforeCreate          func(context.Context, *Client, networkValues) error
-	validate              func(networkValues) error
 	deleteMethod          string
 	createMethod          string
 	updateMethod          string
@@ -65,11 +61,7 @@ func (r *networkResource) Metadata(_ context.Context, req resource.MetadataReque
 	resp.TypeName = req.ProviderTypeName + "_" + r.name
 }
 func (r *networkResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	description := r.description
-	if r.deprecation != "" {
-		description = "Deprecated. " + r.deprecation + " " + description
-	}
-	resp.Schema = schema.Schema{Description: description, DeprecationMessage: r.deprecation, Attributes: r.attributes}
+	resp.Schema = schema.Schema{Description: r.description, Attributes: r.attributes}
 }
 func (r *networkResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
@@ -160,7 +152,7 @@ func networkJSON(v attr.Value) (any, error) {
 	case types.Object:
 		m := map[string]any{}
 		for k, v := range x.Attributes() {
-			if v.IsNull() {
+			if v.IsNull() || v.IsUnknown() {
 				continue
 			}
 			j, e := networkJSON(v)
@@ -259,8 +251,11 @@ func networkValue(t attr.Type, raw any) (attr.Value, error) {
 func (r *networkResource) merge(v networkValues, out map[string]any) error {
 	for a, j := range r.responseFields {
 		raw, exists := out[j]
-		if (!exists || raw == nil) && r.attributes[a].IsRequired() {
-			return fmt.Errorf("API response omitted required field %q", j)
+		if !exists {
+			// A field the response omits keeps its configured or recorded value.
+			if current := v[a]; current != nil && !current.IsUnknown() {
+				continue
+			}
 		}
 		value, err := networkValue(r.attributes[a].GetType(), raw)
 		if err != nil {
@@ -304,9 +299,6 @@ func (r *networkResource) fetch(ctx context.Context, v networkValues) (map[strin
 				return nil, fmt.Errorf("invalid list response: %w", err)
 			}
 			for _, out := range items {
-				if id, ok := out[r.idField].(string); !ok || id == "" {
-					return nil, fmt.Errorf("list entry omitted %s", r.idField)
-				}
 				if out[r.idField] == ident {
 					return out, nil
 				}
@@ -323,16 +315,6 @@ func (r *networkResource) fetch(ctx context.Context, v networkValues) (map[strin
 	}
 	if out == nil {
 		return nil, fmt.Errorf("API returned an empty object")
-	}
-	if id, ok := out[r.idField].(string); !ok || id == "" {
-		return nil, fmt.Errorf("API response omitted %s", r.idField)
-	}
-	expectedID := v.str("id")
-	if r.readIdentity != "" {
-		expectedID = v.str(r.readIdentity)
-	}
-	if out[r.idField] != expectedID {
-		return nil, fmt.Errorf("API returned %s %q for requested ID %q", r.idField, out[r.idField], expectedID)
 	}
 	if r.readTransform != nil {
 		return r.readTransform(v, out)
@@ -362,10 +344,8 @@ func (r *networkResource) refresh(ctx context.Context, v networkValues, wait boo
 				return err
 			}
 			continue
-		case "available", "active":
-			return nil
 		default:
-			return fmt.Errorf("unexpected networking readiness status %q", status)
+			return nil
 		}
 	}
 }
@@ -377,22 +357,10 @@ func (r *networkResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 	v := networkObject(object)
-	if r.validate != nil {
-		if err := r.validate(v); err != nil {
-			resp.Diagnostics.AddError("Invalid networking configuration", err.Error())
-			return
-		}
-	}
 	b, err := r.body(v, false)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid networking configuration", err.Error())
 		return
-	}
-	if r.beforeCreate != nil {
-		if err := r.beforeCreate(ctx, r.client, v); err != nil {
-			resp.Diagnostics.AddError("Cannot safely create "+r.name, err.Error())
-			return
-		}
 	}
 	var out map[string]any
 	method := r.createMethod
@@ -454,12 +422,6 @@ func (r *networkResource) Update(ctx context.Context, req resource.UpdateRequest
 		resp.Diagnostics.AddError("Unsupported update", "This resource must be replaced.")
 		return
 	}
-	if r.validate != nil {
-		if err := r.validate(v); err != nil {
-			resp.Diagnostics.AddError("Invalid networking configuration", err.Error())
-			return
-		}
-	}
 	b, err := r.body(v, true)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid update", err.Error())
@@ -486,15 +448,6 @@ func (r *networkResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 	v := networkObject(object)
-	if r.beforeDelete != nil {
-		if err := r.beforeDelete(ctx, r.client, v); err != nil {
-			if IsNotFound(err) {
-				return
-			}
-			resp.Diagnostics.AddError("Cannot delete "+r.name, err.Error())
-			return
-		}
-	}
 	method := r.deleteMethod
 	if method == "" {
 		method = http.MethodDelete
@@ -559,6 +512,16 @@ func containsNetwork(a []string, v string) bool {
 }
 func networkIDAttribute() schema.StringAttribute {
 	return schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}}
+}
+
+// networkOptional is an optional input the API reads back: when it is not
+// configured nothing is sent and the API's value is recorded.
+func networkOptional(replace bool) schema.StringAttribute {
+	a := schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}}
+	if replace {
+		a.PlanModifiers = append(a.PlanModifiers, stringplanmodifier.RequiresReplace())
+	}
+	return a
 }
 func networkRequired(replace bool) schema.StringAttribute {
 	a := schema.StringAttribute{Required: true}

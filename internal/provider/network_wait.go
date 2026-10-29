@@ -23,7 +23,7 @@ func waitNetworkStatus(ctx context.Context, client *Client, read func(context.Co
 				return err
 			}
 		default:
-			return fmt.Errorf("unexpected networking readiness status %q", status)
+			return nil
 		}
 	}
 }

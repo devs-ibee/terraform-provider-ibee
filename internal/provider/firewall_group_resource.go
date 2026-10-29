@@ -139,11 +139,9 @@ func (r *firewallGroupResource) Read(ctx context.Context, req resource.ReadReque
 		return
 	}
 
-	if out.identifier() != state.ID.ValueString() || out.Name == "" {
-		resp.Diagnostics.AddError("Invalid firewall group response", "API omitted required group fields")
-		return
+	if out.Name != "" {
+		state.Name = types.StringValue(out.Name)
 	}
-	state.Name = types.StringValue(out.Name)
 	state.Status = types.StringValue(out.Status)
 	if out.Description != nil {
 		state.Description = types.StringValue(*out.Description)

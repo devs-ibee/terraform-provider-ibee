@@ -8,7 +8,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -59,17 +58,15 @@ func (d *computePlansDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 		Description: "Compute catalog plans as the API returns them. Selectability and pricing status can differ between billing intervals.",
 		Attributes: map[string]schema.Attribute{
 			"vm_type": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
-				Validators:  []validator.String{computeOneOf("cloud", "gpu")},
-				Description: "cloud (default) or gpu.",
+				Required:    true,
+				Description: "cloud or gpu.",
 			},
 			"site_id": schema.StringAttribute{
 				Optional:    true,
 				Description: "Restrict plans to one placement site.",
 			},
 			"currency":         schema.StringAttribute{Optional: true, Description: "Catalog currency, such as INR. Omit to use the API's default."},
-			"billing_interval": schema.StringAttribute{Optional: true, Description: "Catalog billing interval, such as HOURLY or MONTHLY. Omit to use the API's default."},
+			"billing_interval": schema.StringAttribute{Optional: true, Description: "HOURLY or MONTHLY: the interval prices are quoted for. Omit to use the API's default."},
 			"plans": schema.ListNestedAttribute{
 				Computed: true,
 				NestedObject: schema.NestedAttributeObject{
@@ -114,10 +111,6 @@ func (d *computePlansDataSource) Read(ctx context.Context, req datasource.ReadRe
 		return
 	}
 	vmType := cfg.VmType.ValueString()
-	if vmType == "" {
-		vmType = "cloud"
-		cfg.VmType = types.StringValue(vmType)
-	}
 	plans, err := d.client.listComputePlansFiltered(ctx, vmType, cfg.SiteID.ValueString(), cfg.Currency.ValueString(), cfg.BillingInterval.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to list compute plans", err.Error())
@@ -167,6 +160,7 @@ type imageModel struct {
 
 type imagesModel struct {
 	VmType types.String `tfsdk:"vm_type"`
+	SiteID types.String `tfsdk:"site_id"`
 	Images []imageModel `tfsdk:"images"`
 }
 
@@ -179,10 +173,12 @@ func (d *imagesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 		Description: "OS images accepted by VM creation.",
 		Attributes: map[string]schema.Attribute{
 			"vm_type": schema.StringAttribute{
+				Required:    true,
+				Description: "cloud or gpu.",
+			},
+			"site_id": schema.StringAttribute{
 				Optional:    true,
-				Computed:    true,
-				Validators:  []validator.String{computeOneOf("cloud", "gpu")},
-				Description: "cloud (default) or gpu.",
+				Description: "Restrict images to one placement site.",
 			},
 			"images": schema.ListNestedAttribute{
 				Computed: true,
@@ -217,12 +213,10 @@ func (d *imagesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	vmType := cfg.VmType.ValueString()
-	if vmType == "" {
-		vmType = "cloud"
-		cfg.VmType = types.StringValue(vmType)
+	query := url.Values{"vm_type": {cfg.VmType.ValueString()}}
+	if !cfg.SiteID.IsNull() && !cfg.SiteID.IsUnknown() {
+		query.Set("site_id", cfg.SiteID.ValueString())
 	}
-
 	var out struct {
 		Images *[]struct {
 			TemplateID string `json:"template_id"`
@@ -231,7 +225,7 @@ func (d *imagesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 			OsType     string `json:"os_type"`
 		} `json:"images"`
 	}
-	if err := d.client.do(ctx, http.MethodGet, "/compute/images?vm_type="+url.QueryEscape(vmType), nil, &out); err != nil {
+	if err := d.client.do(ctx, http.MethodGet, "/compute/images?"+query.Encode(), nil, &out); err != nil {
 		resp.Diagnostics.AddError("Failed to list images", err.Error())
 		return
 	}

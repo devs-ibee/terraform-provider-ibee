@@ -1,0 +1,1 @@
+terraform import ibee_container_registry_access_token.ci 'REGISTRY_ID/TOKEN_ID'

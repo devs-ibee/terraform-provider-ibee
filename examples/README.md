@@ -10,6 +10,7 @@ Each directory below is an independent Terraform configuration. Set the required
 | Block storage | [block-storage](block-storage/main.tf) |
 | Object storage and secrets | [storage](storage/main.tf) |
 | CDN | [cdn](cdn/main.tf) |
+| Container Registry | [container-registry](container-registry/main.tf) |
 | Terraform actions | [actions](actions/main.tf) |
 
 Set your API token and workspace ID in the environment:

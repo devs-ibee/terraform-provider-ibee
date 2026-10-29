@@ -1,9 +1,11 @@
 # Compute examples
 
-For now the API expects a `billing_catalog` on new VM snapshots and backup policies. Use `jsonencode` with the SKU and currency values provided for your account; the provider passes it to the API unchanged. Volume attachments use the volume's catalog when available.
+New VMs are created `HOURLY` unless `billing_interval` is set; `MONTHLY` is a one-month commitment. The provider copies the plan's `billing_catalog` from `GET /compute/plans` and merges in the matching `billing_options` entry, as the portal does. The API checks the selection and decides every other rule.
 
-Changing `plan_id` resizes a VM in place, and changing `ssh_key_ids` updates its access in place. The API decides whether each change is allowed.
+Snapshots and backup policies need a storage `billing_catalog`: take it unchanged from `ibee_snapshot_storage_plans` or `ibee_backup_storage_plans`. Volume attachments need the volume's `billing_catalog`, available as `ibee_block_volume.<name>.billing_catalog`.
 
-New backup schedules default to daily at 12:00 UTC. Existing schedules are preserved; choose `daily` or `weekly` to change one. Weekly schedules require `day_of_week` (Monday is `0`, Sunday is `6`).
+Changing `plan_id` resizes a VM in place (the resize operation takes the new plan's `cpu`, `ram_mb` and `disk_gb`), and changing `ssh_key_ids` updates its access in place. The API decides whether each change is allowed.
+
+Backup settings that are not configured are not sent, so the API's defaults apply.
 
 See the [snapshot](../../docs/resources/cloud_vm_snapshot.md), [backup policy](../../docs/resources/cloud_vm_backup_policy.md), and [volume attachment](../../docs/resources/cloud_vm_volume_attachment.md) documentation for all options.

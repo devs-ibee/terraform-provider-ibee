@@ -13,44 +13,32 @@ variable "site_id" {
   type        = string
   description = "Site identifier from the trusted IBEE catalog."
 }
-variable "sku_code" {
-  type        = string
-  description = "Active block-storage SKU confirmed in the portal. Public catalog discovery is deployment-dependent; never invent a SKU or price."
-}
 variable "size_gb" {
   type        = number
-  description = "An allowed size for this SKU. Changes resize the volume in place; the API refuses a decrease."
+  description = "Volume size in GB. Changes are sent to the resize operation; the API decides which sizes it accepts."
+}
+
+# The block storage plans the API offers at the site.
+data "ibee_block_storage_plans" "available" {
+  site_id = var.site_id
 }
 
 resource "ibee_block_volume" "data" {
-  name         = "terraform-data"
-  site_id      = var.site_id
-  sku_code     = var.sku_code
-  size_gb      = var.size_gb
-  volume_class = "balanced"
-  vm_type      = "cloud"
-
-  # Attached expansion requires the backend's online-resize checks to pass.
-  allow_online_resize = false
+  name     = "terraform-data"
+  site_id  = var.site_id
+  sku_code = data.ibee_block_storage_plans.available.plans[0].sku_code
+  size_gb  = var.size_gb
 }
 
 # Import existing storage with:
 # terraform import ibee_block_volume.data VOLUME_ID
-# Currency and pricing are resolved upstream; the provider applies no
-# currency check of its own. The service computes authoritative SKU pricing.
-# Detach every attachment before destroying a volume. Deletion is never forced.
+# Attach the volume to a VM with ibee_cloud_vm_volume_attachment or
+# ibee_gpu_vm_volume_attachment, passing ibee_block_volume.data.billing_catalog.
 
 output "volume_id" {
   value = ibee_block_volume.data.id
 }
 
-# Optional storage-node attachment (does not hot-plug a VM guest):
-# resource "ibee_block_volume_attachment" "node" {
-#   volume_id = ibee_block_volume.data.id
-#   node_name = var.canonical_storage_node
-#   mode      = "single-writer"
-#   # Set true and apply only after unmounting, then destroy the attachment.
-#   confirm_unmounted = false
-# }
-# Import using VOLUME_ID/NODE_NAME. Use a cloud/GPU VM volume attachment
-# resource instead when you need VM guest integration; do not manage both.
+output "volume_billing_catalog" {
+  value = ibee_block_volume.data.billing_catalog
+}

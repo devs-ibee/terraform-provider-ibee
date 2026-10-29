@@ -10,7 +10,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -94,7 +93,7 @@ func TestVmRestoreActions(t *testing.T) {
 					}
 				})
 				values := map[string]attr.Value{"vm_type": types.StringValue(kind), "vm_id": types.StringValue("vm-1"), "target_mode": types.StringValue("new_vm"), "target_vm_name": types.StringValue("restored"), "target_plan_id": types.StringValue("plan-2"), "target_cpu": types.Int64Value(4), "auto_start": types.BoolValue(false)}
-				want := map[string]any{"target_mode": "new_vm", "requested_by": "terraform", "target_vm_name": "restored", "target_plan_id": "plan-2", "target_cpu": json.Number("4"), "auto_start": false}
+				want := map[string]any{"target_mode": "new_vm", "target_vm_name": "restored", "target_plan_id": "plan-2", "target_cpu": json.Number("4"), "auto_start": false}
 				if backup {
 					values["recovery_point_id"] = types.StringValue("rp-1")
 					want["recovery_point_id"] = "rp-1"
@@ -126,7 +125,6 @@ func TestVmRestoreActionRelaysFailures(t *testing.T) {
 		"no restore id":   {200, map[string]any{"status": "queued"}, nil, "no restore_id", 1},
 		"failed":          {200, map[string]any{"restore_id": "rs-1", "status": "queued"}, map[string]any{"restore_id": "rs-1", "status": "failed", "error_message": "disk full"}, "failed: disk full", 2},
 		"cancelled":       {200, map[string]any{"restore_id": "rs-1", "status": "queued"}, map[string]any{"restore_id": "rs-1", "status": "cancelled"}, "cancelled", 2},
-		"unknown status":  {200, map[string]any{"restore_id": "rs-1", "status": "queued"}, map[string]any{"restore_id": "rs-1", "status": "paused"}, `unsupported status "paused"`, 2},
 		"status read 403": {200, map[string]any{"restore_id": "rs-1", "status": "queued"}, map[string]any{"error": "insufficient_scope"}, "insufficient_scope", 2},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -152,58 +150,6 @@ func TestVmRestoreActionRelaysFailures(t *testing.T) {
 				t.Fatalf("requests = %d, want %d", requests, tc.wantRequests)
 			}
 		})
-	}
-}
-
-func TestVmBackupRunAction(t *testing.T) {
-	for _, kind := range []string{"cloud", "gpu"} {
-		t.Run(kind, func(t *testing.T) {
-			var sent map[string]any
-			statuses := []string{"running", "succeeded"}
-			a := &vmBackupRunAction{}
-			a.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				switch req.Method + " " + req.URL.Path {
-				case "POST /compute/" + kind + "-vms/vm-1/backups/runs":
-					sent = decodeBody(t, req)
-					computeJSON(w, map[string]any{"run_id": "run-1", "vm_id": "vm-1", "status": "queued", "trigger": "api", "backup_type": "full"})
-				case "GET /compute/" + kind + "-vm-backups/runs/run-1":
-					status := statuses[0]
-					statuses = statuses[1:]
-					computeJSON(w, map[string]any{"run_id": "run-1", "status": status, "recovery_point_id": "rp-9"})
-				default:
-					t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
-					w.WriteHeader(500)
-				}
-			})
-			catalog := `{"sku_id":9007199254740993,"sku_code":"BACKUP-STD"}`
-			resp, progress := invokeAction(t, a, map[string]attr.Value{"vm_type": types.StringValue(kind), "vm_id": types.StringValue("vm-1"), "billing_catalog": types.StringValue(catalog), "reason": types.StringValue("before upgrade")})
-			computeNoErrors(t, resp.Diagnostics)
-			want := map[string]any{"requested_by": "terraform", "reason": "before upgrade", "billing_catalog": map[string]any{"sku_id": json.Number("9007199254740993"), "sku_code": "BACKUP-STD"}}
-			if !reflect.DeepEqual(sent, want) {
-				t.Fatalf("backup run body:\n got %v\nwant %v", sent, want)
-			}
-			if !reflect.DeepEqual(progress, []string{"Waiting for backup run run-1.", "Backup run run-1 succeeded; recovery point rp-9."}) {
-				t.Fatalf("unexpected progress: %v", progress)
-			}
-		})
-	}
-}
-
-func TestVmBackupRunActionOmitsUnsetFieldsAndRelaysFailure(t *testing.T) {
-	a := &vmBackupRunAction{}
-	a.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-		if req.Method == http.MethodPost {
-			if body := decodeBody(t, req); !reflect.DeepEqual(body, map[string]any{"requested_by": "terraform"}) {
-				t.Errorf("unset fields were sent: %v", body)
-			}
-			computeJSON(w, map[string]any{"run_id": "run-1", "status": "queued"})
-			return
-		}
-		computeJSON(w, map[string]any{"run_id": "run-1", "status": "failed", "error_message": "billing_catalog is required"})
-	})
-	resp, _ := invokeAction(t, a, map[string]attr.Value{"vm_type": types.StringValue("cloud"), "vm_id": types.StringValue("vm-1")})
-	if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics[0].Detail(), "billing_catalog is required") {
-		t.Fatalf("the API's answer must be relayed: %v", resp.Diagnostics)
 	}
 }
 
@@ -235,7 +181,7 @@ func TestVmAccessAction(t *testing.T) {
 				"new_password": types.StringValue("fixture-password"), "password_auth_enabled": types.BoolValue(false),
 			})
 			computeNoErrors(t, resp.Diagnostics)
-			want := map[string]any{"requested_by": "terraform", "ssh_key_mode": "add", "ssh_keys": []any{"ssh-ed25519 AAAA test"}, "new_password": "fixture-password", "password_auth_enabled": false}
+			want := map[string]any{"ssh_key_mode": "add", "ssh_keys": []any{"ssh-ed25519 AAAA test"}, "new_password": "fixture-password", "password_auth_enabled": false}
 			if !reflect.DeepEqual(sent, want) {
 				t.Fatalf("access body:\n got %v\nwant %v", sent, want)
 			}
@@ -252,7 +198,7 @@ func TestVmAccessActionRelaysRefusal(t *testing.T) {
 		if req.Header.Get("X-Idempotency-Key") == "" {
 			t.Error("a generated idempotency key is required")
 		}
-		if body := decodeBody(t, req); !reflect.DeepEqual(body, map[string]any{"requested_by": "terraform", "ssh_key_mode": "remove", "ssh_key_ids": []any{"key-1"}}) {
+		if body := decodeBody(t, req); !reflect.DeepEqual(body, map[string]any{"ssh_key_mode": "remove", "ssh_key_ids": []any{"key-1"}}) {
 			t.Errorf("unexpected body %v", body)
 		}
 		w.WriteHeader(422)
@@ -261,15 +207,5 @@ func TestVmAccessActionRelaysRefusal(t *testing.T) {
 	resp, _ := invokeAction(t, a, map[string]attr.Value{"vm_type": types.StringValue("cloud"), "vm_id": types.StringValue("vm-1"), "ssh_key_mode": types.StringValue("remove"), "ssh_key_ids": types.ListValueMust(types.StringType, []attr.Value{types.StringValue("key-1")})})
 	if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics[0].Detail(), "confirm_remove_last_ssh_key is required") {
 		t.Fatalf("the API's refusal must be relayed: %v", resp.Diagnostics)
-	}
-}
-
-func TestVmActionSchemasValidateContractValues(t *testing.T) {
-	for _, a := range []action.Action{NewVmSnapshotRestoreAction(), NewVmBackupRestoreAction(), NewVmBackupRunAction(), NewVmAccessAction()} {
-		var sch action.SchemaResponse
-		a.Schema(context.Background(), action.SchemaRequest{}, &sch)
-		if sch.Diagnostics.HasError() || len(sch.Schema.Attributes["vm_type"].(interface{ StringValidators() []validator.String }).StringValidators()) == 0 {
-			t.Fatal("vm_type must accept only cloud or gpu")
-		}
 	}
 }

@@ -153,7 +153,7 @@ func TestComputeCatalogPlanSafetyUnknownSelection(t *testing.T) {
 					next := recoveryTestSetCatalog(model, types.StringUnknown())
 					resp := catalogSafetyModify(t, r, old, next, types.StringUnknown())
 					computeNoErrors(t, resp.Diagnostics)
-					wantReplace := priorKnown && product != "backup_storage"
+					wantReplace := priorKnown
 					if resp.RequiresReplace != wantReplace || !resp.PlanValue.IsUnknown() {
 						t.Fatalf("replace=%v, want %v; explicit unknown selection must remain unknown: %s", resp.RequiresReplace, wantReplace, resp.PlanValue)
 					}

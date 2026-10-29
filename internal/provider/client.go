@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +20,6 @@ type Client struct {
 	endpoint         string
 	token            string
 	workspaceID      string
-	organizationID   string
 	userAgent        string
 	http             *http.Client
 	operationTimeout time.Duration
@@ -75,16 +75,24 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &ae) && ae.Status == http.StatusNotFound
 }
 
-// retryable allows safe reads to retry on 429, 502, 503 and 504. Writes,
-// including keyed creates, retry only on 429 or 503 without a billing or
-// admission answer: after a 502 or 504 a write may already have been applied.
-func retryable(method string, e *apiError) bool {
-	read := method == http.MethodGet || method == http.MethodHead
+// neverRetriedRead matches the identity access read (under any version
+// prefix): every call of it mints a new AppRole credential, so a replay is
+// not a safe read.
+var neverRetriedRead = regexp.MustCompile(`(^|/)secret-store/identities/[^/]+/access/?$`)
+
+// retryable allows reads (GET and HEAD) to retry on 429, 502, 503 and 504,
+// except the credential-minting identity access read. Writes are never
+// retried: after any error the write may already have been applied.
+func retryable(method, path string, e *apiError) bool {
+	if method != http.MethodGet && method != http.MethodHead {
+		return false
+	}
+	if neverRetriedRead.MatchString(path) {
+		return false
+	}
 	switch e.Status {
-	case http.StatusTooManyRequests, http.StatusServiceUnavailable:
-		return read || !e.billingAnswer()
-	case http.StatusBadGateway, http.StatusGatewayTimeout:
-		return read
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
 	}
 	return false
 }
@@ -160,7 +168,7 @@ func (c *Client) doH(ctx context.Context, method, requestPath string, headers ma
 			break
 		}
 		apiErr := parseAPIError(res.StatusCode, data, res.Header.Get("X-Request-Id"), c.token)
-		if attempt < 3 && retryable(method, apiErr) {
+		if attempt < 3 && retryable(method, rel.Path, apiErr) {
 			delay := c.retryDelay * time.Duration(1<<attempt)
 			if value := res.Header.Get("Retry-After"); value != "" {
 				if seconds, e := strconv.Atoi(value); e == nil && seconds >= 0 {
