@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: IBEE Solutions API
-  version: 0.6.3
+  version: 0.7.0
   description: |
     Public API reference for IBEE Solutions.
 
@@ -39,8 +39,6 @@ tags:
     description: Discover sites, plans, and images accepted by VM creation.
     x-fern-display-name: Compute Catalog
     x-displayName: Compute Catalog
-  - name: Billing
-    description: Check current billing eligibility for a billable resource.
   - name: BlockStorage
     description: Manage standalone persistent block-storage volumes using the same product flow as the portal.
     x-fern-display-name: Block Storage
@@ -62,10 +60,6 @@ tags:
     description: Deploy and manage GPU-accelerated virtual machines.
     x-fern-display-name: GPU VMs
     x-displayName: GPU VMs
-  - name: VmConsole
-    description: Create and manage short-lived graphical VM console sessions.
-    x-fern-display-name: VM Console
-    x-displayName: VM Console
 
 security:
   - IbeeApiToken: []
@@ -149,7 +143,7 @@ paths:
       tags:
         - Secret Store
       summary: Get secret store
-      description: "Gets one secret store. Requires scope: secret-store.read."
+      description: "Gets one secret store. A permanently deleted store answers 403, not 404. Requires scope: secret-store.read."
       operationId: getSecretStore
       x-ibee-required-scope: secret-store.read
       parameters:
@@ -233,7 +227,7 @@ paths:
       tags:
         - Secret Store
       summary: Permanently delete secret store
-      description: "Irreversibly deletes a store and all store-scoped secrets, versions, identities, and policies. Requires scope: secret-store.write."
+      description: "Irreversibly deletes a store and all store-scoped secrets, versions, identities, and policies. Afterwards, reads of the store answer 403. Requires scope: secret-store.write."
       operationId: permanentlyDeleteSecretStore
       x-ibee-required-scope: secret-store.write
       parameters:
@@ -388,7 +382,7 @@ paths:
       tags:
         - Secret Store
       summary: Get secret metadata
-      description: "Gets one secret metadata record. Secret value is not returned. Requires scope: secret-store.read."
+      description: "Gets one secret metadata record. Secret value is not returned. A permanently deleted secret answers 403, not 404. Requires scope: secret-store.read."
       operationId: getSecret
       x-ibee-required-scope: secret-store.read
       parameters:
@@ -586,7 +580,7 @@ paths:
       tags:
         - Secret Store
       summary: Permanently delete secret
-      description: "Irreversibly deletes all versions and metadata for a secret. Requires scope: secret-store.write."
+      description: "Irreversibly deletes all versions and metadata for a secret. Afterwards, reads of the secret answer 403. Requires scope: secret-store.write."
       operationId: permanentlyDeleteSecret
       x-ibee-required-scope: secret-store.write
       parameters:
@@ -1442,7 +1436,7 @@ paths:
       tags:
         - Object Storage
       summary: Get bucket custom domains
-      description: "Returns the bucket's custom domains with their status and the CNAME target to point them at, as the portal's Settings › Custom domains tab shows. Requires scope: object-storage.read."
+      description: "Returns the bucket's custom domains with their status and the CNAME target to point them at, as the portal's Settings › Custom domains tab shows. Answers 404 when the bucket has no custom domain. Requires scope: object-storage.read."
       operationId: getBucketCustomDomains
       x-ibee-required-scope: object-storage.read
       parameters:
@@ -1492,7 +1486,7 @@ paths:
       tags:
         - Object Storage
       summary: Remove a bucket custom domain
-      description: "Removes a custom hostname from the bucket. Requires scope: object-storage.write."
+      description: "Removes a custom hostname from the bucket. Answers 400 when the bucket has no custom domain. Requires scope: object-storage.write."
       operationId: removeBucketCustomDomain
       x-ibee-required-scope: object-storage.write
       parameters:
@@ -3592,7 +3586,7 @@ paths:
       tags:
         - CloudVms
       summary: Create a cloud VM
-      description: "Creates a cloud VM. Returns an operation you can poll for status. Requires scope: vm.write."
+      description: "Creates a cloud VM. Returns an operation you can poll for status. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: createCloudVm
       x-ibee-required-scope: vm.write
       x-ibee-billing-admission: required
@@ -3661,7 +3655,7 @@ paths:
       tags:
         - CloudVms
       summary: Delete a cloud VM
-      description: "Deletes a cloud VM. Returns an operation you can poll for status. A VM with an automatically assigned public IP needs `public_ip_action` in the body. Requires scope: vm.write."
+      description: "Deletes a cloud VM. Returns an operation you can poll for status. A VM with an automatically assigned public IP needs `public_ip_action` in the body. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: deleteCloudVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -3704,7 +3698,7 @@ paths:
       tags:
         - CloudVms
       summary: Start a cloud VM
-      description: "Starts a stopped cloud VM. Requires scope: vm.write."
+      description: "Starts a stopped cloud VM. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: startCloudVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -3743,7 +3737,7 @@ paths:
       tags:
         - CloudVms
       summary: Stop a cloud VM
-      description: "Stops a running cloud VM. Requires scope: vm.write."
+      description: "Stops a running cloud VM. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: stopCloudVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -3782,7 +3776,7 @@ paths:
       tags:
         - CloudVms
       summary: Reboot a cloud VM
-      description: "Reboots a cloud VM. Requires scope: vm.write."
+      description: "Reboots a cloud VM. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: rebootCloudVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -3848,7 +3842,7 @@ paths:
     patch:
       tags: [CloudVms]
       summary: Update cloud VM access settings
-      description: "Adds or removes SSH keys, resets the Linux user password, or changes SSH password authentication on a cloud VM without rebooting it. Requires scope: vm.write."
+      description: "Adds or removes SSH keys, resets the Linux user password, or changes SSH password authentication on a cloud VM without rebooting it. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: updateCloudVmAccess
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -3912,7 +3906,7 @@ paths:
     post:
       tags: [CloudVms]
       summary: Resize a cloud VM
-      description: "Changes a cloud VM's CPU and memory, and optionally grows its root disk, after the same precheck the portal runs. Requires scope: vm.write."
+      description: "Changes a cloud VM's CPU and memory, and optionally grows its root disk, after the same precheck the portal runs. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: resizeCloudVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -3945,7 +3939,7 @@ paths:
     post:
       tags: [CloudVms]
       summary: Attach a volume to a cloud VM
-      description: "Attaches a persistent block storage volume to a cloud VM. Requires scope: vm.write."
+      description: "Attaches a persistent block storage volume to a cloud VM. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: attachCloudVmVolume
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -3978,7 +3972,7 @@ paths:
     post:
       tags: [CloudVms]
       summary: Detach a volume from a cloud VM
-      description: "Detaches a persistent block storage volume from a cloud VM. Unmount its filesystem in the guest first unless force is used. Requires scope: vm.write."
+      description: "Detaches a persistent block storage volume from a cloud VM. Unmount its filesystem in the guest first unless force is used. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: detachCloudVmVolume
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4169,7 +4163,7 @@ paths:
     post:
       tags: [CloudVms]
       summary: Restore a cloud VM snapshot
-      description: "Restores a cloud VM snapshot by replacing the VM, creating a new VM, or restoring a single volume. Requires scope: vm.write."
+      description: "Restores a cloud VM snapshot by replacing the VM, creating a new VM, or restoring a single volume. Asynchronous: the response carries `restore_id`; poll the restore status read until `status` is `succeeded`, `failed` or `cancelled`. If your client times out, read the status; never resubmit. Requires scope: vm.write."
       operationId: restoreCloudVmSnapshot
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4384,13 +4378,37 @@ paths:
     post:
       tags: [CloudVms]
       summary: Disable cloud VM backups
-      description: "Stops future automated backups for a cloud VM without deleting existing recovery points. Requires scope: vm.write."
+      description: "Stops future automated backups for a cloud VM without deleting existing recovery points. Send an empty JSON object body (`{}`); the virtualization engine rejects a request with no body. Requires scope: vm.write."
       operationId: disableCloudVmBackups
+      x-fern-examples:
+        - request: {}
+          response:
+            body:
+              organization_id: org-4f2a9c1b
+              workspace_id: "710995"
+              policy_id: bkp-pol-1c9e4a2d
+              vm_id: vm-7f3c2d1e
+              enabled: false
+              schedule: { frequency: daily, timezone: Asia/Kolkata, hour: 2, minute: 0, window_minutes: 60 }
+              retention_days: 7
+              full_backup_interval_days: 7
+              incremental_enabled: true
+              storage_backend: BACKUP-STD
+              created_at: "2026-10-01T02:00:00Z"
+              updated_at: "2026-10-29T09:15:00Z"
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/VmId"
+      requestBody:
+        description: "Optional. Send an empty JSON object; the virtualization engine rejects a request with no body."
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
       responses:
         "200":
           description: Backups disabled successfully.
@@ -4441,7 +4459,7 @@ paths:
     post:
       tags: [CloudVms]
       summary: Restore a cloud VM backup
-      description: "Restores a cloud VM backup recovery point by replacing the VM, creating a new VM, or restoring a single volume. Requires scope: vm.write."
+      description: "Restores a cloud VM backup recovery point by replacing the VM, creating a new VM, or restoring a single volume. Asynchronous: the response carries `restore_id`; poll the restore status read until `status` is `succeeded`, `failed` or `cancelled`. If your client times out, read the status; never resubmit. Requires scope: vm.write."
       operationId: restoreCloudVmBackup
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4622,7 +4640,7 @@ paths:
       tags:
         - GpuVms
       summary: Create a GPU VM
-      description: "Creates a GPU VM. Returns an operation you can poll for status. Requires scope: vm.write."
+      description: "Creates a GPU VM. Returns an operation you can poll for status. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: createGpuVm
       x-ibee-required-scope: vm.write
       x-ibee-billing-admission: required
@@ -4691,7 +4709,7 @@ paths:
       tags:
         - GpuVms
       summary: Delete a GPU VM
-      description: "Deletes a GPU VM. Returns an operation you can poll for status. A VM with an automatically assigned public IP needs `public_ip_action` in the body. Requires scope: vm.write."
+      description: "Deletes a GPU VM. Returns an operation you can poll for status. A VM with an automatically assigned public IP needs `public_ip_action` in the body. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: deleteGpuVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4734,7 +4752,7 @@ paths:
       tags:
         - GpuVms
       summary: Start a GPU VM
-      description: "Starts a stopped GPU VM. Requires scope: vm.write."
+      description: "Starts a stopped GPU VM. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: startGpuVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4773,7 +4791,7 @@ paths:
       tags:
         - GpuVms
       summary: Stop a GPU VM
-      description: "Stops a running GPU VM. Requires scope: vm.write."
+      description: "Stops a running GPU VM. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: stopGpuVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4812,7 +4830,7 @@ paths:
       tags:
         - GpuVms
       summary: Reboot a GPU VM
-      description: "Reboots a GPU VM. Requires scope: vm.write."
+      description: "Reboots a GPU VM. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: rebootGpuVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4878,7 +4896,7 @@ paths:
     patch:
       tags: [GpuVms]
       summary: Update GPU VM access settings
-      description: "Adds or removes SSH keys, resets the Linux user password, or changes SSH password authentication on a GPU VM without rebooting it or interrupting running GPU workloads. Requires scope: vm.write."
+      description: "Adds or removes SSH keys, resets the Linux user password, or changes SSH password authentication on a GPU VM without rebooting it or interrupting running GPU workloads. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: updateGpuVmAccess
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4938,7 +4956,7 @@ paths:
     post:
       tags: [GpuVms]
       summary: Resize a GPU VM
-      description: "Changes a GPU VM's CPU and memory, and optionally grows its root disk, after the same precheck the portal runs. Requires scope: vm.write."
+      description: "Changes a GPU VM's CPU and memory, and optionally grows its root disk, after the same precheck the portal runs. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: resizeGpuVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4969,7 +4987,7 @@ paths:
     post:
       tags: [GpuVms]
       summary: Attach a volume to a GPU VM
-      description: "Attaches a persistent block storage volume to a GPU VM, for datasets, checkpoints, or model weights. Requires scope: vm.write."
+      description: "Attaches a persistent block storage volume to a GPU VM, for datasets, checkpoints, or model weights. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: attachGpuVmVolume
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -5000,7 +5018,7 @@ paths:
     post:
       tags: [GpuVms]
       summary: Detach a volume from a GPU VM
-      description: "Detaches a persistent block storage volume from a GPU VM. Stop jobs using it and unmount its filesystem in the guest first unless force is used. Requires scope: vm.write."
+      description: "Detaches a persistent block storage volume from a GPU VM. Stop jobs using it and unmount its filesystem in the guest first unless force is used. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client times out, read the status; never resubmit the request. Requires scope: vm.write."
       operationId: detachGpuVmVolume
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -5189,7 +5207,7 @@ paths:
     post:
       tags: [GpuVms]
       summary: Restore a GPU VM snapshot
-      description: "Restores a GPU VM snapshot by replacing the VM, creating a new GPU VM, or restoring a single volume. Requires scope: vm.write."
+      description: "Restores a GPU VM snapshot by replacing the VM, creating a new GPU VM, or restoring a single volume. Asynchronous: the response carries `restore_id`; poll the restore status read until `status` is `succeeded`, `failed` or `cancelled`. If your client times out, read the status; never resubmit. Requires scope: vm.write."
       operationId: restoreGpuVmSnapshot
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -5404,13 +5422,37 @@ paths:
     post:
       tags: [GpuVms]
       summary: Disable GPU VM backups
-      description: "Stops future automated backups for a GPU VM without deleting existing recovery points. Requires scope: vm.write."
+      description: "Stops future automated backups for a GPU VM without deleting existing recovery points. Send an empty JSON object body (`{}`); the virtualization engine rejects a request with no body. Requires scope: vm.write."
       operationId: disableGpuVmBackups
+      x-fern-examples:
+        - request: {}
+          response:
+            body:
+              organization_id: org-4f2a9c1b
+              workspace_id: "710995"
+              policy_id: bkp-pol-1c9e4a2d
+              vm_id: gpu-7f3c2d1e
+              enabled: false
+              schedule: { frequency: daily, timezone: Asia/Kolkata, hour: 2, minute: 0, window_minutes: 60 }
+              retention_days: 7
+              full_backup_interval_days: 7
+              incremental_enabled: true
+              storage_backend: BACKUP-STD
+              created_at: "2026-10-01T02:00:00Z"
+              updated_at: "2026-10-29T09:15:00Z"
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/VmId"
+      requestBody:
+        description: "Optional. Send an empty JSON object; the virtualization engine rejects a request with no body."
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
       responses:
         "200":
           description: Backups disabled successfully.
@@ -5461,7 +5503,7 @@ paths:
     post:
       tags: [GpuVms]
       summary: Restore a GPU VM backup
-      description: "Restores a GPU VM backup recovery point by replacing the VM, creating a new GPU VM, or restoring a single volume. Requires scope: vm.write."
+      description: "Restores a GPU VM backup recovery point by replacing the VM, creating a new GPU VM, or restoring a single volume. Asynchronous: the response carries `restore_id`; poll the restore status read until `status` is `succeeded`, `failed` or `cancelled`. If your client times out, read the status; never resubmit. Requires scope: vm.write."
       operationId: restoreGpuVmBackup
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -5684,7 +5726,7 @@ paths:
     post:
       tags: [BlockStorage]
       summary: Create block-storage volume
-      description: The public edge resolves authoritative pricing from the server-owned product catalog and validates billing before forwarding this request to the existing portal volume flow. Client-supplied price or billing catalog objects are not accepted.
+      description: "The public edge resolves authoritative pricing from the server-owned product catalog and validates billing before forwarding this request to the existing portal volume flow. Client-supplied price or billing catalog objects are not accepted. Asynchronous: the response carries the volume operation; poll `GET /block-storage/volumes/{volume_id}/operations` until its `status` is `succeeded` or `failed`."
       operationId: createBlockVolume
       x-ibee-required-scope: block-storage.write
       x-ibee-billing-admission: required
@@ -5732,7 +5774,7 @@ paths:
     delete:
       tags: [BlockStorage]
       summary: Delete block-storage volume
-      description: "Permanently deletes a block storage volume and its data. Requires scope: block-storage.write."
+      description: "Permanently deletes a block storage volume and its data. Asynchronous: the response carries the volume operation; poll `GET /block-storage/volumes/{volume_id}/operations` until its `status` is `succeeded` or `failed`. Requires scope: block-storage.write."
       operationId: deleteBlockVolume
       x-ibee-required-scope: block-storage.write
       parameters:
@@ -5781,7 +5823,7 @@ paths:
     post:
       tags: [BlockStorage]
       summary: Resize block-storage volume
-      description: Block volumes can only be increased in size.
+      description: "Block volumes can only be increased in size. Asynchronous: the response carries the volume operation; poll `GET /block-storage/volumes/{volume_id}/operations` until its `status` is `succeeded` or `failed`."
       operationId: resizeBlockVolume
       x-ibee-required-scope: block-storage.write
       requestBody:
@@ -6200,6 +6242,8 @@ paths:
         202 while provisioning finishes in the background; poll the registry
         until `observed_state` is `ACTIVE`. Requires scope:
         container-registry.write.
+
+        Asynchronous: `observed_state` moves from `PROVISIONING` to `ACTIVE` or `ERROR`; poll `GET /container-registry/registries/{registry_id}`.
       operationId: createContainerRegistry
       x-ibee-required-scope: container-registry.write
       requestBody:
@@ -6257,7 +6301,7 @@ paths:
     delete:
       tags: [ContainerRegistry]
       summary: Delete registry
-      description: "Starts deleting a registry; returns 202 with `observed_state: DELETING`. The registry must be empty: 409 with `detail.code: registry_not_empty` otherwise (see Empty registry). The name is never reused. Requires scope: container-registry.write."
+      description: "Starts deleting a registry; returns 202 with `observed_state: DELETING`. The registry must be empty: 409 with `detail.code: registry_not_empty` otherwise (see Empty registry). The name is never reused. Asynchronous: `observed_state` moves through `DELETING` to `DELETED`; poll `GET /container-registry/registries/{registry_id}` until it answers 404 or `DELETED`. Requires scope: container-registry.write."
       operationId: deleteContainerRegistry
       x-ibee-required-scope: container-registry.write
       parameters:
@@ -6368,6 +6412,8 @@ paths:
         the original operation (202 while pending, 200 once applied); the same
         key with a different plan returns 409. Requires scope:
         container-registry.write.
+
+        Asynchronous: the package operation moves from `PENDING` to `APPLIED` or `CANCELLED`; read `GET /container-registry/registries/{registry_id}/package`.
       operationId: upgradeContainerRegistryPackage
       x-ibee-required-scope: container-registry.write
       parameters:
@@ -6557,7 +6603,7 @@ paths:
     delete:
       tags: [ContainerRegistry]
       summary: Delete repository
-      description: "Permanently deletes a repository and all of its images. Requires `confirm=true`. Requires scope: container-registry.write."
+      description: "Permanently deletes a repository and all of its images. Requires `confirm=true`. Deleting a repository that does not exist answers 200. Requires scope: container-registry.write."
       operationId: deleteContainerRegistryRepository
       x-ibee-required-scope: container-registry.write
       parameters:
@@ -6611,7 +6657,7 @@ paths:
     delete:
       tags: [ContainerRegistry]
       summary: Delete artifact
-      description: "Permanently deletes one image and every tag that points to it. Requires `confirm=true`. Requires scope: container-registry.write."
+      description: "Permanently deletes one image and every tag that points to it. Requires `confirm=true`. Deleting an artifact that does not exist answers 200. Requires scope: container-registry.write."
       operationId: deleteContainerRegistryArtifact
       x-ibee-required-scope: container-registry.write
       parameters:

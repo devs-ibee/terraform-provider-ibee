@@ -182,8 +182,7 @@ func TestComputeRecoveryCatalogContractLifecycle(t *testing.T) {
 				snapshot := map[string]any{"snapshot_set_id": "snap", "vm_id": "vm-1", "name": "snapshot", "capture_scope": "root_only", "status": "succeeded", "recovery_point_id": "rp", "billing_catalog": catalog}
 				client := computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 					var body map[string]any
-					// backups/disable is bodyless in the contract.
-					if req.Method != "GET" && req.Method != "DELETE" && !strings.HasSuffix(req.URL.Path, "/backups/disable") {
+					if req.Method != "GET" && req.Method != "DELETE" {
 						dec := json.NewDecoder(req.Body)
 						dec.UseNumber()
 						if err := dec.Decode(&body); err != nil {

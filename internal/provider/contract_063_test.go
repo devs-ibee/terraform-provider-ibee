@@ -20,7 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
-// Tests for the behaviour public API contract 0.6.3 asks of the provider.
+// Tests for the behaviour public API contract 0.7.0 (0.6.3 plus the backups/disable body) asks of the provider.
 
 // dataSourceRead runs a data source with the given configuration values.
 func dataSourceRead(t *testing.T, d datasource.DataSource, values map[string]attr.Value) datasource.ReadResponse {
@@ -154,8 +154,8 @@ func TestBackupPolicyUpdateAndDisableBodies(t *testing.T) {
 	del := resource.DeleteResponse{}
 	r.Delete(context.Background(), resource.DeleteRequest{State: update.State}, &del)
 	computeNoErrors(t, del.Diagnostics)
-	if disableBody != "" {
-		t.Fatalf("backups/disable is bodyless in the contract, got %q", disableBody)
+	if disableBody != "{}" {
+		t.Fatalf("backups/disable sends an empty JSON object (contract 0.7.0), got %q", disableBody)
 	}
 }
 

@@ -246,7 +246,8 @@ func (r *vmBackupPolicyResource) Delete(ctx context.Context, req resource.Delete
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	err := r.client.do(ctx, http.MethodPost, r.route(m.VmID.ValueString(), "disable"), nil, nil)
+	// Contract 0.7.0: send an empty JSON object; the virtualization engine refuses a request with no body.
+	err := r.client.do(ctx, http.MethodPost, r.route(m.VmID.ValueString(), "disable"), map[string]any{}, nil)
 	if err != nil && !IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to disable backups", err.Error())
 	}

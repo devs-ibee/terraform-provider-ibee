@@ -2,7 +2,7 @@
 
 ## 0.7.0
 
-Moves the provider to public API contract 0.6.3 (vendored at `contract/ibee-cloud.yaml`) and adds Container Registry. The public API now runs the portal's own checks, so the provider is a thin layer over it: each change is one API operation, settings that are not configured are not sent (the API's defaults apply and the API's values are recorded), and the API decides prices, eligibility, limits and lifecycle. The provider has no validation, defaults or rules of its own; the only value check is a contract enum (`ibee_s3_credential.permission_type`). The one convenience left is the VM `billing_interval`: the provider builds `billing_catalog` from `GET /compute/plans`, as the portal does. Server errors are shown as the server sent them (status, code, message, request id).
+Moves the provider to public API contract 0.7.0 (vendored at `contract/ibee-cloud.yaml`) and adds Container Registry. The public API now runs the portal's own checks, so the provider is a thin layer over it: each change is one API operation, settings that are not configured are not sent (the API's defaults apply and the API's values are recorded), and the API decides prices, eligibility, limits and lifecycle. The provider has no validation, defaults or rules of its own; the only value check is a contract enum (`ibee_s3_credential.permission_type`). The one convenience left is the VM `billing_interval`: the provider builds `billing_catalog` from `GET /compute/plans`, as the portal does. Server errors are shown as the server sent them (status, code, message, request id).
 
 ### Breaking changes
 
@@ -43,7 +43,7 @@ Moves the provider to public API contract 0.6.3 (vendored at `contract/ibee-clou
 - `ibee_cloud_vm`, `ibee_gpu_vm`: `billing_interval` is `HOURLY` or `MONTHLY` (a one-month commitment; `YEARLY` no longer exists) and defaults to `HOURLY` for new VMs; an existing VM without a configured term keeps its recorded term, so upgrading never replaces a VM. Create sends the contract's `ComputeBillingSelection`: a copy of the plan's `billing_catalog` (keeping `price_currency`) with the whole matching `billing_options` entry merged in. When the plan lists no such entry the catalog is sent as listed and the API answers. The API refuses to delete or resize a committed VM (409 `VM_COMMITTED`).
 - `ibee_cloud_vm`, `ibee_gpu_vm`: a `plan_id` change calls `POST .../actions/resize` with the new plan's `cpu`, `ram_mb` and `disk_gb` only (resize-plan and resize-root-disk are gone). `ssh_key_ids` and `tags` have no provider default; the API's values are recorded.
 - `ibee_s3_credential`: destroy revokes the key (`POST /object-storage/credentials/{id}/revoke`) and then deletes it (`DELETE /object-storage/credentials/{id}`). A key revoked outside Terraform stays in state with `status = "revoked"` and destroy only deletes it. `name`, `permission_type`, `bucket_scope` and `allowed_buckets` are optional; the API's defaults apply. `permission_type` accepts the contract's values `admin_rw` (the API's default), `admin_ro`, `object_rw` and `object_ro`.
-- `ibee_cloud_vm_backup_policy`, `ibee_gpu_vm_backup_policy`: destroy calls `backups/disable` without a body, as the contract declares it. An update sends only the settings that changed.
+- `ibee_cloud_vm_backup_policy`, `ibee_gpu_vm_backup_policy`: destroy calls `backups/disable` with an empty JSON object (`{}`), as contract 0.7.0 declares it; the production virtualization engine refuses a request with no body. An update sends only the settings that changed.
 - Compute requests no longer send `requested_by` (removed from the contract). `ibee_vm_power` sends `force` only when it is set; detach-volume and block-volume delete no longer send `force`.
 - Removed client-side rules: attribute validators (except the contract enum above) and configuration checks (names, CIDRs, ports, enums, ranges, time zones, URLs, JSON shapes, scope combinations, purge targets), provider-chosen defaults (VPC, subnet, firewall rule, NAT, port-forwarding, CDN, load balancer, block volume, snapshot, bucket, secret store), the checks before create or destroy (existing configuration, attached volumes, NAT inventory and children, reserved IP ownership, bucket usage, secret rotation order), the VM power-state confirmation after a power operation, the response completeness checks that refused to save state, the token/endpoint environment check and the timeout range limits.
 - Retries: only reads (GET, HEAD) are retried, on 429, 502, 503 and 504. Writes are never retried: after any error the write may already have been applied. The identity access read (`GET /secret-store/identities/{id}/access`) is never retried, because every call mints a new AppRole secret ID.
@@ -51,7 +51,7 @@ Moves the provider to public API contract 0.6.3 (vendored at `contract/ibee-clou
 
 ### Development
 
-- `contract/ibee-cloud.yaml` is contract 0.6.3. Every request the provider sends is an operation in it; the list of tolerated off-contract routes is now empty.
+- `contract/ibee-cloud.yaml` is contract 0.7.0. Every request the provider sends is an operation in it; the list of tolerated off-contract routes is now empty.
 
 ## 0.6.0 (2026-10-19)
 
