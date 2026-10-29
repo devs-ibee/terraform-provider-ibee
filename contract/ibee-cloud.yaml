@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: IBEE Solutions API
-  version: 0.7.0
+  version: 0.7.1
   description: |
     Public API reference for IBEE Solutions.
 
@@ -4381,7 +4381,11 @@ paths:
       description: "Stops future automated backups for a cloud VM without deleting existing recovery points. Send an empty JSON object body (`{}`); the virtualization engine rejects a request with no body. Requires scope: vm.write."
       operationId: disableCloudVmBackups
       x-fern-examples:
-        - request: {}
+        - path-parameters:
+            vm_id: vm-7f3c2d1e
+          query-parameters:
+            workspace_id: "710995"
+          request: {}
           response:
             body:
               organization_id: org-4f2a9c1b
@@ -5425,7 +5429,11 @@ paths:
       description: "Stops future automated backups for a GPU VM without deleting existing recovery points. Send an empty JSON object body (`{}`); the virtualization engine rejects a request with no body. Requires scope: vm.write."
       operationId: disableGpuVmBackups
       x-fern-examples:
-        - request: {}
+        - path-parameters:
+            vm_id: gpu-7f3c2d1e
+          query-parameters:
+            workspace_id: "710995"
+          request: {}
           response:
             body:
               organization_id: org-4f2a9c1b
