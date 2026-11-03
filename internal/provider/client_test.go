@@ -148,3 +148,34 @@ func TestClientRedactsTokenAndCancelsRetry(t *testing.T) {
 		t.Fatalf("not cancelled: %v", err)
 	}
 }
+
+func TestPausedEmpty404RetainsTerraformState(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, body string
+		paused           bool
+	}{
+		{"paused bucket", "/object-storage/buckets/kept", "", true},
+		{"paused registry", "/container-registry/registries/kept", "", true},
+		{"real missing bucket", "/object-storage/buckets/missing", `{"detail":"Bucket not found"}`, false},
+		{"active VM missing", "/compute/cloud-vms/missing", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			client := NewClient(server.URL+"/v1", "test-token", "ws-1")
+			err := client.do(context.Background(), http.MethodGet, tc.path, nil, nil)
+			if err == nil {
+				t.Fatal("missing HTTP error")
+			}
+			if IsNotFound(err) == tc.paused {
+				t.Fatalf("wrong state-removal decision: %v", err)
+			}
+			if tc.paused && !strings.Contains(err.Error(), "temporarily paused") {
+				t.Fatal(err)
+			}
+		})
+	}
+}

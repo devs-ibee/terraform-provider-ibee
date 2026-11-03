@@ -2,6 +2,11 @@
 
 Manage IBEE infrastructure with Terraform.
 
+Object Storage and Container Registry public management APIs are temporarily paused.
+Their resources remain in the provider for compatibility. An empty 404 reports
+the pause and retains existing Terraform state; it is not treated as deletion.
+CDN remains available.
+
 [Getting started](docs/guides/terraform.md) · [Provider documentation](docs/index.md) · [Examples](examples/README.md)
 
 ## Requirements
