@@ -4533,11 +4533,10 @@ paths:
           $ref: '#/components/schemas/BillingInterval'
       - name: include_availability
         in: query
-        description: Include an advisory placement check. Requires site_id. This does
-          not reserve stock.
+        description: Check advisory placement by default when site_id is supplied.
+          Set false for pricing-only discovery. This does not reserve stock.
         schema:
           type: boolean
-          default: false
       - name: os_type
         in: query
         description: OS pool to check when include_availability is true.
