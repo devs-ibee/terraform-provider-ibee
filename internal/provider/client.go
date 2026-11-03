@@ -37,17 +37,18 @@ func NewClient(endpoint, token, workspaceID string) *Client {
 }
 
 type apiError struct {
-	Status             int
-	Body               string
-	Code               string
-	Message            string
-	Reason             string
-	RequiredScope      string
-	BillingSKUCode     string
-	AdmissionContextID string
-	RequestID          string
-	billingReason      bool
-	hasDetails         bool
+	Status                int
+	Body                  string
+	Code                  string
+	Message               string
+	Reason                string
+	RequiredScope         string
+	BillingSKUCode        string
+	AdmissionContextID    string
+	RequestID             string
+	billingReason         bool
+	hasDetails            bool
+	PublicOperationPaused bool
 }
 
 // Error relays the server's answer: status, code, message and request id.
@@ -72,8 +73,11 @@ func (e *apiError) Error() string {
 }
 func IsNotFound(err error) bool {
 	var ae *apiError
-	return errors.As(err, &ae) && ae.Status == http.StatusNotFound
+	return errors.As(err, &ae) && ae.Status == http.StatusNotFound && !ae.PublicOperationPaused
 }
+
+// An empty 404 from a paused management family is not a deletion signal.
+var pausedPublicAPIPath = regexp.MustCompile(`^/(?:v1/)?(?:object-storage|container-registry)(?:/|$)`)
 
 // neverRetriedRead matches the identity access read (under any version
 // prefix): every call of it mints a new AppRole credential, so a replay is
@@ -168,6 +172,11 @@ func (c *Client) doH(ctx context.Context, method, requestPath string, headers ma
 			break
 		}
 		apiErr := parseAPIError(res.StatusCode, data, res.Header.Get("X-Request-Id"), c.token)
+		if res.StatusCode == http.StatusNotFound && len(bytes.TrimSpace(data)) == 0 && pausedPublicAPIPath.MatchString(rel.Path) {
+			apiErr.PublicOperationPaused = true
+			apiErr.Code = "public_operation_temporarily_paused"
+			apiErr.Message = "This public API operation is temporarily paused. Existing Terraform state is retained; the empty 404 does not prove the resource was deleted."
+		}
 		if attempt < 3 && retryable(method, rel.Path, apiErr) {
 			delay := c.retryDelay * time.Duration(1<<attempt)
 			if value := res.Header.Get("Retry-After"); value != "" {
