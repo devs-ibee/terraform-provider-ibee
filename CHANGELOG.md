@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.0 (2026-11-03)
+
+- Update the vendored public API contract to 0.9.0 while retaining the paused Object
+  Storage and Container Registry resources, data sources and actions.
+- Explain empty 404 responses from the paused services. Resource reads preserve
+  Terraform state instead of treating a temporarily paused route as deletion.
+- Add the `ibee_vm_backup_create` action for cloud/GPU manual backups, with optional
+  policy billing-catalog inheritance and polling until completion.
+- Add the `ibee_vm_backup_restore_cancel` action for queued restores, preserving the
+  API's refusal for running restores and requiring confirmed cancellation.
+- Keep the existing signed draft release workflow and Terraform runtime baseline.
+
+
 ## 0.7.0 (2026-10-30)
 
 Moves the provider to public API contract 0.7.1 (vendored at `contract/ibee-cloud.yaml`) and adds Container Registry. The public API now runs the portal's own checks, so the provider is a thin layer over it: each change is one API operation, settings that are not configured are not sent (the API's defaults apply and the API's values are recorded), and the API decides prices, eligibility, limits and lifecycle. The provider has no validation, defaults or rules of its own; the only value check is a contract enum (`ibee_s3_credential.permission_type`). The one convenience left is the VM `billing_interval`: the provider builds `billing_catalog` from `GET /compute/plans`, as the portal does. Server errors are shown as the server sent them (status, code, message, request id).

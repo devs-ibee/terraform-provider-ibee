@@ -179,5 +179,6 @@ func (p *ibeeProvider) DataSources(_ context.Context) []func() datasource.DataSo
 func (p *ibeeProvider) Actions(_ context.Context) []func() action.Action {
 	return []func() action.Action{NewCDNPurgeAction, NewCDNVerifyDomainAction,
 		NewVmPowerAction, NewVmAccessAction, NewVmSnapshotRestoreAction, NewVmBackupRestoreAction,
+		NewVmBackupCreateAction, NewVmBackupRestoreCancelAction,
 	}
 }
