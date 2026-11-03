@@ -44,6 +44,10 @@ variable "site_id" {
 
 Browse highlighted resources: [Cloud VM](docs/resources/cloud_vm.md), [VPC](docs/resources/vpc.md), [Bucket](docs/resources/bucket.md), [CDN distribution](docs/resources/cdn_distribution.md), and [Container registry](docs/resources/container_registry.md). The [provider documentation](docs/index.md) lists all resources, data sources, and actions.
 
+Explicit Terraform actions can [start a manual VM backup](docs/actions/vm_backup_create.md)
+using its enabled policy and [cancel a queued backup restore](docs/actions/vm_backup_restore_cancel.md).
+These actions require Terraform 1.14 or later; ordinary plan and refresh do not invoke them.
+
 ## Contributing
 
 Contributions are welcome. Open an issue or pull request to get started.
