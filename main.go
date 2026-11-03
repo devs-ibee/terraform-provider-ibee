@@ -10,7 +10,7 @@ import (
 )
 
 // version is overridden at release time by goreleaser (-X main.version).
-var version = "0.7.0"
+var version = "0.7.1"
 
 func main() {
 	var debug bool
