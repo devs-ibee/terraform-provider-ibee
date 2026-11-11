@@ -381,11 +381,12 @@ func (f *computeTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if p == vmPath+"/actions/resize" && r.Method == "POST" {
-			// The contract's resize takes cpu, ram_mb and disk_gb only. The fixture
-			// applies the shape and reports the plan that has it.
+			// The contract's resize takes the target plan's cpu, ram_mb, disk_gb and
+			// billing_catalog. The fixture applies the shape and reports the plan that has it.
 			b := body()
-			if r.Header.Get("X-Idempotency-Key") == "" || len(b) != 3 || b["cpu"] == nil || b["ram_mb"] == nil || b["disk_gb"] == nil {
-				http.Error(w, "resize must carry a key and only cpu, ram_mb and disk_gb", 400)
+			catalog, _ := b["billing_catalog"].(map[string]any)
+			if r.Header.Get("X-Idempotency-Key") == "" || len(b) != 4 || b["cpu"] == nil || b["ram_mb"] == nil || b["disk_gb"] == nil || catalog["sku_code"] == nil || catalog["billing_interval"] == nil {
+				http.Error(w, "resize must carry a key and the plan's cpu, ram_mb, disk_gb and billing_catalog", 400)
 				return
 			}
 			f.resizes[kind]++
