@@ -43,7 +43,7 @@ resource "ibee_cloud_vm" "web" {
 | `name` | `string` | Required | VM name. |
 | `os_distro` | `string` | Required | Image OS distribution. |
 | `os_type` | `string` | Required | Operating system family, such as linux or windows. |
-| `plan_id` | `string` | Required | Plan from ibee_compute_plans. Create sends the plan's cpu, ram_mb and disk_gb. A change resizes the VM in place to the new plan's cpu, ram_mb and disk_gb through the resize operation; the API refuses changes it cannot make. |
+| `plan_id` | `string` | Required | Plan from ibee_compute_plans. Create sends the plan's cpu, ram_mb and disk_gb. A change resizes the VM in place through the resize operation, which sends the new plan's cpu, ram_mb, disk_gb and billing_catalog with the VM's billing_interval term merged in; the API refuses changes it cannot make. |
 | `private_ip` | `string` | Read-only |  |
 | `public_ip` | `string` | Read-only |  |
 | `ram_mb` | `number` | Read-only |  |

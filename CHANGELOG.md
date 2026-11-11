@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0 (2026-11-12)
+
+- Update the vendored public API contract to 0.10.0, still retaining the paused Object
+  Storage and Container Registry resources, data sources and actions.
+- Fix: a `plan_id` change on `ibee_cloud_vm` and `ibee_gpu_vm` now resizes the VM. The
+  resize sends the new plan's `cpu`, `ram_mb`, `disk_gb` and its `billing_catalog` with
+  the VM's `billing_interval` term merged in, the same selection a create builds. The
+  API refused 0.8.0's resize, which sent only the size (`400` "Plan changes require the
+  target billing_catalog").
+- Contract 0.10.0 also adds the organization wallet and top-up operations. They have no
+  resources or data sources: a wallet balance and a payment link are not infrastructure.
+
 ## 0.8.0 (2026-11-03)
 
 - Update the vendored public API contract to 0.9.0 while retaining the paused Object

@@ -104,7 +104,7 @@ func (r *cloudVmResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	resp.Schema = schema.Schema{Description: "A " + r.kind() + " VM. A plan_id change resizes the VM in place and an ssh_key_ids change updates its access in place; the API decides whether a change is allowed. Other configuration changes replace the VM. Imports use the VM ID.", Attributes: map[string]schema.Attribute{
 		"id":   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 		"name": required("VM name."), "site_id": required("Placement site from ibee_sites."), "template_id": required("Image template from ibee_images."), "os_distro": required("Image OS distribution."), "os_type": required("Operating system family, such as linux or windows."),
-		"plan_id":          schema.StringAttribute{Required: true, Description: "Plan from ibee_compute_plans. Create sends the plan's cpu, ram_mb and disk_gb. A change resizes the VM in place to the new plan's cpu, ram_mb and disk_gb through the resize operation; the API refuses changes it cannot make."},
+		"plan_id":          schema.StringAttribute{Required: true, Description: "Plan from ibee_compute_plans. Create sends the plan's cpu, ram_mb and disk_gb. A change resizes the VM in place through the resize operation, which sends the new plan's cpu, ram_mb, disk_gb and billing_catalog with the VM's billing_interval term merged in; the API refuses changes it cannot make."},
 		"billing_interval": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{billingIntervalDefault(), billingIntervalReplace()}, Description: "Billing term: HOURLY (default for new VMs) or MONTHLY, a one-month commitment. Create copies the plan's billing_catalog and merges in the matching entry of its billing_options; the API checks the selection. Omitting it on an existing VM keeps the recorded term. No API operation changes the term, so changing it replaces the VM; the API refuses to delete or resize a committed VM (409 VM_COMMITTED) and deleting a VM does not cancel contractual charges."},
 		"cpu":              schema.Int64Attribute{Computed: true}, "ram_mb": schema.Int64Attribute{Computed: true}, "disk_gb": schema.Int64Attribute{Computed: true}, "gpu_count": schema.Int64Attribute{Computed: true}, "gpu_model": schema.StringAttribute{Computed: true},
 		"status": schema.StringAttribute{Computed: true}, "public_ip": schema.StringAttribute{Computed: true}, "private_ip": schema.StringAttribute{Computed: true},
@@ -260,20 +260,21 @@ func (r *cloudVmResource) submit(ctx context.Context, method, id, action string,
 	return r.client.waitOperation(ctx, accepted.OperationID, 0)
 }
 
-// resize moves the VM to another plan's shape in place: the resize operation
-// takes the new plan's cpu, ram_mb and disk_gb. The API runs its own precheck,
-// stops and starts the VM when it must, and answers with an error otherwise.
+// resize moves the VM to another plan in place. The resize operation takes the
+// target plan's cpu, ram_mb and disk_gb and its billing_catalog with the VM's
+// billing term merged in, as create does (contract 0.10.0); the compute engine
+// refuses a resize without the catalog. The API runs its own precheck, stops and
+// starts the VM when it must, and answers with an error otherwise.
 func (r *cloudVmResource) resize(ctx context.Context, state cloudVmModel, planID string) error {
-	p, err := r.client.findPlanForTerm(ctx, r.kind(), state.SiteID.ValueString(), planID, "", "")
+	interval := state.BillingInterval.ValueString()
+	if interval == "" {
+		interval = defaultBillingInterval
+	}
+	p, err := r.targetPlan(ctx, state.SiteID.ValueString(), planID, interval)
 	if err != nil {
 		return err
 	}
-	body := map[string]any{}
-	for key, value := range map[string]int64{"cpu": p.Cpu, "ram_mb": p.RamMb, "disk_gb": p.DiskGb} {
-		if value > 0 {
-			body[key] = value
-		}
-	}
+	body := map[string]any{"cpu": p.Cpu, "ram_mb": p.RamMb, "disk_gb": p.DiskGb, "billing_catalog": p.BillingCatalog}
 	return r.submit(ctx, http.MethodPost, state.ID.ValueString(), "resize", body)
 }
 

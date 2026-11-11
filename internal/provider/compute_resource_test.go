@@ -557,8 +557,8 @@ func TestComputeVMPlanChangeResizesInPlace(t *testing.T) {
 					requests = append(requests, req.Method+" "+req.URL.Path)
 					switch req.Method + " " + req.URL.Path {
 					case "GET /compute/plans":
-						if req.URL.Query().Has("billing_interval") {
-							t.Errorf("resize needs only the plan's shape: %v", req.URL.Query())
+						if req.URL.Query().Get("billing_interval") != "HOURLY" {
+							t.Errorf("resize looks the plan up for the VM's billing term: %v", req.URL.Query())
 						}
 						catalog := computeTestBillingCatalog("SKU-L", 40)
 						catalog["plan_id"] = "plan-large"
@@ -566,8 +566,12 @@ func TestComputeVMPlanChangeResizesInPlace(t *testing.T) {
 					case "POST /compute/" + kind + "-vms/vm-1/actions/resize":
 						var b map[string]any
 						_ = json.NewDecoder(req.Body).Decode(&b)
-						if req.Header.Get("X-Idempotency-Key") == "" || len(b) != 3 || b["cpu"] != float64(8) || b["ram_mb"] != float64(16384) || b["disk_gb"] != float64(160) {
-							t.Errorf("resize must send the new plan's cpu, ram_mb and disk_gb only: %v", b)
+						catalog, _ := b["billing_catalog"].(map[string]any)
+						if req.Header.Get("X-Idempotency-Key") == "" || len(b) != 4 || b["cpu"] != float64(8) || b["ram_mb"] != float64(16384) || b["disk_gb"] != float64(160) {
+							t.Errorf("resize must send the new plan's cpu, ram_mb, disk_gb and billing_catalog: %v", b)
+						}
+						if catalog["sku_code"] != "SKU-L" || catalog["plan_id"] != "plan-large" || catalog["billing_interval"] != "HOURLY" || catalog["committed"] != false || catalog["unit_price_minor"] != float64(40) {
+							t.Errorf("resize billing_catalog must be the new plan's catalog with the VM's HOURLY term merged in: %v", catalog)
 						}
 						if refused {
 							w.WriteHeader(http.StatusConflict)

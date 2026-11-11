@@ -1,13 +1,17 @@
 openapi: 3.1.0
 info:
   title: IBEE Solutions API
-  version: 0.9.0
+  version: 0.10.0
   description: 'Public API reference for IBEE Solutions.
 
 
     Object Storage and Container Registry public management APIs are temporarily
 
-    paused in development and production. Other API families remain available.
+    paused in development and production, and answer an empty 404 until they
+
+    resume. The portal, S3 and registry data traffic and existing resources are
+
+    not affected. Other API families remain available.
 
 
     Authenticate with a platform API token and pass a `workspace_id` query
@@ -72,6 +76,11 @@ tags:
   description: Deploy and manage GPU-accelerated virtual machines.
   x-fern-display-name: GPU VMs
   x-displayName: GPU VMs
+- name: Billing
+  description: Read the organization's billing state and top up its wallet. Billing,
+    wallet and quotas belong to the organization, across its workspaces.
+  x-fern-display-name: Billing
+  x-displayName: Billing
 security:
 - IbeeApiToken: []
 paths:
@@ -115,6 +124,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Secret Store
@@ -163,6 +176,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/stores/{store_id}:
     get:
       tags:
@@ -198,6 +215,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/stores/{store_id}/archive:
     post:
       tags:
@@ -234,6 +255,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/stores/{store_id}/unarchive:
     post:
       tags:
@@ -270,6 +295,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/stores/{store_id}/permanent:
     delete:
       tags:
@@ -308,6 +337,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/stores/{store_id}/secrets:
     get:
       tags:
@@ -352,6 +385,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Secret Store
@@ -404,6 +441,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/stores/{store_id}/secrets:batchIngest:
     post:
       tags:
@@ -458,6 +499,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/secrets/{secret_id}:
     get:
       tags:
@@ -493,6 +538,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Secret Store
@@ -528,6 +577,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/secrets/{secret_id}/value:
     get:
       tags:
@@ -562,6 +615,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     put:
       tags:
       - Secret Store
@@ -609,6 +666,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/secrets/{secret_id}/undelete:
     post:
       tags:
@@ -657,6 +718,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/secrets/{secret_id}/destroy:
     post:
       tags:
@@ -705,6 +770,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/secrets/{secret_id}/permanent:
     delete:
       tags:
@@ -742,6 +811,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/secrets/{secret_id}/versions:
     get:
       tags:
@@ -777,6 +850,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/secrets/{secret_id}/versions/{version}:
     get:
       tags:
@@ -813,6 +890,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/secrets/{secret_id}/rollback:
     post:
       tags:
@@ -860,6 +941,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/stores/{store_id}/identities:
     get:
       tags:
@@ -895,6 +980,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Secret Store
@@ -956,6 +1045,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/identities/{identity_id}:
     get:
       tags:
@@ -991,6 +1084,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Secret Store
@@ -1027,6 +1124,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/identities/{identity_id}/disable:
     post:
       tags:
@@ -1064,6 +1165,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/identities/{identity_id}/enable:
     post:
       tags:
@@ -1100,6 +1205,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/identities/{identity_id}/access:
     get:
       tags:
@@ -1139,6 +1248,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/identities/{identity_id}/rotate-secret-id:
     post:
       tags:
@@ -1176,6 +1289,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/identities/{identity_id}/revoke:
     post:
       tags:
@@ -1213,6 +1330,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/identities/{identity_id}/scopes:
     get:
       tags:
@@ -1248,6 +1369,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Secret Store
@@ -1299,6 +1424,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /secret-store/scopes/{scope_id}:
     delete:
       tags:
@@ -1327,6 +1456,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1376,6 +1509,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1431,6 +1568,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1469,6 +1610,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1516,6 +1661,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1555,6 +1704,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1594,6 +1747,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1640,6 +1797,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1656,9 +1817,9 @@ paths:
       description: 'Temporarily paused on the public API. This client method is retained
         for compatibility. An empty HTTP 404 means the public operation is paused;
         it does not prove the resource was deleted. Removes every lifecycle rule from
-        the bucket. Requires scope: object-storage.write.'
+        the bucket. Requires scope: object-storage.delete.'
       operationId: deleteBucketLifecycle
-      x-ibee-required-scope: object-storage.write
+      x-ibee-required-scope: object-storage.delete
       parameters:
       - $ref: '#/components/parameters/WorkspaceId'
       - $ref: '#/components/parameters/BucketName'
@@ -1679,6 +1840,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1717,6 +1882,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1762,6 +1931,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1778,9 +1951,9 @@ paths:
       description: 'Temporarily paused on the public API. This client method is retained
         for compatibility. An empty HTTP 404 means the public operation is paused;
         it does not prove the resource was deleted. Removes every CORS rule from the
-        bucket. Requires scope: object-storage.write.'
+        bucket. Requires scope: object-storage.delete.'
       operationId: deleteBucketCors
-      x-ibee-required-scope: object-storage.write
+      x-ibee-required-scope: object-storage.delete
       parameters:
       - $ref: '#/components/parameters/WorkspaceId'
       - $ref: '#/components/parameters/BucketName'
@@ -1801,6 +1974,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1841,6 +2018,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1889,6 +2070,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1928,6 +2113,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1974,6 +2163,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -1990,9 +2183,9 @@ paths:
       description: 'Temporarily paused on the public API. This client method is retained
         for compatibility. An empty HTTP 404 means the public operation is paused;
         it does not prove the resource was deleted. Removes every notification rule
-        from the bucket. Requires scope: object-storage.write.'
+        from the bucket. Requires scope: object-storage.delete.'
       operationId: deleteBucketNotifications
-      x-ibee-required-scope: object-storage.write
+      x-ibee-required-scope: object-storage.delete
       parameters:
       - $ref: '#/components/parameters/WorkspaceId'
       - $ref: '#/components/parameters/BucketName'
@@ -2013,6 +2206,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2053,6 +2250,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2103,6 +2304,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2121,9 +2326,9 @@ paths:
         for compatibility. An empty HTTP 404 means the public operation is paused;
         it does not prove the resource was deleted. Removes a custom hostname from
         the bucket. Answers 400 when the bucket has no custom domain. Requires scope:
-        object-storage.write.'
+        object-storage.delete.'
       operationId: removeBucketCustomDomain
-      x-ibee-required-scope: object-storage.write
+      x-ibee-required-scope: object-storage.delete
       parameters:
       - $ref: '#/components/parameters/WorkspaceId'
       - $ref: '#/components/parameters/BucketName'
@@ -2152,6 +2357,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2201,6 +2410,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2236,6 +2449,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2285,6 +2502,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2323,6 +2544,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2363,6 +2588,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2405,6 +2634,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -2448,6 +2681,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs:
     get:
       tags:
@@ -2487,6 +2724,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Vpcs
@@ -2530,6 +2771,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}:
     get:
       tags:
@@ -2565,6 +2810,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     patch:
       tags:
       - Vpcs
@@ -2610,6 +2859,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Vpcs
@@ -2643,6 +2896,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}/subnets:
     get:
       tags:
@@ -2679,6 +2936,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Vpcs
@@ -2725,6 +2986,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}/subnets/{subnet_id}:
     get:
       tags:
@@ -2761,6 +3026,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Vpcs
@@ -2795,6 +3064,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}/nodes:
     get:
       tags:
@@ -2829,6 +3102,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Vpcs
@@ -2875,6 +3152,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}/nodes/{vm_id}:
     delete:
       tags:
@@ -2908,6 +3189,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}/nat-gateways:
     get:
       tags:
@@ -2942,6 +3227,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Vpcs
@@ -2994,6 +3283,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}/nat-gateways/{nat_gateway_id}:
     delete:
       tags:
@@ -3036,6 +3329,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}/nat-gateways/{nat_gateway_id}/public-ip:
     put:
       tags:
@@ -3083,6 +3380,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}/nat-gateways/{nat_gateway_id}/port-forwarding-rules:
     get:
       tags:
@@ -3121,6 +3422,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Vpcs
@@ -3169,6 +3474,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/vpcs/{vpc_id}/nat-gateways/{nat_gateway_id}/port-forwarding-rules/{port_forwarding_rule_id}:
     patch:
       tags:
@@ -3218,6 +3527,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Vpcs
@@ -3252,6 +3565,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/reserved-ips:
     get:
       tags:
@@ -3291,6 +3608,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - ReservedIps
@@ -3340,6 +3661,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/reserved-ips/convert:
     post:
       tags:
@@ -3388,6 +3713,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/reserved-ips/{reserved_ip_id}:
     get:
       tags:
@@ -3423,6 +3752,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     patch:
       tags:
       - ReservedIps
@@ -3467,6 +3800,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - ReservedIps
@@ -3501,6 +3838,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/reserved-ips/{reserved_ip_id}/attach:
     post:
       tags:
@@ -3548,6 +3889,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/reserved-ips/{reserved_ip_id}/attach-direct:
     post:
       tags:
@@ -3594,6 +3939,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/reserved-ips/{reserved_ip_id}/detach:
     post:
       tags:
@@ -3631,6 +3980,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/reserved-ips/{reserved_ip_id}/move:
     post:
       tags:
@@ -3677,6 +4030,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/firewall-groups:
     get:
       tags:
@@ -3714,6 +4071,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Firewalls
@@ -3758,6 +4119,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/firewall-groups/{firewall_group_id}:
     get:
       tags:
@@ -3792,6 +4157,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Firewalls
@@ -3825,6 +4194,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/firewall-groups/{firewall_group_id}/rules:
     post:
       tags:
@@ -3870,6 +4243,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/firewall-groups/{firewall_group_id}/rules/{firewall_rule_id}:
     patch:
       tags:
@@ -3916,6 +4293,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Firewalls
@@ -3952,6 +4333,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/firewall-groups/{firewall_group_id}/attachments:
     get:
       tags:
@@ -3999,6 +4384,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Firewalls
@@ -4042,6 +4431,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/firewall-groups/{firewall_group_id}/attachments/{vm_id}:
     delete:
       tags:
@@ -4080,6 +4473,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/load-balancers:
     get:
       tags:
@@ -4157,6 +4554,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/load-balancers/l4:
     post:
       tags:
@@ -4206,6 +4607,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/load-balancers/l7:
     post:
       tags:
@@ -4255,6 +4660,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/load-balancers/{load_balancer_id}:
     get:
       tags:
@@ -4290,6 +4699,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - LoadBalancers
@@ -4322,6 +4735,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/load-balancers/l4/{load_balancer_id}:
     patch:
       tags:
@@ -4369,6 +4786,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/load-balancers/l7/{load_balancer_id}:
     patch:
       tags:
@@ -4416,6 +4837,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /networking/load-balancers/{load_balancer_id}/status:
     get:
       tags:
@@ -4451,6 +4876,160 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+  /billing/wallet:
+    get:
+      tags:
+      - Billing
+      summary: Get the organization wallet
+      description: 'Returns the wallet balance of the API token''s organization. Amounts
+        are integers in the currency''s minor unit (paise for INR, cents for USD).
+        The wallet belongs to the organization, so any workspace of the organization
+        returns the same wallet. Read-only: an organization without a wallet gets
+        404 `wallet_not_found` and nothing is created. The token''s principal also
+        needs permission to view the organization''s billing. Requires scope: billing.read.'
+      operationId: getBillingWallet
+      x-ibee-required-scope: billing.read
+      x-ibee-gateway-status: ready
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Wallet returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingWallet'
+              example:
+                organization_id: org_9f2c1a
+                currency: INR
+                status: ACTIVE
+                available_paid_balance_minor: 125000
+                available_promo_balance_minor: 50000
+                held_paid_balance_minor: 0
+                total_balance_minor: 175000
+                low_balance_threshold_minor: 50000
+                updated_at: '2026-11-09T08:30:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /billing/topups:
+    post:
+      tags:
+      - Billing
+      summary: Create a wallet top-up link
+      description: 'Creates a hosted payment page (Stripe Checkout or a Razorpay Payment
+        Link) that adds `amount_minor` to the API token''s organization wallet once
+        the customer pays. Open `checkout_url` in a browser; nothing is charged until
+        the customer pays there, and the wallet is credited only after the payment
+        succeeds (poll `GET /billing/wallet` to confirm). The gateway and currency
+        follow the organization''s billing profile. Billing applies its minimums and
+        refuses a frozen or closed wallet, an organization that is not billed, or
+        (first top-up) an amount below the first top-up minimum: 422 `topup_rejected`
+        with Billing''s `message`. An organization without a wallet gets 404 `wallet_not_found`;
+        no wallet is created. The token''s principal also needs permission to manage
+        the organization''s billing; a restricted or suspended organization can still
+        top up. Requires scope: billing.topup.'
+      operationId: createBillingTopup
+      x-ibee-required-scope: billing.topup
+      x-ibee-gateway-status: ready
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/BillingTopupIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBillingTopupRequest'
+            example:
+              amount_minor: 100000
+      responses:
+        '201':
+          description: Payment link created. Repeating the same `Idempotency-Key`
+            returns the same link.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingTopup'
+              example:
+                checkout_url: https://checkout.stripe.com/c/pay/cs_live_a1b2c3
+                gateway: stripe
+                amount_minor: 100000
+                currency: INR
+                expires_at: '2026-11-12T08:30:00Z'
+                payment_attempt_id: pa_7d1e9c
+                organization_id: org_9f2c1a
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: The organization has no wallet yet (`wallet_not_found`). Set
+            up billing in the IBEE portal; this call never creates a wallet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '422':
+          description: '`topup_rejected`: Billing refused the top-up, and `message`
+            says why (below the minimum or the first top-up minimum, wallet frozen
+            or closed, organization not billed). `validation_error`: the body is not
+            JSON or `amount_minor` is not a positive integer. `invalid_idempotency_key`:
+            `Idempotency-Key` is not 8 to 128 visible ASCII characters.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          description: 'Billing could not be reached, failed, or answered without
+            an https `checkout_url` (`bad_gateway`). Retry with the same `Idempotency-Key`:
+            if a link was created, you get that link.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: '`topup_unavailable`: top-up links are not configured on this
+            deployment. A gateway check can also be unavailable, as on every route
+            (`principal_authorization_unavailable` and the like).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /compute/sites:
     get:
       tags:
@@ -4484,6 +5063,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/plans:
     get:
       tags:
@@ -4577,6 +5160,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/images:
     get:
       tags:
@@ -4631,6 +5218,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/plans/snapshot-storage:
     get:
       tags:
@@ -4681,6 +5272,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/plans/backup-storage:
     get:
       tags:
@@ -4731,6 +5326,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms:
     get:
       tags:
@@ -4817,6 +5416,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - CloudVms
@@ -4872,6 +5475,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}:
     get:
       tags:
@@ -4907,16 +5514,22 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - CloudVms
       summary: Delete a cloud VM
       description: 'Deletes a cloud VM. Returns an operation you can poll for status.
         A VM with an automatically assigned public IP needs `public_ip_action` in
-        the body. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}`
-        until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your
-        client times out, read the status; never resubmit the request. Requires scope:
-        vm.write.'
+        the body. If the VM''s IP is already a Reserved IP, send no body: `release`
+        and `reserve` are both refused with 400. The IP stays in the workspace and
+        keeps billing until you release it from Reserved IPs. Asynchronous: the response
+        carries `operation_id`; poll `GET /compute/operations/{operation_id}` until
+        `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client
+        times out, read the status; never resubmit the request. Requires scope: vm.write.'
       operationId: deleteCloudVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -4961,6 +5574,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/actions/start:
     post:
       tags:
@@ -5010,6 +5627,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/actions/stop:
     post:
       tags:
@@ -5059,6 +5680,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/actions/reboot:
     post:
       tags:
@@ -5108,6 +5733,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/metrics:
     get:
       tags:
@@ -5144,6 +5773,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/actions/access:
     patch:
       tags:
@@ -5197,6 +5830,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/actions/resize/precheck:
     post:
       tags:
@@ -5215,7 +5852,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VmResizeRequest'
+              $ref: '#/components/schemas/VmResizePrecheckRequest'
       responses:
         '200':
           description: Resize decision returned successfully.
@@ -5243,16 +5880,22 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/actions/resize:
     post:
       tags:
       - CloudVms
       summary: Resize a cloud VM
-      description: 'Changes a cloud VM''s CPU and memory, and optionally grows its
-        root disk, after the same precheck the portal runs. Asynchronous: the response
-        carries `operation_id`; poll `GET /compute/operations/{operation_id}` until
-        `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client
-        times out, read the status; never resubmit the request. Requires scope: vm.write.'
+      description: 'Moves a cloud VM to another plan: send the target plan''s `cpu`,
+        `ram_mb`, `disk_gb` and `billing_catalog` (see the request body). The root
+        disk can grow, never shrink. The same precheck the portal runs is applied
+        first. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}`
+        until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your
+        client times out, read the status; never resubmit the request. Requires scope:
+        vm.write.'
       operationId: resizeCloudVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -5295,6 +5938,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/actions/attach-volume:
     post:
       tags:
@@ -5347,6 +5994,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/actions/detach-volume:
     post:
       tags:
@@ -5400,6 +6051,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/events:
     get:
       tags:
@@ -5447,6 +6102,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/metrics/timeseries:
     get:
       tags:
@@ -5511,6 +6170,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/metrics/bandwidth:
     get:
       tags:
@@ -5557,6 +6220,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/snapshots:
     post:
       tags:
@@ -5607,6 +6274,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     get:
       tags:
       - CloudVms
@@ -5658,6 +6329,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vm-snapshots/{snapshot_set_id}/actions/restore:
     post:
       tags:
@@ -5716,6 +6391,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vm-snapshots:
     get:
       tags:
@@ -5774,6 +6453,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vm-snapshots/{snapshot_set_id}:
     get:
       tags:
@@ -5810,6 +6493,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - CloudVms
@@ -5849,6 +6536,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vm-snapshots/restores/{restore_id}:
     get:
       tags:
@@ -5885,6 +6576,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/backups/policy:
     get:
       tags:
@@ -5921,6 +6616,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     patch:
       tags:
       - CloudVms
@@ -5966,6 +6665,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/backups/enable:
     post:
       tags:
@@ -6014,6 +6717,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/backups/disable:
     post:
       tags:
@@ -6089,13 +6796,21 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/backups/runs:
     get:
       tags:
       - CloudVms
       summary: List cloud VM recovery points
-      description: 'Lists backup runs and usable recovery points for one cloud VM.
-        Requires scope: vm.read.'
+      description: 'Lists the finished, successful backup runs (usable recovery points)
+        of one cloud VM, newest first. A run being deleted shows `status: deleting`.
+        Queued, running, failed and cancelled runs are not listed: read a run by ID
+        with `GET /compute/cloud-vm-backups/runs/{run_id}` to see those states. The
+        backup policy''s `last_status` shows how the latest finished run ended. Requires
+        scope: vm.read.'
       operationId: listCloudVmBackupRuns
       x-ibee-required-scope: vm.read
       x-ibee-gateway-status: ready
@@ -6142,6 +6857,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - CloudVms
@@ -6190,6 +6909,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vms/{vm_id}/backups/actions/restore:
     post:
       tags:
@@ -6241,14 +6964,20 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vm-backups/runs:
     get:
       tags:
       - CloudVms
       summary: List Cloud VM backup runs in the workspace
-      description: 'Lists backup runs and recovery points of every Cloud VM in the
-        workspace, as the portal''s Backups page does. Filter by `vm_id` or `status`.
-        Requires scope: vm.read.'
+      description: 'Lists the finished, successful backup runs (usable recovery points)
+        of every Cloud VM in the workspace, newest first, as the portal''s Backups
+        page does. A run being deleted shows `status: deleting`. Queued, running,
+        failed and cancelled runs are not listed: read a run by ID with `GET /compute/cloud-vm-backups/runs/{run_id}`
+        to see those states. Filter by `vm_id` or `status`. Requires scope: vm.read.'
       operationId: listAllCloudVmBackupRuns
       x-ibee-required-scope: vm.read
       x-ibee-gateway-status: ready
@@ -6263,7 +6992,8 @@ paths:
           minLength: 1
       - name: status
         description: Return only runs in these states. Repeat the parameter for several
-          states.
+          states. Only `succeeded` and `deleting` can match; any other state returns
+          an empty list.
         in: query
         required: false
         style: form
@@ -6310,6 +7040,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vm-backups/runs/{run_id}:
     get:
       tags:
@@ -6346,6 +7080,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - CloudVms
@@ -6399,6 +7137,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/cloud-vm-backups/restores/{restore_id}:
     get:
       tags:
@@ -6435,6 +7177,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms:
     get:
       tags:
@@ -6504,6 +7250,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - GpuVms
@@ -6559,6 +7309,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}:
     get:
       tags:
@@ -6594,16 +7348,22 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - GpuVms
       summary: Delete a GPU VM
       description: 'Deletes a GPU VM. Returns an operation you can poll for status.
         A VM with an automatically assigned public IP needs `public_ip_action` in
-        the body. Asynchronous: the response carries `operation_id`; poll `GET /compute/operations/{operation_id}`
-        until `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your
-        client times out, read the status; never resubmit the request. Requires scope:
-        vm.write.'
+        the body. If the VM''s IP is already a Reserved IP, send no body: `release`
+        and `reserve` are both refused with 400. The IP stays in the workspace and
+        keeps billing until you release it from Reserved IPs. Asynchronous: the response
+        carries `operation_id`; poll `GET /compute/operations/{operation_id}` until
+        `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client
+        times out, read the status; never resubmit the request. Requires scope: vm.write.'
       operationId: deleteGpuVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -6648,6 +7408,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/actions/start:
     post:
       tags:
@@ -6697,6 +7461,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/actions/stop:
     post:
       tags:
@@ -6746,6 +7514,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/actions/reboot:
     post:
       tags:
@@ -6795,6 +7567,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/metrics:
     get:
       tags:
@@ -6831,6 +7607,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/actions/access:
     patch:
       tags:
@@ -6884,6 +7664,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/actions/resize/precheck:
     post:
       tags:
@@ -6903,7 +7687,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VmResizeRequest'
+              $ref: '#/components/schemas/VmResizePrecheckRequest'
       responses:
         '200':
           description: Resize decision returned successfully.
@@ -6931,16 +7715,22 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/actions/resize:
     post:
       tags:
       - GpuVms
       summary: Resize a GPU VM
-      description: 'Changes a GPU VM''s CPU and memory, and optionally grows its root
-        disk, after the same precheck the portal runs. Asynchronous: the response
-        carries `operation_id`; poll `GET /compute/operations/{operation_id}` until
-        `status` is `succeeded`, `failed`, `cancelled` or `timed_out`. If your client
-        times out, read the status; never resubmit the request. Requires scope: vm.write.'
+      description: 'Moves a GPU VM to another plan with the same GPU: send the target
+        plan''s `cpu`, `ram_mb`, `disk_gb` and `billing_catalog` (see the request
+        body). The root disk can grow, never shrink. The same precheck the portal
+        runs is applied first. Asynchronous: the response carries `operation_id`;
+        poll `GET /compute/operations/{operation_id}` until `status` is `succeeded`,
+        `failed`, `cancelled` or `timed_out`. If your client times out, read the status;
+        never resubmit the request. Requires scope: vm.write.'
       operationId: resizeGpuVm
       x-ibee-required-scope: vm.write
       x-ibee-gateway-status: ready
@@ -6983,6 +7773,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/actions/attach-volume:
     post:
       tags:
@@ -7035,6 +7829,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/actions/detach-volume:
     post:
       tags:
@@ -7088,6 +7886,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/events:
     get:
       tags:
@@ -7135,6 +7937,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/metrics/timeseries:
     get:
       tags:
@@ -7199,6 +8005,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/metrics/bandwidth:
     get:
       tags:
@@ -7245,6 +8055,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/snapshots:
     post:
       tags:
@@ -7295,6 +8109,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     get:
       tags:
       - GpuVms
@@ -7346,6 +8164,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vm-snapshots/{snapshot_set_id}/actions/restore:
     post:
       tags:
@@ -7404,6 +8226,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vm-snapshots:
     get:
       tags:
@@ -7462,6 +8288,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vm-snapshots/{snapshot_set_id}:
     get:
       tags:
@@ -7498,6 +8328,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - GpuVms
@@ -7537,6 +8371,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vm-snapshots/restores/{restore_id}:
     get:
       tags:
@@ -7573,6 +8411,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/backups/policy:
     get:
       tags:
@@ -7609,6 +8451,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     patch:
       tags:
       - GpuVms
@@ -7654,6 +8500,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/backups/enable:
     post:
       tags:
@@ -7702,6 +8552,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/backups/disable:
     post:
       tags:
@@ -7777,12 +8631,20 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/backups/runs:
     get:
       tags:
       - GpuVms
       summary: List GPU VM recovery points
-      description: 'Lists backup runs and usable recovery points for one GPU VM. Requires
+      description: 'Lists the finished, successful backup runs (usable recovery points)
+        of one GPU VM, newest first. A run being deleted shows `status: deleting`.
+        Queued, running, failed and cancelled runs are not listed: read a run by ID
+        with `GET /compute/gpu-vm-backups/runs/{run_id}` to see those states. The
+        backup policy''s `last_status` shows how the latest finished run ended. Requires
         scope: vm.read.'
       operationId: listGpuVmBackupRuns
       x-ibee-required-scope: vm.read
@@ -7830,6 +8692,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - GpuVms
@@ -7878,6 +8744,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vms/{vm_id}/backups/actions/restore:
     post:
       tags:
@@ -7929,14 +8799,20 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vm-backups/runs:
     get:
       tags:
       - GpuVms
       summary: List Gpu VM backup runs in the workspace
-      description: 'Lists backup runs and recovery points of every Gpu VM in the workspace,
-        as the portal''s Backups page does. Filter by `vm_id` or `status`. Requires
-        scope: vm.read.'
+      description: 'Lists the finished, successful backup runs (usable recovery points)
+        of every Gpu VM in the workspace, newest first, as the portal''s Backups page
+        does. A run being deleted shows `status: deleting`. Queued, running, failed
+        and cancelled runs are not listed: read a run by ID with `GET /compute/gpu-vm-backups/runs/{run_id}`
+        to see those states. Filter by `vm_id` or `status`. Requires scope: vm.read.'
       operationId: listAllGpuVmBackupRuns
       x-ibee-required-scope: vm.read
       x-ibee-gateway-status: ready
@@ -7951,7 +8827,8 @@ paths:
           minLength: 1
       - name: status
         description: Return only runs in these states. Repeat the parameter for several
-          states.
+          states. Only `succeeded` and `deleting` can match; any other state returns
+          an empty list.
         in: query
         required: false
         style: form
@@ -7998,6 +8875,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vm-backups/runs/{run_id}:
     get:
       tags:
@@ -8034,6 +8915,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - GpuVms
@@ -8087,6 +8972,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vm-backups/restores/{restore_id}:
     get:
       tags:
@@ -8123,6 +9012,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/operations/{operation_id}:
     get:
       tags:
@@ -8165,6 +9058,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /block-storage/plans:
     get:
       tags:
@@ -8221,6 +9118,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /block-storage/volumes:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8255,6 +9156,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - BlockStorage
@@ -8303,6 +9208,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /block-storage/volumes/{volume_id}:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8338,6 +9247,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - BlockStorage
@@ -8381,6 +9294,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /block-storage/volumes/{volume_id}/operations:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8418,6 +9335,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /block-storage/volumes/{volume_id}/resize:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8464,6 +9385,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /cdn/distributions:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8495,6 +9420,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Cdn
@@ -8542,6 +9471,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /cdn/distributions/{distribution_id}:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8577,6 +9510,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     patch:
       tags:
       - Cdn
@@ -8616,6 +9553,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Cdn
@@ -8644,6 +9585,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /cdn/distributions/{distribution_id}/metrics:
     get:
       tags:
@@ -8691,6 +9636,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /cdn/distributions/{distribution_id}/website-config:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8726,6 +9675,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     put:
       tags:
       - Cdn
@@ -8765,6 +9718,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Cdn
@@ -8798,6 +9755,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /cdn/distributions/{distribution_id}/custom-domains:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8833,6 +9794,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     post:
       tags:
       - Cdn
@@ -8878,6 +9843,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /cdn/distributions/{distribution_id}/custom-domains/{domain}:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8914,6 +9883,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
     delete:
       tags:
       - Cdn
@@ -8943,6 +9916,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /cdn/distributions/{distribution_id}/custom-domains/{domain}/verify:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -8981,6 +9958,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /cdn/distributions/{distribution_id}/purge:
     parameters:
     - $ref: '#/components/parameters/WorkspaceId'
@@ -9032,6 +10013,10 @@ paths:
           $ref: '#/components/responses/Locked'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -9078,6 +10063,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9117,6 +10106,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9191,6 +10184,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9230,6 +10227,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9274,6 +10275,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9325,6 +10330,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9366,6 +10375,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9405,6 +10418,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9482,6 +10499,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9531,6 +10552,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9587,6 +10612,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9629,6 +10658,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9668,6 +10701,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9735,6 +10772,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9787,6 +10828,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9832,6 +10877,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9879,6 +10928,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9923,6 +10976,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9961,6 +11018,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10007,6 +11068,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10047,6 +11112,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10161,6 +11230,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10206,6 +11279,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10261,6 +11338,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10313,6 +11394,10 @@ paths:
           $ref: '#/components/responses/ContainerRegistryValidationError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10366,6 +11451,10 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10402,6 +11491,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '423':
+          $ref: '#/components/responses/Locked'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -10412,6 +11503,10 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /compute/gpu-vm-backups/restores/{restore_id}/actions/cancel:
     post:
       tags:
@@ -10441,6 +11536,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '423':
+          $ref: '#/components/responses/Locked'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -10451,6 +11548,10 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
 components:
   securitySchemes:
     IbeeApiToken:
@@ -10700,13 +11801,37 @@ components:
         minLength: 1
         maxLength: 256
         pattern: ^[!-~]{1,256}$
-      description: Retry the identical networking create with the same key to receive
-        its dispatched create outcome for 24 hours. The key is scoped to organization,
-        workspace and path. Reusing a dispatched key with a different request returns
-        409. Admission or validation refusals before a create is dispatched may be
-        retried after correcting them. A pending or uncertain first request returns
-        409 with Retry-After; keep using the same body and key while its outcome is
-        checked.
+      description: 'Retry key for this create. Send the same key and the same body
+        on every retry. The key is scoped to organization, workspace and path.
+
+        - Create completed: you get the original answer for 24 hours, even if the
+        plan limit has since been reached.
+
+        - Refused or never sent: nothing was created, so the key is free to use again,
+        including with a corrected body.
+
+        - Unknown outcome (timeout, server error, lost connection): 409 `idempotency_in_progress`
+        with `Retry-After`. This usually lasts 30 seconds and at most 3 minutes. Keep
+        retrying with the same key and body. The next retry returns the Reserved IP,
+        subnet or NAT gateway. For a VPC, firewall group or port forward, it either
+        creates the resource or answers 409 "already exists".
+
+        - Changed body, while the outcome is unresolved or after the create completed:
+        409 `idempotency_conflict`.
+
+        - New key at the plan limit: 402.'
+    BillingTopupIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: ^[!-~]{8,128}$
+      description: Retry key for this top-up, scoped to the organization's wallet.
+        A repeated key returns the payment link (and amount) it first created. Without
+        a key, every call creates a new payment link.
     ContainerRegistryId:
       name: registry_id
       in: path
@@ -10835,7 +11960,11 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: The request conflicts with the current resource state.
+      description: 'The request conflicts with the current resource state. `message`
+        gives the product''s reason where it is safe to show. A networking create
+        with a retry key can also answer `idempotency_in_progress` (with `Retry-After`:
+        keep retrying with the same key and body) or `idempotency_conflict` (the body
+        changed).'
       content:
         application/json:
           schema:
@@ -10881,7 +12010,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     GatewayTimeout:
-      description: The gateway or a dependency timed out. The response may be a portal
+      description: The gateway or a dependency timed out. The response may be a JSON
         error, a Cloudflare problem-details object, HTML or plain text. A timed-out
         create may still have succeeded; use the same idempotency key where supported.
       content:
@@ -10904,6 +12033,47 @@ components:
         text/html:
           schema:
             type: string
+        text/plain:
+          schema:
+            type: string
+    BadGateway:
+      description: A service behind the gateway failed or sent an answer that could
+        not be used (`bad_gateway`). The response may be a JSON error, a Cloudflare
+        problem-details object, HTML or plain text. Reads can be retried. A write
+        may still have taken effect, so check the resource before repeating it, or
+        retry a networking create with the same key and body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+        application/problem+json:
+          schema:
+            type: object
+            properties:
+              type:
+                type: string
+              title:
+                type: string
+              status:
+                type: integer
+              detail:
+                type: string
+            additionalProperties: true
+        text/html:
+          schema:
+            type: string
+        text/plain:
+          schema:
+            type: string
+    ContentTooLarge:
+      description: The request body is too large. Keep bodies at or below 64 KiB (65,536
+        bytes). A billable create over that size answers `request_body_too_large`;
+        a much larger body can be refused earlier with a plain-text answer. Nothing
+        was changed. Send a smaller body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
         text/plain:
           schema:
             type: string
@@ -10985,6 +12155,109 @@ components:
         timezone:
           description: IANA time zone of the site.
           type: string
+          nullable: true
+    CreateBillingTopupRequest:
+      description: Body of `POST /billing/topups`.
+      type: object
+      required:
+      - amount_minor
+      properties:
+        amount_minor:
+          description: Amount to add, an integer in the wallet currency's minor unit
+            (paise for INR, cents for USD). Billing applies its minimum.
+          type: integer
+          format: int64
+          minimum: 1
+          example: 100000
+    BillingTopup:
+      description: A hosted payment page for a wallet top-up, returned by `POST /billing/topups`.
+      type: object
+      required:
+      - checkout_url
+      - gateway
+      - amount_minor
+      - currency
+      - expires_at
+      - payment_attempt_id
+      - organization_id
+      properties:
+        checkout_url:
+          description: The https payment page to open in a browser.
+          type: string
+          format: uri
+        gateway:
+          description: The payment gateway serving the page.
+          type: string
+          enum:
+          - stripe
+          - razorpay
+        amount_minor:
+          description: Amount the page charges, in the currency's minor unit.
+          type: integer
+          format: int64
+        currency:
+          description: ISO 4217 currency of the amount, such as `INR` or `USD`.
+          type: string
+        expires_at:
+          description: When the page stops accepting payment, if it expires.
+          type: string
+          format: date-time
+          nullable: true
+        payment_attempt_id:
+          description: Billing's id for this payment attempt.
+          type: string
+        organization_id:
+          description: The API token's organization, whose wallet is credited.
+          type: string
+    BillingWallet:
+      description: The organization's wallet, returned by `GET /billing/wallet`. Amounts
+        are integers in the currency's minor unit.
+      type: object
+      required:
+      - organization_id
+      - currency
+      - status
+      - available_paid_balance_minor
+      - available_promo_balance_minor
+      - held_paid_balance_minor
+      - total_balance_minor
+      properties:
+        organization_id:
+          description: The API token's organization.
+          type: string
+        currency:
+          description: ISO 4217 currency of every amount, such as `INR` or `USD`.
+          type: string
+          nullable: true
+        status:
+          description: Wallet status, `ACTIVE`, `FROZEN` or `CLOSED`.
+          type: string
+          nullable: true
+        available_paid_balance_minor:
+          description: Purchased credit available to spend.
+          type: integer
+          nullable: true
+        available_promo_balance_minor:
+          description: Promotional credit available to spend.
+          type: integer
+          nullable: true
+        held_paid_balance_minor:
+          description: Purchased credit reserved for in-progress usage.
+          type: integer
+          nullable: true
+        total_balance_minor:
+          description: Available paid, held paid and available promotional credit
+            together.
+          type: integer
+          nullable: true
+        low_balance_threshold_minor:
+          description: Balance below which the organization is warned, when set.
+          type: integer
+          nullable: true
+        updated_at:
+          description: When the wallet last changed.
+          type: string
+          format: date-time
           nullable: true
     ComputeSiteList:
       description: Sites returned by `GET /compute/sites`.
@@ -13930,8 +15203,10 @@ components:
           example: Deleted successfully
     VmDeleteRequest:
       type: object
-      description: Optional VM delete body. A VM whose public IP was assigned automatically
-        is refused with 400 unless `public_ip_action` is set.
+      description: 'Optional VM delete body. `public_ip_action` applies only to an
+        automatically assigned public IP: a VM with one is refused with 400 unless
+        it is set. If the VM''s IP is already a Reserved IP, send no body. The IP
+        stays in the workspace, and you release it from Reserved IPs to stop its billing.'
       properties:
         public_ip_action:
           type: string
@@ -13939,10 +15214,13 @@ components:
           - reserve
           - release
           nullable: true
-          description: What to do with the VM's automatically assigned public IP.
+          description: 'What to do with the VM''s automatically assigned public IP.
             `reserve` converts it to a Reserved IP in this workspace; `release` releases
             it with the VM. Required when the VM has an automatically assigned public
-            IP. `reserve` on a VM without one is refused with 400.
+            IP. `reserve` on a VM without one is refused with 400. If the IP has already
+            been converted to a Reserved IP, `release` and `reserve` are both refused
+            with 400: delete with no body to keep the IP, then release it from Reserved
+            IPs to stop its billing.'
         reserved_ip_label:
           type: string
           maxLength: 120
@@ -14652,9 +15930,9 @@ components:
           description: Must be `true` to remove the VM's last remaining SSH key.
           type: boolean
           default: false
-    VmResizeRequest:
+    VmResizePrecheckRequest:
       type: object
-      description: At least one target value must be supplied.
+      description: Body of a resize precheck. At least one target value must be supplied.
       properties:
         cpu:
           type: integer
@@ -14671,6 +15949,43 @@ components:
           minimum: 1
           maximum: 10000
           description: Target root disk size in GB.
+    VmResizeRequest:
+      type: object
+      description: 'Body of a resize: the target plan from the compute catalog (`GET
+        /compute/plans`, same `vm_type`). Send that plan''s `cpu`, `ram_mb` and `disk_gb`
+        exactly, and its `billing_catalog` with the chosen `billing_options` term
+        merged in, as on create. The compute engine refuses with `400` a resize without
+        `billing_catalog`, or with a CPU, memory or disk that doesn''t match the SKU
+        ("Target billing SKU dimensions do not match requested CPU, RAM and root disk").
+        A Windows VM also needs `billing_catalog.attached_skus.windows_license` with
+        `quantity` equal to the target `cpu`.'
+      required:
+      - cpu
+      - ram_mb
+      - disk_gb
+      - billing_catalog
+      properties:
+        cpu:
+          type: integer
+          minimum: 1
+          maximum: 256
+          example: 4
+          description: Target vCPUs, from the target plan.
+        ram_mb:
+          type: integer
+          minimum: 257
+          maximum: 2097152
+          example: 8192
+          description: Target memory in MB, from the target plan.
+        disk_gb:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          example: 80
+          description: Target root disk size in GB, from the target plan. The disk
+            can grow, never shrink.
+        billing_catalog:
+          $ref: '#/components/schemas/ComputeBillingSelection'
     VmResizeShape:
       description: 'A VM shape: vCPUs, memory and root disk.'
       type: object
@@ -15862,7 +17177,7 @@ components:
           description: When the policy was last changed (ISO 8601).
     BackupRun:
       description: One backup run of a VM. A succeeded run is a recovery point that
-        `POST .../backups/restore` accepts through `recovery_point_id`.
+        `POST .../backups/actions/restore` accepts through `recovery_point_id`.
       type: object
       required:
       - organization_id
@@ -15944,14 +17259,11 @@ components:
           enum:
           - scheduled
           - manual
-          - api
           description: 'What started the run.
 
             - `scheduled`: the policy schedule.
 
-            - `manual`: an on-demand request from a user.
-
-            - `api`: an on-demand request through the API.'
+            - `manual`: an on-demand request, from the portal or the API.'
         backup_type:
           type: string
           enum:
@@ -16071,7 +17383,9 @@ components:
           additionalProperties: true
           description: Additional service-specific key-value data.
     BackupRunList:
-      description: Backup runs of a VM, newest first.
+      description: 'Finished, successful backup runs, newest first. A run being deleted
+        shows `status: deleting`. Queued, running, failed and cancelled runs are not
+        listed.'
       type: object
       required:
       - runs
@@ -17490,28 +18804,27 @@ components:
           type: string
     Error:
       type: object
-      description: Errors through the public portal adapter contain string `error`,
-        human-readable `message` and correlation `request_id`, while preserving actionable
-        product `detail` for client errors. Internal diagnostics are redacted. Gateway
-        authorization errors may omit message or request_id. A paused or unknown gateway
-        route can return an empty 404; Cloudflare timeouts can return a problem-details
-        object or HTML before the portal adapter is reached.
+      description: Most errors contain string `error`, human-readable `message` and
+        correlation `request_id`, while preserving actionable product `detail` for
+        client errors. Internal diagnostics are redacted. Gateway authorization errors
+        may omit message or request_id. A paused or unknown gateway route can return
+        an empty 404; Cloudflare errors can return a problem-details object, HTML
+        or plain text before the request reaches the API.
       properties:
         error:
           type: string
           nullable: true
-          description: Machine-readable code from the gateway's authorization step,
-            for example `invalid_api_key`, `insufficient_scope`, `organization_restricted`,
-            `organization_suspended`, `verification_required`, `product_not_enabled`
-            or `billing_denied`. The response descriptions list the codes for each
-            status.
+          description: Machine-readable code, for example `invalid_api_key`, `insufficient_scope`,
+            `organization_restricted`, `organization_suspended`, `verification_required`,
+            `product_not_enabled`, `billing_denied`, `validation_error` or `idempotency_conflict`.
+            The response descriptions list the codes for each status.
           example: insufficient_scope
         message:
           type: string
-          description: Human-readable explanation, present on portal adapter errors.
+          description: Human-readable explanation, present on most errors.
         request_id:
           type: string
-          description: Correlation ID, present on portal adapter errors and in X-Request-Id.
+          description: Correlation ID, present on most errors and in X-Request-Id.
         required_scope:
           type: string
           nullable: true
