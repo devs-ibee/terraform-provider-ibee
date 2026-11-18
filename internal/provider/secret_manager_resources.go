@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -225,6 +226,33 @@ func (r *secretManagerResource) ImportState(ctx context.Context, req resource.Im
 
 // ---------------------------------------------------------------- ibee_secret_manager_secret
 
+// secretTypeKey is where Secret Manager keeps a secret's type among its tags.
+const secretTypeKey = "ibee_type"
+
+// serviceTagKeys are the tags the service writes itself: never user tags.
+var serviceTagKeys = map[string]bool{secretTypeKey: true, "managed_by": true}
+
+// reservedTagKeys refuses the service's own keys in custom_metadata.
+type reservedTagKeys struct{}
+
+func (reservedTagKeys) Description(context.Context) string {
+	return "custom_metadata may not set ibee_type or managed_by"
+}
+
+func (v reservedTagKeys) MarkdownDescription(ctx context.Context) string { return v.Description(ctx) }
+
+func (reservedTagKeys) ValidateMap(_ context.Context, req validator.MapRequest, resp *validator.MapResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	for key := range req.ConfigValue.Elements() {
+		if serviceTagKeys[key] {
+			resp.Diagnostics.AddAttributeError(req.Path, "Reserved tag",
+				fmt.Sprintf("%s is kept by Secret Manager itself. Set the secret type with the type attribute; managed_by is set by the service.", key))
+		}
+	}
+}
+
 type secretManagerSecretResource struct{ client *Client }
 
 func NewSecretManagerSecretResource() resource.Resource { return &secretManagerSecretResource{} }
@@ -232,6 +260,7 @@ func NewSecretManagerSecretResource() resource.Resource { return &secretManagerS
 type secretManagerSecretModel struct {
 	ID                 types.String `tfsdk:"id"`
 	Path               types.String `tfsdk:"path"`
+	Type               types.String `tfsdk:"type"`
 	CustomMetadata     types.Map    `tfsdk:"custom_metadata"`
 	MaxVersions        types.Int64  `tfsdk:"max_versions"`
 	CasRequired        types.Bool   `tfsdk:"cas_required"`
@@ -257,11 +286,12 @@ func (r *secretManagerSecretResource) Schema(_ context.Context, _ resource.Schem
 		Attributes: map[string]schema.Attribute{
 			"id":                   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "The secret path."},
 			"path":                 schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Secret path, such as apps/billing/db: 1 to 20 segments of letters, digits, `_`, `.` and `-`."},
-			"custom_metadata":      schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "Free-form tags such as owner or team. No secret values."},
+			"type":                 schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "Secret type, such as key_value, api_key or database_credentials (the Secret Manager secret types list). Fixed once created: the API refuses a change. The service default (key_value) applies when omitted."},
+			"custom_metadata":      schema.MapAttribute{Optional: true, ElementType: types.StringType, Validators: []validator.Map{reservedTagKeys{}}, Description: "Free-form tags such as owner or team. No secret values. The service's own keys (ibee_type, managed_by) are not tags: use type."},
 			"max_versions":         schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}, Description: "Versions kept for this secret. The service default applies when omitted."},
 			"cas_required":         schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}, Description: "Whether every write must pass the current version (check-and-set)."},
 			"delete_version_after": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "Duration after which versions are deleted, such as 720h. The service default applies when omitted."},
-			"current_version":      schema.Int64Attribute{Computed: true, Description: "Latest version number, or null before the first value is written."},
+			"current_version":      schema.Int64Attribute{Computed: true, Description: "Latest version number; 0 before the first value is written."},
 		},
 	}
 }
@@ -271,16 +301,20 @@ func (r *secretManagerSecretResource) Configure(_ context.Context, req resource.
 }
 
 func (r *secretManagerSecretResource) write(ctx context.Context, plan *secretManagerSecretModel) error {
-	body := map[string]any{}
+	// The whole tag set is always sent, so removed tags go; the service keeps the
+	// type it has when none is sent, and adds its own managed_by key.
+	tags := map[string]string{}
 	if !plan.CustomMetadata.IsNull() && !plan.CustomMetadata.IsUnknown() {
-		tags := map[string]string{}
 		for key, value := range plan.CustomMetadata.Elements() {
 			if s, ok := value.(types.String); ok {
 				tags[key] = s.ValueString()
 			}
 		}
-		body["custom_metadata"] = tags
 	}
+	if !plan.Type.IsNull() && !plan.Type.IsUnknown() {
+		tags[secretTypeKey] = plan.Type.ValueString()
+	}
+	body := map[string]any{"custom_metadata": tags}
 	if !plan.MaxVersions.IsNull() && !plan.MaxVersions.IsUnknown() {
 		body["max_versions"] = plan.MaxVersions.ValueInt64()
 	}
@@ -303,10 +337,20 @@ func (r *secretManagerSecretResource) read(ctx context.Context, state *secretMan
 		return false, err
 	}
 	state.ID = types.StringValue(state.Path.ValueString())
-	if len(out.CustomMetadata) == 0 && state.CustomMetadata.IsNull() {
+	state.Type = types.StringNull()
+	if kind, ok := out.CustomMetadata[secretTypeKey]; ok {
+		state.Type = types.StringValue(kind)
+	}
+	userTags := map[string]string{}
+	for key, value := range out.CustomMetadata {
+		if !serviceTagKeys[key] {
+			userTags[key] = value
+		}
+	}
+	if len(userTags) == 0 && state.CustomMetadata.IsNull() {
 		// No tags configured and none stored: keep null rather than an empty map.
 	} else {
-		tags, diags := types.MapValueFrom(ctx, types.StringType, out.CustomMetadata)
+		tags, diags := types.MapValueFrom(ctx, types.StringType, userTags)
 		if diags.HasError() {
 			return false, fmt.Errorf("read custom_metadata")
 		}

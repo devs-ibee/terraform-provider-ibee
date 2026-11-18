@@ -14,6 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -98,32 +100,55 @@ func TestSecretManagerSecretMetadataNeverCarriesAValue(t *testing.T) {
 				computeJSON(w, map[string]any{"error": "not_found"})
 				return
 			}
-			last := puts[len(puts)-1]
-			computeJSON(w, map[string]any{"custom_metadata": last["custom_metadata"], "max_versions": last["max_versions"], "cas_required": false, "delete_version_after": "0s", "current_version": nil})
+			// Like the service: the tags sent, plus its own type (kept from the first write) and managed_by.
+			kind := "key_value"
+			if first, ok := puts[0]["custom_metadata"].(map[string]any)["ibee_type"].(string); ok {
+				kind = first
+			}
+			tags := map[string]any{"ibee_type": kind, "managed_by": "user"}
+			for k, v := range puts[len(puts)-1]["custom_metadata"].(map[string]any) {
+				if k != "ibee_type" {
+					tags[k] = v
+				}
+			}
+			computeJSON(w, map[string]any{"custom_metadata": tags, "max_versions": puts[len(puts)-1]["max_versions"], "cas_required": false, "delete_version_after": "0s", "current_version": 0})
 		case http.MethodDelete:
 			deleted = true
 			computeJSON(w, map[string]any{"detail": "destroyed"})
 		}
 	})
 	r := &secretManagerSecretResource{client: client}
-	plan := secretManagerSecretModel{ID: types.StringUnknown(), Path: types.StringValue("apps/billing/db"), CustomMetadata: types.MapValueMust(types.StringType, map[string]attr.Value{"owner": types.StringValue("billing")}), MaxVersions: types.Int64Value(5), CasRequired: types.BoolUnknown(), DeleteVersionAfter: types.StringUnknown(), CurrentVersion: types.Int64Unknown()}
+	plan := secretManagerSecretModel{ID: types.StringUnknown(), Path: types.StringValue("apps/billing/db"), Type: types.StringValue("database_credentials"), CustomMetadata: types.MapValueMust(types.StringType, map[string]attr.Value{"owner": types.StringValue("billing")}), MaxVersions: types.Int64Value(5), CasRequired: types.BoolUnknown(), DeleteVersionAfter: types.StringUnknown(), CurrentVersion: types.Int64Unknown()}
 	resp := resource.CreateResponse{State: computeState(t, r, nil)}
 	r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, plan)}, &resp)
 	computeNoErrors(t, resp.Diagnostics)
 	var got secretManagerSecretModel
 	computeNoErrors(t, resp.State.Get(context.Background(), &got))
-	if got.ID.ValueString() != "apps/billing/db" || got.MaxVersions.ValueInt64() != 5 || got.CasRequired.ValueBool() || !got.CurrentVersion.IsNull() {
+	if got.ID.ValueString() != "apps/billing/db" || got.MaxVersions.ValueInt64() != 5 || got.CasRequired.ValueBool() || got.CurrentVersion.ValueInt64() != 0 {
 		t.Fatalf("state %+v", got)
+	}
+	// The service's own keys stay out of the tags, so the plan converges.
+	if got.Type.ValueString() != "database_credentials" || len(got.CustomMetadata.Elements()) != 1 {
+		t.Fatalf("type %s tags %v", got.Type, got.CustomMetadata)
+	}
+	if puts[0]["custom_metadata"].(map[string]any)["ibee_type"] != "database_credentials" {
+		t.Fatalf("type not sent: %v", puts[0])
 	}
 	if len(puts) != 1 || puts[0]["custom_metadata"].(map[string]any)["owner"] != "billing" {
 		t.Fatalf("put %v", puts)
 	}
 	plan.ID, plan.CasRequired, plan.DeleteVersionAfter, plan.CurrentVersion = got.ID, types.BoolValue(true), got.DeleteVersionAfter, got.CurrentVersion
+	plan.Type, plan.CustomMetadata = types.StringUnknown(), types.MapNull(types.StringType)
 	update := resource.UpdateResponse{State: resp.State}
 	r.Update(context.Background(), resource.UpdateRequest{Plan: computePlanState(t, r, plan), State: resp.State}, &update)
 	computeNoErrors(t, update.Diagnostics)
-	if len(puts) != 2 || puts[1]["cas_required"] != true {
-		t.Fatalf("update put %v", puts)
+	if len(puts) != 2 || puts[1]["cas_required"] != true || len(puts[1]["custom_metadata"].(map[string]any)) != 0 {
+		t.Fatalf("update must send the whole (now empty) tag set and no type: %v", puts[1])
+	}
+	var updated secretManagerSecretModel
+	computeNoErrors(t, update.State.Get(context.Background(), &updated))
+	if updated.Type.ValueString() != "database_credentials" || !updated.CustomMetadata.IsNull() {
+		t.Fatalf("after removing the tags: type %s tags %v", updated.Type, updated.CustomMetadata)
 	}
 	del := resource.DeleteResponse{}
 	r.Delete(context.Background(), resource.DeleteRequest{State: update.State}, &del)
@@ -328,6 +353,21 @@ func TestLoadBalancerRegionsDataSource(t *testing.T) {
 	computeNoErrors(t, resp.State.GetAttribute(context.Background(), path.Root("regions"), &regions))
 	if len(ids) != 1 || ids[0] != "in-south" || regions[0]["name"] != "Chennai" || regions[0]["nodes"] != "3" {
 		t.Fatalf("ids %v regions %v", ids, regions)
+	}
+}
+
+func TestSecretManagerSecretRefusesTheServiceKeysAsTags(t *testing.T) {
+	r := &secretManagerSecretResource{}
+	var schemaResp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+	attribute := schemaResp.Schema.Attributes["custom_metadata"].(schema.MapAttribute)
+	for _, key := range []string{"ibee_type", "managed_by"} {
+		resp := validator.MapResponse{}
+		value := types.MapValueMust(types.StringType, map[string]attr.Value{key: types.StringValue("x")})
+		attribute.Validators[0].ValidateMap(context.Background(), validator.MapRequest{ConfigValue: value}, &resp)
+		if !resp.Diagnostics.HasError() {
+			t.Fatalf("%s was accepted as a tag", key)
+		}
 	}
 }
 

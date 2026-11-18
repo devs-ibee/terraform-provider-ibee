@@ -18,6 +18,7 @@ A Secret Manager secret's metadata: its path, owner tags and version settings. *
 # with the Vault API, for example `bao kv put`.
 resource "ibee_secret_manager_secret" "database" {
   path            = "apps/billing/db"
+  type            = "database_credentials"
   custom_metadata = { owner = "billing" }
   max_versions    = 10
   cas_required    = true
@@ -34,12 +35,13 @@ resource "ibee_secret_manager_secret" "database" {
 | Attribute | Type | Behavior | Description |
 | --- | --- | --- | --- |
 | `cas_required` | `bool` | Optional, Defaulted | Whether every write must pass the current version (check-and-set). |
-| `current_version` | `number` | Read-only | Latest version number, or null before the first value is written. |
-| `custom_metadata` | `map(string)` | Optional | Free-form tags such as owner or team. No secret values. |
+| `current_version` | `number` | Read-only | Latest version number; 0 before the first value is written. |
+| `custom_metadata` | `map(string)` | Optional | Free-form tags such as owner or team. No secret values. The service's own keys (ibee_type, managed_by) are not tags: use type. |
 | `delete_version_after` | `string` | Optional, Defaulted | Duration after which versions are deleted, such as 720h. The service default applies when omitted. |
 | `id` | `string` | Read-only | The secret path. |
 | `max_versions` | `number` | Optional, Defaulted | Versions kept for this secret. The service default applies when omitted. |
 | `path` | `string` | Required | Secret path, such as apps/billing/db: 1 to 20 segments of letters, digits, `_`, `.` and `-`. |
+| `type` | `string` | Optional, Defaulted | Secret type, such as key_value, api_key or database_credentials (the Secret Manager secret types list). Fixed once created: the API refuses a change. The service default (key_value) applies when omitted. |
 
 ## Import
 

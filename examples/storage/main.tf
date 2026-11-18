@@ -43,6 +43,7 @@ resource "ibee_secret_manager" "this" {
 
 resource "ibee_secret_manager_secret" "database" {
   path            = "apps/billing/db"
+  type            = "database_credentials"
   custom_metadata = { owner = "billing" }
   max_versions    = 10
   depends_on      = [ibee_secret_manager.this]

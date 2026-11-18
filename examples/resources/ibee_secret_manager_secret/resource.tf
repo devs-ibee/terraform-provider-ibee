@@ -2,6 +2,7 @@
 # with the Vault API, for example `bao kv put`.
 resource "ibee_secret_manager_secret" "database" {
   path            = "apps/billing/db"
+  type            = "database_credentials"
   custom_metadata = { owner = "billing" }
   max_versions    = 10
   cas_required    = true

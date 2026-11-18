@@ -105,6 +105,7 @@ resource "ibee_secret_manager" "test" {
 }
 resource "ibee_secret_manager_secret" "test" {
  path = "apps/billing/db"
+ type = "database_credentials"
  custom_metadata = { owner = "billing" }
  max_versions = %d
  depends_on = [ibee_secret_manager.test]
@@ -254,7 +255,15 @@ func (f *terraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			f.secret = map[string]any{"custom_metadata": b["custom_metadata"], "max_versions": b["max_versions"], "cas_required": false, "delete_version_after": "0s", "current_version": nil}
+			// Like the service: it keeps the type and adds its own managed_by key.
+			tags := map[string]any{"ibee_type": "key_value", "managed_by": "user"}
+			if f.secret != nil {
+				tags["ibee_type"] = f.secret["custom_metadata"].(map[string]any)["ibee_type"]
+			}
+			for k, v := range b["custom_metadata"].(map[string]any) {
+				tags[k] = v
+			}
+			f.secret = map[string]any{"custom_metadata": tags, "max_versions": b["max_versions"], "cas_required": false, "delete_version_after": "0s", "current_version": 0}
 			send(map[string]any{"detail": "ok"})
 		case "DELETE":
 			f.secret = nil
