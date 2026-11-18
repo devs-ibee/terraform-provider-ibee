@@ -82,6 +82,8 @@ func TestAPIErrorRelaysServerAnswer(t *testing.T) {
 		{"detail string", `{"detail":"Resize is increase-only"}`, "IBEE API returned HTTP 423: Resize is increase-only (request req-1)"},
 		{"detail object", `{"detail":{"message":"Resize request is currently blocked.","decision":"blocked","reasons":["host capacity"]}}`, `IBEE API returned HTTP 423: Resize request is currently blocked. Response: {"detail":{"message":"Resize request is currently blocked.","decision":"blocked","reasons":["host capacity"]}} (request req-1)`},
 		{"plain", `Locked`, "IBEE API returned HTTP 423: Locked (request req-1)"},
+		{"billing reason", `{"error":"billing_denied","billing_reason":"initial_topup_required","message":"Add at least ₹500 to your wallet to create resources."}`, "IBEE API returned HTTP 423 billing_denied (initial_topup_required): Add at least ₹500 to your wallet to create resources. (request req-1)"},
+		{"required scope", `{"error":"insufficient_scope","required_scope":"secret-manager.write","message":"This API key does not have the required scope."}`, "IBEE API returned HTTP 423 insufficient_scope (needs secret-manager.write): This API key does not have the required scope. (request req-1)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := parseAPIError(423, []byte(tc.body), "req-1", "token").Error(); got != tc.want {
