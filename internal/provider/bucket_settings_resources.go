@@ -185,7 +185,7 @@ func (r *bucketCustomDomainResource) Metadata(_ context.Context, req resource.Me
 func (r *bucketCustomDomainResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{
-		Description: "A custom hostname that serves a public bucket's files (the API refuses one on a private bucket). Create the CNAME record shown in cname_target at your DNS provider; the service checks it and issues TLS (status). Destroy removes the hostname from the bucket. Import with BUCKET_NAME/DOMAIN.",
+		Description: "A custom hostname that serves a public bucket's files (the API refuses one on a private bucket). Create the domain's CNAME record first: the API checks it when the domain is added, and its refusal names the target to point it at (the portal's Custom domains tab shows it too). The service then issues TLS (status). Destroy removes the hostname from the bucket. Import with BUCKET_NAME/DOMAIN.",
 		Attributes: map[string]schema.Attribute{
 			"id":           schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "BUCKET_NAME/DOMAIN."},
 			"bucket_name":  schema.StringAttribute{Required: true, PlanModifiers: replace, Description: "Bucket name."},
