@@ -5,13 +5,12 @@ Each directory below is an independent Terraform configuration. Set the required
 | Area | Example |
 | --- | --- |
 | Compute | [compute](compute/main.tf) |
-| Networking | [networking](networking/main.tf) |
+| Networking and load balancer | [networking](networking/main.tf) |
 | NAT gateway import | [nat-gateway-import](nat-gateway-import/main.tf) |
 | Block storage | [block-storage](block-storage/main.tf) |
-| Object storage and secrets | [storage](storage/main.tf) |
+| Object storage and Secret Manager | [storage](storage/main.tf) |
 | CDN | [cdn](cdn/main.tf) |
 | Container Registry | [container-registry](container-registry/main.tf) |
-| Terraform actions | [actions](actions/main.tf) |
 
 Set your API token and workspace ID in the environment:
 

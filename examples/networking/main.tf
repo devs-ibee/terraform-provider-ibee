@@ -114,31 +114,36 @@ resource "ibee_reserved_ip_attachment" "public" {
   vm_id          = var.public_vm_id
 }
 
-resource "ibee_load_balancer_l4" "tcp" {
-  name     = "app-tcp"
-  protocol = "tcp"
-  backends = [{
-    type   = "ip"
-    target = var.backend_ip
-    port   = 443
+data "ibee_load_balancer_regions" "available" {}
+
+# Each load balancer node is billed per hour; node_count sets how many run.
+resource "ibee_load_balancer" "web" {
+  name         = "app-web"
+  region_id    = data.ibee_load_balancer_regions.available.ids[0]
+  vpc_id       = ibee_vpc.app.id
+  traffic_type = "http"
+
+  listeners = [{
+    name         = "http"
+    protocol     = "HTTP"
+    port         = 80
+    target_group = "app"
+    rules        = [{ path_prefix = "/api", target_group = "api" }]
   }]
-}
-resource "ibee_load_balancer_l7" "http" {
-  name     = "app-http"
-  protocol = "http"
-  backends = [{
-    type   = "ip"
-    target = var.backend_ip
-    port   = 8080
-  }]
-  rules = [{
-    path_prefix = "/api"
-    backends = [{
-      type   = "ip"
-      target = var.backend_ip
-      port   = 8081
-    }]
-  }]
+
+  target_groups = [
+    {
+      name         = "app"
+      protocol     = "HTTP"
+      targets      = [{ kind = "ip", address = var.backend_ip, port = 8080 }]
+      health_check = { protocol = "HTTP", path = "/healthz" }
+    },
+    {
+      name     = "api"
+      protocol = "HTTP"
+      targets  = [{ kind = "ip", address = var.backend_ip, port = 8081 }]
+    },
+  ]
 }
 
 output "private_ip" {
@@ -147,6 +152,6 @@ output "private_ip" {
 output "reserved_ip" {
   value = ibee_reserved_ip.public.address
 }
-output "http_endpoint" {
-  value = ibee_load_balancer_l7.http.endpoint_url
+output "load_balancer_id" {
+  value = ibee_load_balancer.web.id
 }

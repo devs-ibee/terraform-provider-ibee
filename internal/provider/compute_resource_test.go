@@ -414,26 +414,7 @@ func TestComputeBackupDestroyDisablesWithoutDeletingRecoveryPoints(t *testing.T)
 		t.Fatal(calls)
 	}
 }
-func TestComputeSnapshotImportRestoresSelection(t *testing.T) {
-	r := &vmSnapshotResource{vmType: "gpu"}
-	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-		if req.Method != "GET" || req.URL.Path != "/compute/gpu-vm-snapshots/snap" {
-			t.Error(req.URL.Path)
-		}
-		computeJSON(w, map[string]any{"snapshot_set_id": "snap", "vm_id": "vm-1", "name": "nightly", "capture_scope": "selective", "status": "succeeded", "recovery_point_id": "rp", "volume_manifest": []any{map[string]any{"role": "root", "source_volume_id": "root"}, map[string]any{"role": "data", "source_volume_id": "data"}}})
-	})
-	imp := resource.ImportStateResponse{State: computeState(t, r, nil)}
-	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "snap"}, &imp)
-	computeNoErrors(t, imp.Diagnostics)
-	resp := resource.ReadResponse{State: imp.State}
-	r.Read(context.Background(), resource.ReadRequest{State: imp.State}, &resp)
-	computeNoErrors(t, resp.Diagnostics)
-	var got vmSnapshotModel
-	computeNoErrors(t, resp.State.Get(context.Background(), &got))
-	if got.VmID.ValueString() != "vm-1" || len(got.SelectedDataVolumeIDs.Elements()) != 1 {
-		t.Fatal(got)
-	}
-}
+
 func TestComputeAttachmentProjectionRequired(t *testing.T) {
 	for _, expose := range []bool{false, true} {
 		t.Run(fmt.Sprint(expose), func(t *testing.T) {
@@ -478,41 +459,6 @@ func TestComputeAttachmentImportAndUnmountPolicy(t *testing.T) {
 	computeNoErrors(t, resp.State.Get(context.Background(), &got))
 	if got.Mode.ValueString() != "single-writer" || got.ConfirmUnmounted.ValueBool() || got.GuestDevice.ValueString() != "/dev/vdb" {
 		t.Fatal(got)
-	}
-}
-
-func TestComputeSnapshotFailureRetainsRecoverableIdentity(t *testing.T) {
-	r := &vmSnapshotResource{vmType: "cloud"}
-	r.client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-		switch req.URL.Path {
-		case "/billing/resource-eligibility":
-			computeEligibility(w, true, "SNAPSHOT-STD")
-		case "/compute/cloud-vms/vm-1/snapshots":
-			var body map[string]any
-			_ = json.NewDecoder(req.Body).Decode(&body)
-			if body["billing_catalog"] == nil {
-				t.Error("snapshot purchase omitted its catalog")
-				http.Error(w, "missing catalog", 422)
-				return
-			}
-			computeJSON(w, map[string]any{"snapshot_set_id": "snap", "status": "queued"})
-		case "/compute/cloud-vm-snapshots/snap":
-			computeJSON(w, map[string]any{"snapshot_set_id": "snap", "vm_id": "vm-1", "name": "snapshot", "capture_scope": "root_only", "status": "failed"})
-		default:
-			t.Error(req.URL.Path)
-		}
-	})
-	m := vmSnapshotModel{ID: types.StringUnknown(), VmID: types.StringValue("vm-1"), Name: types.StringValue("snapshot"), Description: types.StringNull(), Mode: types.StringValue("root_only"), SelectedDataVolumeIDs: types.SetValueMust(types.StringType, []attr.Value{}), Status: types.StringUnknown(), RecoveryPointID: types.StringUnknown()}
-	m.BillingCatalog = types.StringValue(`{"sku_id":"snapshot-sku","sku_code":"SNAPSHOT-STD","product_code":"snapshot_storage","currency":"INR"}`)
-	resp := resource.CreateResponse{State: computeState(t, r, nil)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, m)}, &resp)
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("failed snapshot accepted")
-	}
-	var got vmSnapshotModel
-	computeNoErrors(t, resp.State.Get(context.Background(), &got))
-	if got.ID.ValueString() != "snap" || got.Status.ValueString() != "failed" || got.RecoveryPointID.IsUnknown() {
-		t.Fatal("snapshot failure lost identity or unknown state")
 	}
 }
 

@@ -1,0 +1,1 @@
+terraform import ibee_secret_manager_app_credential.billing 'CREDENTIAL_ID'

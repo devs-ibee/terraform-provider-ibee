@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -164,4 +165,26 @@ func createOnlyString() planmodifier.String {
 	return stringplanmodifier.RequiresReplaceIf(func(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
 		resp.RequiresReplace = !req.StateValue.IsNull() && !req.PlanValue.IsUnknown() && !req.PlanValue.Equal(req.StateValue)
 	}, "Changing a recorded create-only value replaces the resource.", "Changing a recorded create-only value replaces the resource.")
+}
+
+// configureResourceClient returns the provider's API client for a resource.
+func configureResourceClient(req resource.ConfigureRequest, resp *resource.ConfigureResponse) *Client {
+	if req.ProviderData == nil {
+		return nil
+	}
+	client, ok := req.ProviderData.(*Client)
+	if !ok {
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *Client, got %T", req.ProviderData))
+	}
+	return client
+}
+
+// splitImportID splits an import ID of the form FIRST/SECOND.
+func splitImportID(id, format string, resp *resource.ImportStateResponse) (string, string, bool) {
+	first, second, ok := strings.Cut(id, "/")
+	if !ok || first == "" || second == "" || strings.Contains(second, "/") {
+		resp.Diagnostics.AddError("Invalid import ID", "Import with "+format+".")
+		return "", "", false
+	}
+	return first, second, true
 }

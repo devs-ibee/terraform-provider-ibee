@@ -7,7 +7,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -126,33 +125,4 @@ func NewNATPortForwardingRuleResource() resource.Resource {
 		attributes:    map[string]schema.Attribute{"id": networkIDAttribute(), "vpc_id": networkRequired(true), "nat_gateway_id": networkRequired(true), "name": networkRequired(false), "protocol": networkOptional(false), "external_port": schema.Int64Attribute{Required: true}, "internal_ip": networkRequired(false), "internal_port": schema.Int64Attribute{Required: true}, "note": networkOptional(false), "enabled": schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}}, "status": schema.StringAttribute{Computed: true}},
 		requestFields: networkIdentityFields("name", "protocol", "external_port", "internal_ip", "internal_port", "note", "enabled"), responseFields: networkIdentityFields("name", "protocol", "external_port", "internal_ip", "internal_port", "note", "enabled", "status"),
 		createPath: base, readPath: base, updatePath: item, deletePath: item}
-}
-
-func networkBackendAttributes() map[string]schema.Attribute {
-	return map[string]schema.Attribute{
-		"target": networkRequired(false), "port": schema.Int64Attribute{Required: true}, "type": networkOptional(false), "weight": schema.Int64Attribute{Optional: true, Computed: true}, "tls": schema.BoolAttribute{Optional: true, Computed: true},
-	}
-}
-func NewL4LoadBalancerResource() resource.Resource { return newNetworkLB("l4") }
-func NewL7LoadBalancerResource() resource.Resource { return newNetworkLB("l7") }
-func newNetworkLB(layer string) resource.Resource {
-	base := "/networking/load-balancers"
-	attrs := map[string]schema.Attribute{"id": networkIDAttribute(), "name": networkRequired(false), "protocol": networkRequired(true), "backends": schema.ListNestedAttribute{Required: true, NestedObject: schema.NestedAttributeObject{Attributes: networkBackendAttributes()}}, "status": schema.StringAttribute{Computed: true}, "endpoint_url": schema.StringAttribute{Computed: true}, "url": schema.StringAttribute{Computed: true}, "endpoint": schema.SingleNestedAttribute{Computed: true, Attributes: map[string]schema.Attribute{"host": schema.StringAttribute{Computed: true}, "port": schema.Int64Attribute{Computed: true}}}}
-	attrs["tls"] = schema.SingleNestedAttribute{Optional: true, PlanModifiers: []planmodifier.Object{objectplanmodifier.RequiresReplace()}, Description: "TLS settings of the listener, sent with create (the API has no read of them). A change replaces the load balancer.", Attributes: map[string]schema.Attribute{
-		"mode":               schema.StringAttribute{Required: true, Description: "terminate or passthrough."},
-		"certificate_source": schema.StringAttribute{Optional: true, Description: "managed or custom. Omit to use the API's default."},
-		"cert_pem":           schema.StringAttribute{Optional: true, Sensitive: true, Description: "PEM certificate chain, with certificate_source custom."},
-		"key_pem":            schema.StringAttribute{Optional: true, Sensitive: true, Description: "PEM private key, with certificate_source custom."},
-	}}
-	request := networkIdentityFields("name", "protocol", "backends", "tls")
-	response := networkIdentityFields("name", "protocol", "backends", "status", "endpoint_url", "url", "endpoint")
-	if layer == "l7" {
-		attrs["rules"] = schema.ListNestedAttribute{Optional: true, Computed: true, NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{"priority": schema.Int64Attribute{Optional: true, Computed: true}, "path_prefix": networkOptional(false), "headers": schema.MapAttribute{Optional: true, ElementType: types.StringType}, "backends": schema.ListNestedAttribute{Optional: true, NestedObject: schema.NestedAttributeObject{Attributes: networkBackendAttributes()}}}}}
-		request["rules"] = "rules"
-		response["rules"] = "rules"
-	}
-	return &networkResource{name: "load_balancer_" + layer, description: "An IBEE " + layer + " load balancer. Import using the load balancer ID. Sends name, protocol, backends (and rules for l7); the API decides defaults and what it accepts. TLS, routing-policy and health-check settings are not managed by this resource." + networkBillingDescription,
-		attributes: attrs, requestFields: request, responseFields: response, createOnlyFields: map[string]bool{"protocol": true, "tls": true}, idField: "lb_id", importFields: []string{"id"}, waitReady: true, waitDelete: true,
-		createPath: networkPath(base + "/" + layer), readPath: func(v networkValues) string { return base + "/" + v.segment("id") }, updatePath: func(v networkValues) string { return base + "/" + layer + "/" + v.segment("id") }, deletePath: func(v networkValues) string { return base + "/" + v.segment("id") },
-	}
 }

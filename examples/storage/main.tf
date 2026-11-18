@@ -22,23 +22,10 @@ variable "storage_region" {
   type        = string
 }
 
-variable "secret_store_name" {
-  description = "An available secret store name. Archived stores retain their names."
+variable "secret_namespace" {
+  description = "Vault namespace for the workspace's Secret Manager, 3 to 32 lowercase letters, digits or hyphens. It can't change later."
   type        = string
   default     = "terraform-example"
-}
-
-variable "database_password" {
-  description = "Provide through TF_VAR_database_password or an ephemeral source. It is not persisted in plan or state."
-  type        = string
-  sensitive   = true
-  ephemeral   = true
-}
-
-variable "secret_rotation_version" {
-  description = "Change when changing database_password. Changing a write-only value alone cannot trigger an update."
-  type        = number
-  default     = 0
 }
 
 resource "ibee_bucket" "assets" {
@@ -47,26 +34,44 @@ resource "ibee_bucket" "assets" {
   is_public = false
 }
 
-resource "ibee_secret_store" "application" {
-  name        = var.secret_store_name
-  description = "Application secrets managed by Terraform"
+# Secret Manager: Terraform manages the service, secret settings and app
+# logins. Secret values never pass through Terraform; write them with the
+# Vault API, for example `bao kv put`.
+resource "ibee_secret_manager" "this" {
+  namespace = var.secret_namespace
 }
 
-resource "ibee_secret" "database" {
-  store_id         = ibee_secret_store.application.id
-  secret_name      = "database-password"
-  value_wo         = jsonencode({ password = var.database_password })
-  value_wo_version = var.secret_rotation_version
+resource "ibee_secret_manager_secret" "database" {
+  path            = "apps/billing/db"
+  custom_metadata = { owner = "billing" }
+  max_versions    = 10
+  depends_on      = [ibee_secret_manager.this]
+}
+
+resource "ibee_secret_manager_app_credential" "billing" {
+  name       = "billing-app"
+  access     = "read"
+  folder     = "apps/billing"
+  depends_on = [ibee_secret_manager.this]
 }
 
 output "bucket_name" {
   value = ibee_bucket.assets.name
 }
 
-output "secret_id" {
-  value = ibee_secret.database.id
+output "vault_endpoint" {
+  value = ibee_secret_manager.this.endpoint
 }
 
-# Destroy soft-deletes the secret, then archives the store; history and reserved
-# names remain. Destroy deletes the bucket; the API decides whether it can be
-# deleted (it refuses a bucket with object lock).
+output "app_role_id" {
+  value = ibee_secret_manager_app_credential.billing.role_id
+}
+
+output "app_secret_id" {
+  value     = ibee_secret_manager_app_credential.billing.secret_id
+  sensitive = true
+}
+
+# Destroy deletes the bucket (the API refuses one that still holds files),
+# permanently deletes the secret and every version of its value, and revokes
+# the app login. Secret Manager itself stays on.

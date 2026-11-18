@@ -48,7 +48,7 @@ resource "ibee_gpu_vm" "worker" {
 | `public_ip` | `string` | Read-only |  |
 | `ram_mb` | `number` | Read-only |  |
 | `site_id` | `string` | Required | Placement site from ibee_sites. |
-| `ssh_key_ids` | `set(string)` | Optional, Defaulted | Existing Secret Store SSH key IDs. Changes are applied in place through the VM access operation (keys are added before others are removed). |
+| `ssh_key_ids` | `set(string)` | Optional, Defaulted | Existing SSH key IDs, as the portal lists them. Changes are applied in place through the VM access operation (keys are added before others are removed). |
 | `status` | `string` | Read-only |  |
 | `tags` | `set(string)` | Optional, Defaulted | VM tags. Changes replace the VM because the public API has no tag update operation. |
 | `template_id` | `string` | Required | Image template from ibee_images. |

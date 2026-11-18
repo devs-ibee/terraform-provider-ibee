@@ -4,7 +4,7 @@ Use Terraform to describe and manage IBEE infrastructure from configuration file
 
 ## Before you start
 
-- Install the [Terraform CLI](https://developer.hashicorp.com/terraform/install), version 1.11 or newer. Terraform 1.14 or newer is required for Terraform actions.
+- Install the [Terraform CLI](https://developer.hashicorp.com/terraform/install), version 1.11 or newer.
 - Create an [IBEE API token](https://ibee.ai/docs/api-reference/cli) in the portal under **Settings → API Tokens**. Authorize it for the workspace you plan to manage. Grant the product permissions required by your resources.
 - Install Go if you are building the provider from source.
 
@@ -100,6 +100,6 @@ terraform destroy -var="site_id=your-network-site-id"
 
 ## Next steps
 
-- Browse the [resource, data source, and action reference](../index.md).
+- Browse the [resource and data source reference](../index.md).
 - Explore the [compute, networking, storage, and CDN examples](../../examples/README.md).
 - See [VPC options](../resources/vpc.md) and [network site data](../data-sources/network_sites.md).

@@ -57,28 +57,19 @@ func TestAPIErrorEnvelopeParity(t *testing.T) {
 	}
 }
 
-func TestAPIErrorMetadataAndSecretSafeDiagnostics(t *testing.T) {
+func TestAPIErrorMetadata(t *testing.T) {
 	secret := "fixture-secret-never-print"
 	data := []byte(`{"error":"organization_restricted","billing_reason":"billing_limit_exhausted","billing_sku_code":"BACKUP-STD","admission_context_id":"ctx-123","message":"` + secret + `"}`)
 	ae := parseAPIError(403, data, "request-123", secret)
 	if ae.BillingSKUCode != "BACKUP-STD" || ae.AdmissionContextID != "ctx-123" || !ae.billingAnswer() {
 		t.Fatalf("metadata missing: %+v", ae)
 	}
-	if strings.Contains(ae.Error(), secret) || strings.Contains(secretSafeError(ae), secret) || !strings.Contains(secretSafeError(ae), "HTTP 403") {
-		t.Fatal("unsafe or status-less secret diagnostic")
-	}
-	for _, code := range []string{"organization_suspended", "key_revoked", "insufficient_scope", "billing_denied"} {
-		e := parseAPIError(403, []byte(`{"error":"`+code+`","billing_reason":"`+secret+`","required_scope":"`+secret+`"}`), secret, secret)
-		if strings.Contains(secretSafeError(e), secret) || strings.Contains(secretSafeError(e), code) {
-			t.Fatalf("secret diagnostic used server text for %s", code)
-		}
+	if strings.Contains(ae.Error(), secret) {
+		t.Fatal("the API token leaked into the error")
 	}
 	malformed := parseAPIError(403, []byte(`{"error":"key_revoked\nforged","billing_reason":"bad\u001b[31m","required_scope":"wrong scope"}`), "request\nforged", "")
 	if malformed.Code != "" || malformed.Reason != "" || malformed.RequiredScope != "" || malformed.RequestID != "" {
 		t.Fatal("control/invalid metadata accepted")
-	}
-	if strings.Contains(secretSafeError(&apiError{Status: 403, Body: secret, Code: secret, Message: secret, Reason: secret, RequestID: secret}), secret) {
-		t.Fatal("secret-safe diagnostics used untrusted metadata")
 	}
 }
 

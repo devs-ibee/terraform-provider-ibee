@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -29,14 +28,14 @@ func computeFixtureCatalog(w http.ResponseWriter, body map[string]any, product, 
 
 func TestComputeRecoveryCatalogPlanAndReadCompatibility(t *testing.T) {
 	ctx := context.Background()
-	base := recoveryTestCatalog("snapshot_storage")
+	base := recoveryTestCatalog("backup_storage")
 	enriched, _ := decodeRecoveryCatalog(base.ValueString())
 	enriched["billing_interval"] = "HOURLY"
 	raw, _ := json.Marshal(enriched)
 	prior := types.StringValue(string(raw))
 	for _, scenario := range []string{"omitted", "new metadata", "enriched import", "changed sku", "changed price", "format only"} {
 		t.Run(scenario, func(t *testing.T) {
-			r, model := recoveryTestResource("cloud", "snapshot_storage", nil)
+			r, model := recoveryTestResource("cloud", "backup_storage", nil)
 			old := prior
 			cfg := base
 			wantReplace := false
@@ -46,7 +45,7 @@ func TestComputeRecoveryCatalogPlanAndReadCompatibility(t *testing.T) {
 			case "new metadata":
 				old = types.StringNull()
 			case "changed sku":
-				cfg = types.StringValue(strings.Replace(base.ValueString(), "SNAPSHOT-STD", "SNAPSHOT-OTHER", 1))
+				cfg = types.StringValue(strings.Replace(base.ValueString(), "BACKUP-STD", "BACKUP-OTHER", 1))
 				wantReplace = true
 			case "changed price":
 				cfg = types.StringValue(strings.Replace(base.ValueString(), ":17", ":19", 1))
@@ -82,15 +81,11 @@ func TestComputeRecoveryCatalogPlanAndReadCompatibility(t *testing.T) {
 
 func TestComputeRecoveryCatalogRefreshDenialsPreserveState(t *testing.T) {
 	for _, kind := range []string{"cloud", "gpu"} {
-		for _, product := range []string{"snapshot_storage", "backup_storage", "block_storage"} {
+		for _, product := range []string{"backup_storage", "block_storage"} {
 			for _, status := range []int{403, 423} {
 				t.Run(fmt.Sprintf("%s/%s/%d", kind, product, status), func(t *testing.T) {
 					client := computeTestClient(t, func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(status) })
 					r, model := recoveryTestResource(kind, product, client)
-					if m, ok := model.(vmSnapshotModel); ok {
-						m.ID = types.StringValue("snap")
-						model = m
-					}
 					state := computeState(t, r, model)
 					resp := resource.ReadResponse{State: state}
 					r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
@@ -132,15 +127,13 @@ func TestComputeRecoveryCatalogPassesThrough(t *testing.T) {
 }
 
 func recoveryTestCatalog(product string) types.String {
-	code := map[string]string{"snapshot_storage": "SNAPSHOT-STD", "backup_storage": "BACKUP-STD", "block_storage": "BLOCK-STD"}[product]
+	code := map[string]string{"backup_storage": "BACKUP-STD", "block_storage": "BLOCK-STD"}[product]
 	return types.StringValue(fmt.Sprintf(`{"currency":"INR","product_code":%q,"site_id":"site","sku_code":%q,"sku_id":9007199254740993,"unit_price_minor":17}`, product, code))
 }
 
 func recoveryTestResource(kind, product string, client *Client) (resource.Resource, any) {
 	catalog := recoveryTestCatalog(product)
 	switch product {
-	case "snapshot_storage":
-		return &vmSnapshotResource{vmType: kind, client: client}, vmSnapshotModel{ID: types.StringUnknown(), VmID: types.StringValue("vm-1"), Name: types.StringValue("snapshot"), Mode: types.StringValue("root_only"), SelectedDataVolumeIDs: types.SetValueMust(types.StringType, []attr.Value{}), Status: types.StringUnknown(), RecoveryPointID: types.StringUnknown(), BillingCatalog: catalog}
 	case "backup_storage":
 		m := computeBackupModel()
 		m.ID = types.StringUnknown()
@@ -155,9 +148,6 @@ func recoveryTestResource(kind, product string, client *Client) (resource.Resour
 
 func recoveryTestSetCatalog(model any, catalog types.String) any {
 	switch m := model.(type) {
-	case vmSnapshotModel:
-		m.BillingCatalog = catalog
-		return m
 	case vmBackupPolicyModel:
 		m.BillingCatalog = catalog
 		return m
@@ -170,7 +160,7 @@ func recoveryTestSetCatalog(model any, catalog types.String) any {
 
 func TestComputeRecoveryCatalogContractLifecycle(t *testing.T) {
 	for _, kind := range []string{"cloud", "gpu"} {
-		for _, product := range []string{"snapshot_storage", "backup_storage", "block_storage"} {
+		for _, product := range []string{"backup_storage", "block_storage"} {
 			t.Run(kind+"/"+product, func(t *testing.T) {
 				ctx := context.Background()
 				catalog, _ := decodeRecoveryCatalog(recoveryTestCatalog(product).ValueString())
@@ -286,7 +276,7 @@ func TestComputeRecoveryCatalogContractLifecycle(t *testing.T) {
 // The provider sends the catalog as configured; the API accepts or refuses it.
 func TestComputeRecoveryCatalogLeftToAPI(t *testing.T) {
 	for _, kind := range []string{"cloud", "gpu"} {
-		for _, product := range []string{"snapshot_storage", "backup_storage", "block_storage"} {
+		for _, product := range []string{"backup_storage", "block_storage"} {
 			for _, scenario := range []string{"missing", "empty", "invalid json", "missing sku", "wrong product", "root disk", "bad currency", "negative price", "wrong site", "currency mismatch", "denied"} {
 				t.Run(kind+"/"+product+"/"+scenario, func(t *testing.T) {
 					value := recoveryTestCatalog(product)

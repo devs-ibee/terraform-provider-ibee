@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashicorp/terraform-plugin-framework/action"
-
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -157,28 +155,22 @@ func (p *ibeeProvider) Resources(_ context.Context) []func() resource.Resource {
 		NewFirewallGroupResource, NewFirewallRuleResource, NewCloudVmResource,
 		NewBlockVolumeResource,
 		NewBucketCORSResource, NewBucketLifecycleResource, NewBucketNotificationsResource,
+		NewBucketObjectLockResource, NewBucketCustomDomainResource,
 		NewCDNDistributionResource, NewCDNWebsiteResource, NewCDNDomainResource,
 		NewFirewallAttachmentResource, NewReservedIPResource, NewReservedIPAttachmentResource,
-		NewNATGatewayResource, NewNATPortForwardingRuleResource, NewL4LoadBalancerResource, NewL7LoadBalancerResource,
-		NewGpuVmResource, NewCloudVmSnapshotResource, NewGpuVmSnapshotResource,
+		NewNATGatewayResource, NewNATPortForwardingRuleResource, NewLoadBalancerResource,
+		NewGpuVmResource,
 		NewCloudVmBackupPolicyResource, NewGpuVmBackupPolicyResource,
 		NewCloudVmVolumeAttachmentResource, NewGpuVmVolumeAttachmentResource,
-		NewBucketResource, NewS3CredentialResource, NewSecretStoreResource, NewSecretResource,
-		NewSecretIdentityResource, NewSecretIdentityScopeResource,
+		NewBucketResource, NewS3CredentialResource,
 		NewContainerRegistryResource, NewContainerRegistryAccessTokenResource,
+		NewSecretManagerResource, NewSecretManagerSecretResource, NewSecretManagerAppCredentialResource,
 	}
 }
 func (p *ibeeProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewSitesDataSource, NewNetworkSitesDataSource, NewComputePlansDataSource, NewImagesDataSource,
-		NewSnapshotStoragePlansDataSource, NewBackupStoragePlansDataSource, NewBlockStoragePlansDataSource,
-		NewContainerRegistriesDataSource,
-	}
-}
-
-func (p *ibeeProvider) Actions(_ context.Context) []func() action.Action {
-	return []func() action.Action{NewCDNPurgeAction, NewCDNVerifyDomainAction,
-		NewVmPowerAction, NewVmAccessAction, NewVmSnapshotRestoreAction, NewVmBackupRestoreAction,
-		NewVmBackupCreateAction, NewVmBackupRestoreCancelAction,
+		NewBackupStoragePlansDataSource, NewBlockStoragePlansDataSource,
+		NewContainerRegistriesDataSource, NewLoadBalancerRegionsDataSource,
 	}
 }
