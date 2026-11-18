@@ -148,7 +148,7 @@ func TestSecretManagerAppCredentialIssuesSecretIDOnce(t *testing.T) {
 				t.Errorf("create body %v", body)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			computeJSON(w, map[string]any{"id": "op-9", "kind": "app_credential_create", "status": "queued", "payload": map[string]any{"credential_id": "cred-1"}})
+			computeJSON(w, map[string]any{"credential": map[string]any{"id": "cred-1", "name": "ci", "state": "pending"}, "operation": map[string]any{"id": "op-9", "kind": "app_credential_create", "status": "queued"}})
 		case "GET /secret-manager/app-credentials/cred-1":
 			gets++
 			state := "pending"
@@ -161,7 +161,7 @@ func TestSecretManagerAppCredentialIssuesSecretIDOnce(t *testing.T) {
 			computeJSON(w, map[string]any{"id": "cred-1", "name": "ci", "access": "read", "folder": "apps", "state": state, "has_secret_id": issued > 0})
 		case "POST /secret-manager/app-credentials/cred-1/secret-id":
 			issued++
-			computeJSON(w, map[string]any{"role_id": "role-1", "secret_id": "secret-1", "namespace": "team-a", "mount": "approle", "endpoint": "https://vault.test"})
+			computeJSON(w, map[string]any{"credential": map[string]any{"id": "cred-1", "state": "active", "has_secret_id": true}, "role_id": "role-1", "secret_id": "secret-1", "namespace": "team-a", "mount": "approle", "endpoint": "https://vault.test"})
 		case "DELETE /secret-manager/app-credentials/cred-1":
 			revoked = true
 			w.WriteHeader(http.StatusAccepted)

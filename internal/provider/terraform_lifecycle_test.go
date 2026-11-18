@@ -270,7 +270,7 @@ func (f *terraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b := body()
 		f.credential = map[string]any{"id": "cred-1", "name": b["name"], "access": b["access"], "folder": b["folder"], "state": "active"}
 		w.WriteHeader(http.StatusAccepted)
-		send(map[string]any{"id": "op-cred", "status": "queued", "payload": map[string]any{"credential_id": "cred-1"}})
+		send(map[string]any{"credential": f.credential, "operation": map[string]any{"id": "op-cred", "status": "queued"}})
 	case path == "/secret-manager/app-credentials/cred-1":
 		if f.credential == nil {
 			http.NotFound(w, r)

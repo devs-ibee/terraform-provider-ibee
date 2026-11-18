@@ -479,9 +479,16 @@ func (r *secretManagerAppCredentialResource) Create(ctx context.Context, req res
 		resp.Diagnostics.AddError("Failed to create app credential", err.Error())
 		return
 	}
-	id := findString(accepted, "credential_id")
+	// The answer is {"credential": {"id": ...}, "operation": {...}}.
+	id := ""
+	if credential, ok := accepted["credential"].(map[string]any); ok {
+		id, _ = credential["id"].(string)
+	}
 	if id == "" {
-		resp.Diagnostics.AddError("Invalid created app credential response", "The response carried no credential_id.")
+		id = findString(accepted, "credential_id")
+	}
+	if id == "" {
+		resp.Diagnostics.AddError("Invalid created app credential response", "The response carried no credential id.")
 		return
 	}
 	// Wait until the credential is active, then issue its secret ID once.
