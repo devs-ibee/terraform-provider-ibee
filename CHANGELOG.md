@@ -10,8 +10,9 @@ import. One-off operations belong in the CLI and SDKs.
   groups, health checks, logging; changes wait for the operation and send the current
   `version`) and the `ibee_load_balancer_regions` data source.
 - Add Secret Manager: `ibee_secret_manager` (turns it on for the workspace; destroy
-  leaves it on), `ibee_secret_manager_secret` (settings and tags of one secret path;
-  never the value) and `ibee_secret_manager_app_credential` (AppRole login; the secret
+  leaves it on), `ibee_secret_manager_secret` (type, settings and tags of one secret
+  path; never the value; the service's own `ibee_type` and `managed_by` keys stay out of
+  `custom_metadata`) and `ibee_secret_manager_app_credential` (AppRole login; the secret
   ID is issued once and kept in state as sensitive; destroy revokes it). Secret values
   go through the Vault API, never Terraform.
 - Add `ibee_bucket_object_lock` (default retention) and `ibee_bucket_custom_domain`.
