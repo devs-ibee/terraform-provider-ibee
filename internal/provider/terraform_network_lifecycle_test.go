@@ -351,6 +351,32 @@ func (f *networkTerraformFixture) loadBalancer(w http.ResponseWriter, r *http.Re
 		send(map[string]any{"id": op, "lb_id": id, "status": "queued"})
 	}
 	apply := func(obj, spec map[string]any) {
+		// Answer like the live service (dev, 19 Nov): it fills in defaults the
+		// configuration may leave out, such as rules: [] on a listener and the
+		// algorithm and a null health check on a target group.
+		if listeners, ok := spec["listeners"].([]any); ok {
+			for _, l := range listeners {
+				if listener, ok := l.(map[string]any); ok && listener["rules"] == nil {
+					listener["rules"] = []any{}
+				}
+			}
+		}
+		if groups, ok := spec["target_groups"].([]any); ok {
+			for _, g := range groups {
+				if group, ok := g.(map[string]any); ok {
+					if group["algorithm"] == nil {
+						group["algorithm"] = "least_request"
+					}
+					if _, set := group["health_check"]; !set {
+						group["health_check"] = nil
+					}
+				}
+			}
+		}
+		if spec["logging"] == nil {
+			// The live service always answers logging, even when it was not sent.
+			spec["logging"] = map[string]any{"enabled": false, "dataset_id": nil}
+		}
 		for k, v := range spec {
 			obj[k] = v
 		}

@@ -16,6 +16,8 @@ import. One-off operations belong in the CLI and SDKs.
   ID is issued once and kept in state as sensitive; destroy revokes it). Secret values
   go through the Vault API, never Terraform.
 - Add `ibee_bucket_object_lock` (default retention) and `ibee_bucket_custom_domain`.
+- `ibee_load_balancer` no longer plans an in-place update on every run after apply. The API
+  always answers `logging`, which made `version`, `managed_by` and `observed_state` unknown.
 - Errors now show the server's `billing_reason` and `required_scope` next to the code, for
   example `HTTP 402 billing_denied (initial_topup_required): Add at least ₹500…`.
 - Remove the Secret Store resources (`ibee_secret_store`, `ibee_secret`,

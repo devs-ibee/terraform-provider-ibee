@@ -269,6 +269,36 @@ func (r *loadBalancerResource) Read(ctx context.Context, req resource.ReadReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, types.ObjectValueMust(r.attributeTypes(), values))...)
 }
 
+var _ resource.ResourceWithModifyPlan = (*loadBalancerResource)(nil)
+
+// ModifyPlan keeps the service's own fields when nothing in the specification
+// changed. An Optional+Computed object the configuration leaves out (the API
+// always answers logging, for example) makes the framework mark every computed
+// attribute unknown, which planned a needless in-place update on every run. It
+// runs after the attribute plan modifiers, so those values are back to state by
+// now. When the specification really changes, version and the observed state
+// stay unknown: the update moves them on.
+func (r *loadBalancerResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan, state types.Object
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	planned, prior := plan.Attributes(), state.Attributes()
+	for _, field := range loadBalancerSpecFields {
+		if planned[field] == nil || prior[field] == nil || !planned[field].Equal(prior[field]) {
+			return
+		}
+	}
+	for _, field := range []string{"version", "managed_by", "observed_state"} {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(field), prior[field])...)
+	}
+}
+
 func (r *loadBalancerResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state types.Object
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
