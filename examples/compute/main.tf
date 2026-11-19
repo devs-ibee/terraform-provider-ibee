@@ -47,8 +47,7 @@ data "ibee_compute_plans" "gpu" {
 data "ibee_images" "cloud" { vm_type = "cloud" }
 data "ibee_images" "gpu" { vm_type = "gpu" }
 
-# The SKUs snapshots and backups are billed under.
-data "ibee_snapshot_storage_plans" "all" {}
+# The SKUs backups are billed under.
 data "ibee_backup_storage_plans" "all" {}
 
 resource "ibee_cloud_vm" "app" {
@@ -88,21 +87,6 @@ resource "ibee_gpu_vm_volume_attachment" "worker_data" {
   volume_id         = var.gpu_volume_id
   billing_catalog   = var.gpu_volume_billing_catalog
   confirm_unmounted = var.confirm_volumes_unmounted
-}
-
-resource "ibee_cloud_vm_snapshot" "app" {
-  vm_id           = ibee_cloud_vm.app.id
-  name            = "terraform-initial-app"
-  mode            = "all_attached"
-  billing_catalog = data.ibee_snapshot_storage_plans.all.plans[0].billing_catalog
-  depends_on      = [ibee_cloud_vm_volume_attachment.app_data]
-}
-resource "ibee_gpu_vm_snapshot" "worker" {
-  vm_id           = ibee_gpu_vm.worker.id
-  name            = "terraform-initial-worker"
-  mode            = "all_attached"
-  billing_catalog = data.ibee_snapshot_storage_plans.all.plans[0].billing_catalog
-  depends_on      = [ibee_gpu_vm_volume_attachment.worker_data]
 }
 
 # Destroy disables backups. Backups already taken are kept and may still be billed.

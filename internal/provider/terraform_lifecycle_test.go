@@ -53,7 +53,7 @@ func TestTerraformLifecycle(t *testing.T) {
 		}
 		env = append(env, entry)
 	}
-	env = append(env, "TF_CLI_CONFIG_FILE="+cli, "TF_IN_AUTOMATION=1", "CHECKPOINT_DISABLE=1", "TF_VAR_secret_payload=fixture-secret-never-in-state")
+	env = append(env, "TF_CLI_CONFIG_FILE="+cli, "TF_IN_AUTOMATION=1", "CHECKPOINT_DISABLE=1")
 	run := func(want int, args ...string) string {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -73,8 +73,8 @@ func TestTerraformLifecycle(t *testing.T) {
 		if code != want {
 			t.Fatalf("terraform %v exited %d, want %d:\n%s", args, code, want, out)
 		}
-		if strings.Contains(string(out), "fixture-secret-never-in-state") {
-			t.Fatal("secret leaked to Terraform output")
+		if strings.Contains(string(out), "fixture-secret-id") {
+			t.Fatal("the sensitive secret ID leaked to Terraform output")
 		}
 		return string(out)
 	}
@@ -89,11 +89,6 @@ provider "ibee" {
  workspace_id = "workspace-fixture"
  operation_timeout = "3s"
 }
-variable "secret_payload" {
- type = string
- sensitive = true
- ephemeral = true
-}
 data "ibee_sites" "test" {}
 data "ibee_compute_plans" "test" {
  vm_type = "cloud"
@@ -105,43 +100,37 @@ resource "ibee_bucket" "test" {
  region = "fixture-region"
  is_public = %t
 }
-resource "ibee_secret_store" "test" {
- name = "fixture-store"
- description = "managed by test"
+resource "ibee_secret_manager" "test" {
+ namespace = "fixture-team"
 }
-resource "ibee_secret" "test" {
- store_id = ibee_secret_store.test.id
- secret_name = "fixture-secret"
- value_wo = jsonencode({ password = var.secret_payload })
- value_wo_version = %d
+resource "ibee_secret_manager_secret" "test" {
+ path = "apps/billing/db"
+ type = "database_credentials"
+ custom_metadata = { owner = "billing" }
+ max_versions = %d
+ depends_on = [ibee_secret_manager.test]
+}
+resource "ibee_secret_manager_app_credential" "test" {
+ name = "fixture-ci"
+ access = "read"
+ folder = "apps/billing"
+ depends_on = [ibee_secret_manager.test]
 }
 `, server.URL, public, rotation))
 	}
-	config(false, 0)
+	config(false, 5)
 	run(0, "validate", "-no-color")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-	assertNoSecretState := func() {
-		t.Helper()
-		data, err := os.ReadFile(filepath.Join(work, "terraform.tfstate"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(data), "fixture-secret-never-in-state") || strings.Contains(string(data), `\"password\"`) {
-			t.Fatal("write-only secret persisted in state")
-		}
-	}
-	assertNoSecretState()
-	// Import all three identities and demand an immediately converged plan.
-	for _, item := range []struct{ address, id string }{{"ibee_bucket.test", "fixture-bucket"}, {"ibee_secret_store.test", "store-1"}, {"ibee_secret.test", "secret-1"}} {
+	// Import every identity and demand an immediately converged plan.
+	for _, item := range []struct{ address, id string }{{"ibee_bucket.test", "fixture-bucket"}, {"ibee_secret_manager.test", "workspace-fixture"}, {"ibee_secret_manager_secret.test", "apps/billing/db"}, {"ibee_secret_manager_app_credential.test", "cred-1"}} {
 		run(0, "state", "rm", item.address)
 		run(0, "import", "-input=false", "-no-color", item.address, item.id)
 	}
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-	config(true, 1)
+	config(true, 7)
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-	assertNoSecretState()
 	gateway.mu.Lock()
 	gateway.bucket["is_public"] = false
 	gateway.mu.Unlock()
@@ -167,8 +156,8 @@ resource "ibee_secret" "test" {
 	run(0, "destroy", "-auto-approve", "-input=false", "-no-color")
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
-	if gateway.bucket != nil || gateway.store["status"] != "archived" || gateway.secret["status"] != "soft_deleted" || gateway.secretVersion != 2 {
-		t.Fatalf("unexpected final fixture state: bucket=%v store=%v secret=%v version=%d", gateway.bucket, gateway.store, gateway.secret, gateway.secretVersion)
+	if gateway.bucket != nil || gateway.secret != nil || gateway.credential["state"] != "revoked" || !gateway.secretManager || gateway.secretIDs != 1 {
+		t.Fatalf("unexpected final fixture state: bucket=%v secret=%v credential=%v enabled=%v secret IDs=%d", gateway.bucket, gateway.secret, gateway.credential, gateway.secretManager, gateway.secretIDs)
 	}
 }
 func writeTestFile(t *testing.T, name, content string) {
@@ -179,10 +168,11 @@ func writeTestFile(t *testing.T, name, content string) {
 }
 
 type terraformFixture struct {
-	mu                           sync.Mutex
-	allowed                      bool
-	bucket, store, secret        map[string]any
-	secretVersion, bucketCreates int
+	mu                         sync.Mutex
+	allowed                    bool
+	bucket, secret, credential map[string]any
+	secretManager              bool
+	secretIDs, bucketCreates   int
 }
 
 func (f *terraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -239,55 +229,72 @@ func (f *terraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		send(f.bucket)
-	case path == "/secret-store/stores" && r.Method == "POST":
-		b := body()
-		f.store = map[string]any{"id": "store-1", "name": b["name"], "description": b["description"], "store_key": "store-key-1", "status": "active"}
-		send(f.store)
-	case path == "/secret-store/stores/store-1":
-		if f.store == nil {
+	case path == "/secret-manager/workspace/enable" && r.Method == "POST":
+		if r.Header.Get("Idempotency-Key") == "" || body()["namespace"] != "fixture-team" {
+			http.Error(w, "bad enable", 400)
+			return
+		}
+		f.secretManager = true
+		w.WriteHeader(http.StatusAccepted)
+		send(map[string]any{"id": "op-enable", "kind": "enable", "status": "queued"})
+	case path == "/secret-manager/operations/op-enable":
+		send(map[string]any{"id": "op-enable", "status": "completed"})
+	case path == "/secret-manager/workspace":
+		if !f.secretManager {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Method == "PATCH" {
+		send(map[string]any{"workspace_id": "workspace-fixture", "namespace": "fixture-team", "state": "active", "max_versions": 10, "endpoint": "https://vault.fixture"})
+	case path == "/secret-manager/secret-metadata/apps/billing/db":
+		switch r.Method {
+		case "PUT":
 			b := body()
-			f.store["name"], f.store["description"] = b["name"], b["description"]
-		}
-		send(f.store)
-	case path == "/secret-store/stores/store-1/archive":
-		f.store["status"] = "archived"
-		send(f.store)
-	case path == "/secret-store/stores/store-1/secrets":
-		if r.Method == "POST" {
-			b := body()
-			f.secret = map[string]any{"id": "secret-1", "store_id": "store-1", "secret_name": b["secret_name"], "store_key": "store-key-1", "status": "active"}
-			f.secretVersion = 1
+			for key := range b {
+				if key == "data" || strings.Contains(key, "value") {
+					http.Error(w, "metadata carried a value", 400)
+					return
+				}
+			}
+			// Like the service: it keeps the type and adds its own managed_by key.
+			tags := map[string]any{"ibee_type": "key_value", "managed_by": "user"}
+			if f.secret != nil {
+				tags["ibee_type"] = f.secret["custom_metadata"].(map[string]any)["ibee_type"]
+			}
+			for k, v := range b["custom_metadata"].(map[string]any) {
+				tags[k] = v
+			}
+			f.secret = map[string]any{"custom_metadata": tags, "max_versions": b["max_versions"], "cas_required": false, "delete_version_after": "0s", "current_version": 0}
+			send(map[string]any{"detail": "ok"})
+		case "DELETE":
+			f.secret = nil
+			send(map[string]any{"detail": "destroyed"})
+		default:
+			if f.secret == nil {
+				http.NotFound(w, r)
+				return
+			}
 			send(f.secret)
-			return
 		}
-		items := []map[string]any{}
-		if f.secret != nil {
-			items = append(items, f.secret)
-		}
-		send(map[string]any{"secrets": items, "total": len(items)})
-	case path == "/secret-store/secrets/secret-1":
-		if f.secret == nil {
+	case path == "/secret-manager/app-credentials" && r.Method == "POST":
+		b := body()
+		f.credential = map[string]any{"id": "cred-1", "name": b["name"], "access": b["access"], "folder": b["folder"], "state": "active"}
+		w.WriteHeader(http.StatusAccepted)
+		send(map[string]any{"credential": f.credential, "operation": map[string]any{"id": "op-cred", "status": "queued"}})
+	case path == "/secret-manager/app-credentials/cred-1":
+		if f.credential == nil {
 			http.NotFound(w, r)
 			return
 		}
 		if r.Method == "DELETE" {
-			f.secret["status"] = "soft_deleted"
+			f.credential["state"] = "revoked"
+			w.WriteHeader(http.StatusAccepted)
+			send(map[string]any{"id": "op-revoke", "status": "queued"})
+			return
 		}
-		send(f.secret)
-	case path == "/secret-store/secrets/secret-1/value":
-		if r.Method == "PUT" {
-			b := body()
-			if b["cas"] != float64(f.secretVersion) {
-				http.Error(w, "CAS conflict", 409)
-				return
-			}
-			f.secretVersion++
-		}
-		send(map[string]any{"id": "secret-1", "data": map[string]any{"password": "fixture-secret-never-in-state"}, "metadata": map[string]any{"version": f.secretVersion}})
+		send(f.credential)
+	case path == "/secret-manager/app-credentials/cred-1/secret-id" && r.Method == "POST":
+		f.secretIDs++
+		send(map[string]any{"role_id": "role-1", "secret_id": "fixture-secret-id", "namespace": "fixture-team", "mount": "approle", "endpoint": "https://vault.fixture"})
 	default:
 		http.Error(w, "unexpected fixture route: "+r.Method+" "+path, 404)
 	}

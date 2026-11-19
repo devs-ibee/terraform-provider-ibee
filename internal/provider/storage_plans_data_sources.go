@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Catalog data sources for the SKUs that snapshots, backups and block volumes
+// Catalog data sources for the SKUs that backups and block volumes
 // are created with. They list what the API returns; the API decides which SKU,
 // price and size a create accepts.
 
@@ -74,12 +74,9 @@ func catalogJSON(raw json.RawMessage) (types.String, error) {
 
 type recoveryStoragePlansDataSource struct {
 	client  *Client
-	product string // snapshot or backup
+	product string // backup
 }
 
-func NewSnapshotStoragePlansDataSource() datasource.DataSource {
-	return &recoveryStoragePlansDataSource{product: "snapshot"}
-}
 func NewBackupStoragePlansDataSource() datasource.DataSource {
 	return &recoveryStoragePlansDataSource{product: "backup"}
 }
@@ -105,10 +102,7 @@ func (d *recoveryStoragePlansDataSource) Metadata(_ context.Context, req datasou
 }
 
 func (d *recoveryStoragePlansDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
-	use := "billing_catalog of ibee_cloud_vm_snapshot or ibee_gpu_vm_snapshot"
-	if d.product == "backup" {
-		use = "billing_catalog of ibee_cloud_vm_backup_policy or ibee_gpu_vm_backup_policy"
-	}
+	use := "billing_catalog of ibee_cloud_vm_backup_policy or ibee_gpu_vm_backup_policy"
 	attributes := catalogFilterAttributes()
 	attributes["plans"] = schema.ListNestedAttribute{
 		Computed: true,

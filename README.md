@@ -2,16 +2,11 @@
 
 Manage IBEE infrastructure with Terraform.
 
-Object Storage and Container Registry public management APIs are temporarily paused.
-Their resources remain in the provider for compatibility. An empty 404 reports
-the pause and retains existing Terraform state; it is not treated as deletion.
-CDN remains available.
-
 [Getting started](docs/guides/terraform.md) · [Provider documentation](docs/index.md) · [Examples](examples/README.md)
 
 ## Requirements
 
-- Terraform 1.11 or newer (1.14 or newer for Terraform actions)
+- Terraform 1.11 or newer
 - An IBEE API token and workspace ID
 
 ## Installation
@@ -42,11 +37,9 @@ variable "site_id" {
 
 ## Resources
 
-Browse highlighted resources: [Cloud VM](docs/resources/cloud_vm.md), [VPC](docs/resources/vpc.md), [Bucket](docs/resources/bucket.md), [CDN distribution](docs/resources/cdn_distribution.md), and [Container registry](docs/resources/container_registry.md). The [provider documentation](docs/index.md) lists all resources, data sources, and actions.
+Browse highlighted resources: [Cloud VM](docs/resources/cloud_vm.md), [VPC](docs/resources/vpc.md), [Load balancer](docs/resources/load_balancer.md), [Bucket](docs/resources/bucket.md), [CDN distribution](docs/resources/cdn_distribution.md), [Container registry](docs/resources/container_registry.md), and [Secret Manager](docs/resources/secret_manager.md). The [provider documentation](docs/index.md) lists all resources and data sources.
 
-Explicit Terraform actions can [start a manual VM backup](docs/actions/vm_backup_create.md)
-using its enabled policy and [cancel a queued backup restore](docs/actions/vm_backup_restore_cancel.md).
-These actions require Terraform 1.14 or later; ordinary plan and refresh do not invoke them.
+The provider manages infrastructure only. One-off operations, such as power actions, restoring a backup or purging a CDN cache, belong in the [CLI or SDKs](https://ibee.ai/docs). Files go through the S3 API, images through the registry, and secret values through the Vault API; Terraform never carries them.
 
 ## Contributing
 

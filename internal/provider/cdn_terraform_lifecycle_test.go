@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -153,51 +152,6 @@ resource "ibee_cdn_domain" "test" {
 		t.Errorf("creation failed disabled/update-only/pending-domain semantics: %+v", f)
 	}
 	f.mu.Unlock()
-	// Native provider actions are available from Terraform 1.14. Older CLI
-	// versions still exercise all managed resources in the rest of this test.
-	var version struct {
-		Version string `json:"terraform_version"`
-	}
-	if err := json.Unmarshal([]byte(run(0, "version", "-json")), &version); err != nil {
-		t.Fatal(err)
-	}
-	parts := strings.Split(version.Version, ".")
-	major, _ := strconv.Atoi(parts[0])
-	minor := 0
-	if len(parts) > 1 {
-		minor, _ = strconv.Atoi(parts[1])
-	}
-	if major > 1 || (major == 1 && minor >= 14) {
-		actions := filepath.Join(work, "actions.tf")
-		writeTestFile(t, actions, `action "ibee_cdn_purge" "test" {
- config {
-  distribution_id = ibee_cdn_distribution.custom.id
-  mode = "url"
-  paths = ["/assets/example.js"]
- }
-}
-action "ibee_cdn_verify_domain" "test" {
- config {
-  distribution_id = ibee_cdn_distribution.custom.id
-  domain = ibee_cdn_domain.test.domain
- }
-}
-`)
-		run(0, "validate", "-no-color")
-		run(0, "apply", "-invoke=action.ibee_cdn_purge.test", "-auto-approve", "-input=false", "-no-color")
-		pending := run(0, "apply", "-invoke=action.ibee_cdn_verify_domain.test", "-auto-approve", "-input=false", "-no-color")
-		if !strings.Contains(pending, "pending_validation") {
-			t.Fatal("native verification action did not report pending DNS")
-		}
-		f.mu.Lock()
-		if f.purges != 1 || f.verifications != 1 {
-			t.Errorf("action invocation did not reach exact endpoints: purge=%d verify=%d", f.purges, f.verifications)
-		}
-		f.mu.Unlock()
-		if err := os.Remove(actions); err != nil {
-			t.Fatal(err)
-		}
-	}
 	// Imports discover the canonical ID, rather than reconstructing a former
 	// configuration alias. Align configuration before importing that resource.
 	bucketOriginID = "canonical-bucket-7"
@@ -304,7 +258,6 @@ type cdnTerraformFixture struct {
 	distributions              map[string]map[string]any
 	origin, website, domain    map[string]any
 	faultPath, faultKind       string
-	purges, verifications      int
 }
 
 func (f *cdnTerraformFixture) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -409,18 +362,6 @@ func (f *cdnTerraformFixture) ServeHTTP(w http.ResponseWriter, req *http.Request
 		f.domain["status"] = "pending_validation"
 		f.domain["validation"] = map[string]any{"cname_record": map[string]any{"type": "CNAME", "name": "cdn.fixture.example", "value": "custom-distribution.cdn.fixture.example"}}
 		f.domain["created_at"] = "2026-09-27T00:00:00Z"
-		send(f.domain)
-	case p == "/cdn/distributions/custom-distribution/purge" && req.Method == http.MethodPost:
-		request := body()
-		paths, ok := request["paths"].([]any)
-		if request["mode"] != "url" || !ok || len(paths) != 1 || paths[0] != "/assets/example.js" {
-			http.Error(w, "unexpected purge payload", 422)
-			return
-		}
-		f.purges++
-		send(map[string]any{"success": true, "mode": "url"})
-	case p == "/cdn/distributions/custom-distribution/custom-domains/cdn.fixture.example/verify" && req.Method == http.MethodPost:
-		f.verifications++
 		send(f.domain)
 	case strings.Contains(p, "/custom-domains/"):
 		if f.domain == nil {

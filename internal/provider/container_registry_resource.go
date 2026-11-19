@@ -79,7 +79,7 @@ func (r *containerRegistryResource) Schema(_ context.Context, _ resource.SchemaR
 }
 
 func (r *containerRegistryResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	r.client = configureSecretResource(req, resp)
+	r.client = configureResourceClient(req, resp)
 }
 
 func (out containerRegistryAPI) apply(state *containerRegistryModel) error {

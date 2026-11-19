@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.10.0 (2026-11-18)
+
+Breaking. Moves the provider to public API contract 0.13.0 and keeps only what Terraform
+is for: infrastructure that lives across runs, with create, read, update, delete and
+import. One-off operations belong in the CLI and SDKs.
+
+- Add `ibee_load_balancer` (regional load balancer: listeners, routing rules, target
+  groups, health checks, logging; changes wait for the operation and send the current
+  `version`) and the `ibee_load_balancer_regions` data source.
+- Add Secret Manager: `ibee_secret_manager` (turns it on for the workspace; destroy
+  leaves it on), `ibee_secret_manager_secret` (type, settings and tags of one secret
+  path; never the value; the service's own `ibee_type` and `managed_by` keys stay out of
+  `custom_metadata`) and `ibee_secret_manager_app_credential` (AppRole login; the secret
+  ID is issued once and kept in state as sensitive; destroy revokes it). Secret values
+  go through the Vault API, never Terraform.
+- Add `ibee_bucket_object_lock` (default retention) and `ibee_bucket_custom_domain`.
+- `ibee_load_balancer` no longer plans an in-place update on every run after apply. The API
+  always answers `logging`, which made `version`, `managed_by` and `observed_state` unknown.
+- Errors now show the server's `billing_reason` and `required_scope` next to the code, for
+  example `HTTP 402 billing_denied (initial_topup_required): Add at least ₹500…`.
+- Remove the Secret Store resources (`ibee_secret_store`, `ibee_secret`,
+  `ibee_secret_identity`, `ibee_secret_identity_scope`): Secret Manager replaces Secret
+  Store in the public API.
+- Remove `ibee_load_balancer_l4` and `ibee_load_balancer_l7`: their API is gone; use
+  `ibee_load_balancer`.
+- Remove `ibee_cloud_vm_snapshot`, `ibee_gpu_vm_snapshot` and the
+  `ibee_snapshot_storage_plans` data source: snapshots are point-in-time operations, not
+  infrastructure. Backup policies stay.
+- Remove all actions (`ibee_vm_power`, `ibee_vm_access`, `ibee_vm_backup_create`,
+  `ibee_vm_backup_restore`, `ibee_vm_backup_restore_cancel`, `ibee_vm_snapshot_restore`,
+  `ibee_cdn_purge`, `ibee_cdn_verify_domain`). Use the CLI or SDKs for these.
+  Terraform 1.11 or newer is still required; 1.14 is no longer needed for anything.
+- Object Storage and Container Registry are no longer paused; the README note is gone.
+
+Before upgrading, run `terraform state rm` for any removed resource you want to keep in
+IBEE, or Terraform will report an unsupported resource type.
+
 ## 0.9.0 (2026-11-12)
 
 - Update the vendored public API contract to 0.10.0, still retaining the paused Object

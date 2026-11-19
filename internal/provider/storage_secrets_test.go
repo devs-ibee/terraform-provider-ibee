@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -165,219 +164,15 @@ func TestStorageBillingDenialPreventsCreates(t *testing.T) {
 		model    any
 	}{
 		{"bucket", &bucketResource{client: client}, storageTestBucketModel()},
-		{"store", &secretStoreResource{client: client}, storageTestStoreModel()},
-		{"secret", &secretResource{client: client}, storageTestSecretModel()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			state := storageTestState(t, tc.resource, tc.model)
 			config := state
-			if tc.name == "secret" {
-				cfg := storageTestSecretModel()
-				cfg.ValueWO = types.StringValue(`{"password":"test-secret"}`)
-				config = storageTestState(t, tc.resource, cfg)
-			}
 			response := resource.CreateResponse{State: state}
 			tc.resource.Create(storageTestContext, resource.CreateRequest{Plan: storageTestPlan(state), Config: storageTestConfig(config)}, &response)
 			if !response.Diagnostics.HasError() {
 				t.Fatal("billing rejection did not fail creation")
 			}
 		})
-	}
-}
-
-func storageTestStoreModel() secretStoreResourceModel {
-	return secretStoreResourceModel{ID: types.StringValue("store-1"), Name: types.StringValue("production"), Description: types.StringValue(""), StoreKey: types.StringValue("production"), Status: types.StringValue("active")}
-}
-
-func storageTestSecretModel() secretResourceModel {
-	return secretResourceModel{ID: types.StringValue("secret-1"), StoreID: types.StringValue("store-1"), SecretName: types.StringValue("database-url"), ValueWO: types.StringNull(), ValueWOVersion: types.Int64Value(0), CurrentVersion: types.Int64Value(1), StoreKey: types.StringValue("production"), Status: types.StringValue("active")}
-}
-
-func TestSecretStoreArchiveLeavesDecisionToAPI(t *testing.T) {
-	for _, refused := range []bool{false, true} {
-		t.Run(fmt.Sprintf("refused_%t", refused), func(t *testing.T) {
-			lists, archives := 0, 0
-			r := &secretStoreResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-				switch {
-				case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/archive"):
-					archives++
-					if refused {
-						w.WriteHeader(http.StatusConflict)
-						fmt.Fprint(w, `{"detail":"Store still holds active secrets"}`)
-						return
-					}
-					fmt.Fprint(w, `{"id":"store-1","status":"archived"}`)
-				case strings.HasSuffix(req.URL.Path, "/secrets"):
-					lists++
-				default:
-					fmt.Fprint(w, `{"id":"store-1","name":"production","description":"","store_key":"production","status":"active"}`)
-				}
-			})}
-			state := storageTestState(t, r, storageTestStoreModel())
-			response := resource.DeleteResponse{State: state}
-			r.Delete(storageTestContext, resource.DeleteRequest{State: state}, &response)
-			if lists != 0 || archives != 1 || response.Diagnostics.HasError() != refused {
-				t.Fatalf("lists=%d archives=%d diagnostics=%v", lists, archives, response.Diagnostics)
-			}
-			if refused && !strings.Contains(response.Diagnostics.Errors()[0].Detail(), "Store still holds active secrets") {
-				t.Fatalf("server answer not shown: %v", response.Diagnostics)
-			}
-		})
-	}
-}
-
-func TestSecretWriteOnlyLifecycleAndCAS(t *testing.T) {
-	currentVersion := int64(1)
-	created, putCalls, deleteCalls := false, 0, 0
-	secretValue := "very-private-never-in-state"
-	r := &secretResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-		switch {
-		case req.URL.Path == "/billing/resource-eligibility":
-			storageTestBilling(w, true)
-		case req.Method == http.MethodPost:
-			var body struct {
-				Value map[string]string `json:"value"`
-				Name  string            `json:"secret_name"`
-			}
-			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			if body.Value["password"] != secretValue || body.Name != "database-url" {
-				t.Errorf("unexpected create body %v", body)
-			}
-			created = true
-			fmt.Fprint(w, `{"id":"secret-1","store_id":"store-1","secret_name":"database-url","store_key":"production","status":"active"}`)
-		case req.Method == http.MethodPut:
-			putCalls++
-			var body struct {
-				Value map[string]string `json:"value"`
-				CAS   int64             `json:"cas"`
-			}
-			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			if body.CAS != currentVersion || body.Value["password"] != secretValue+"-rotated" {
-				t.Errorf("unexpected CAS rotation: %v", body)
-			}
-			currentVersion++
-			fmt.Fprintf(w, `{"id":"secret-1","data":{"password":"%s"},"metadata":{"version":%d}}`, secretValue+"-rotated", currentVersion)
-		case req.Method == http.MethodDelete:
-			deleteCalls++
-			fmt.Fprint(w, `{"id":"secret-1","store_id":"store-1","secret_name":"database-url","store_key":"production","status":"soft_deleted"}`)
-		case strings.HasSuffix(req.URL.Path, "/value"):
-			fmt.Fprintf(w, `{"id":"secret-1","data":{"password":"%s"},"metadata":{"version":%d}}`, secretValue, currentVersion)
-		default:
-			fmt.Fprint(w, `{"id":"secret-1","store_id":"store-1","secret_name":"database-url","store_key":"production","status":"active"}`)
-		}
-	})}
-	model := storageTestSecretModel()
-	model.ID = types.StringUnknown()
-	plan := storageTestState(t, r, model)
-	cfg := model
-	cfg.ValueWO = types.StringValue(`{"password":"` + secretValue + `"}`)
-	create := resource.CreateResponse{State: plan}
-	r.Create(storageTestContext, resource.CreateRequest{Plan: storageTestPlan(plan), Config: storageTestConfig(storageTestState(t, r, cfg))}, &create)
-	storageTestCheck(t, create.Diagnostics)
-	if !created {
-		t.Fatal("secret not created")
-	}
-	if strings.Contains(create.State.Raw.String(), secretValue) {
-		t.Fatal("plaintext leaked into created state")
-	}
-	var state secretResourceModel
-	storageTestCheck(t, create.State.Get(storageTestContext, &state))
-	if !state.ValueWO.IsNull() || state.CurrentVersion.ValueInt64() != 1 {
-		t.Fatalf("unexpected created state: %+v", state)
-	}
-	rotate := state
-	rotate.ValueWOVersion = types.Int64Value(1)
-	cfg = rotate
-	cfg.ValueWO = types.StringValue(`{"password":"` + secretValue + `-rotated"}`)
-	update := resource.UpdateResponse{State: create.State}
-	r.Update(storageTestContext, resource.UpdateRequest{Plan: storageTestPlan(storageTestState(t, r, rotate)), State: create.State, Config: storageTestConfig(storageTestState(t, r, cfg))}, &update)
-	storageTestCheck(t, update.Diagnostics)
-	if strings.Contains(update.State.Raw.String(), secretValue) {
-		t.Fatal("plaintext leaked into updated state")
-	}
-	storageTestCheck(t, update.State.Get(storageTestContext, &state))
-	if state.CurrentVersion.ValueInt64() != 2 || putCalls != 1 {
-		t.Fatalf("wrong rotation: %+v", state)
-	}
-	read := resource.ReadResponse{State: update.State}
-	r.Read(storageTestContext, resource.ReadRequest{State: update.State}, &read)
-	storageTestCheck(t, read.Diagnostics)
-	if strings.Contains(read.State.Raw.String(), secretValue) {
-		t.Fatal("plaintext leaked into refreshed state")
-	}
-	remove := resource.DeleteResponse{State: read.State}
-	r.Delete(storageTestContext, resource.DeleteRequest{State: read.State}, &remove)
-	storageTestCheck(t, remove.Diagnostics)
-	if deleteCalls != 1 {
-		t.Fatal("secret not soft-deleted")
-	}
-}
-
-func TestSecretRotationConflictDoesNotLeakOrAdvanceTrigger(t *testing.T) {
-	const plaintext = "should-never-be-visible"
-	r := &secretResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-		w.WriteHeader(409)
-		fmt.Fprint(w, `{"detail":"`+plaintext+`"}`)
-	})}
-	model := storageTestSecretModel()
-	state := storageTestState(t, r, model)
-	model.ValueWOVersion = types.Int64Value(1)
-	plan := storageTestState(t, r, model)
-	model.ValueWO = types.StringValue(`{"password":"` + plaintext + `"}`)
-	config := storageTestState(t, r, model)
-	response := resource.UpdateResponse{State: state}
-	r.Update(storageTestContext, resource.UpdateRequest{Plan: storageTestPlan(plan), Config: storageTestConfig(config), State: state}, &response)
-	if !response.Diagnostics.HasError() {
-		t.Fatal("expected CAS conflict")
-	}
-	if strings.Contains(fmt.Sprint(response.Diagnostics), plaintext) || strings.Contains(response.State.Raw.String(), plaintext) {
-		t.Fatal("secret leaked")
-	}
-	var after secretResourceModel
-	storageTestCheck(t, response.State.Get(storageTestContext, &after))
-	if after.ValueWOVersion.ValueInt64() != 0 {
-		t.Fatal("failed rotation advanced trigger")
-	}
-}
-
-func TestSecretTombstoneReadRetainsIdentity(t *testing.T) {
-	for _, status := range []string{"deleted", "soft_deleted"} {
-		r := &secretResource{client: storageTestClient(t, func(w http.ResponseWriter, req *http.Request) {
-			if strings.HasSuffix(req.URL.Path, "/value") {
-				t.Error("requested deleted value")
-			}
-			fmt.Fprintf(w, `{"id":"secret-1","store_id":"store-1","secret_name":"database-url","store_key":"production","status":"%s"}`, status)
-		})}
-		state := storageTestState(t, r, storageTestSecretModel())
-		response := resource.ReadResponse{State: state}
-		r.Read(storageTestContext, resource.ReadRequest{State: state}, &response)
-		storageTestCheck(t, response.Diagnostics)
-		if response.State.Raw.IsNull() {
-			t.Fatal("discarded retained tombstone identity")
-		}
-		var after secretResourceModel
-		storageTestCheck(t, response.State.Get(storageTestContext, &after))
-		if after.Status.ValueString() != status || !after.CurrentVersion.IsNull() {
-			t.Fatalf("invalid tombstone state: %+v", after)
-		}
-	}
-}
-
-func TestSecretValueValidationDoesNotLeak(t *testing.T) {
-	for _, raw := range []string{`["private"]`, `null`, `"private"`, `{"private":`, `{"private":1} {"private":2}`} {
-		_, err := decodeSecretValue(types.StringValue(raw))
-		if err == nil {
-			t.Errorf("invalid object accepted: %s", raw)
-		} else if strings.Contains(err.Error(), "private") {
-			t.Fatal("plaintext in validation diagnostic")
-		}
-	}
-	value, err := decodeSecretValue(types.StringValue(`{"count":9007199254740993,"nested":{"list":[true,1]}}`))
-	if err != nil || value["count"].(json.Number).String() != "9007199254740993" {
-		t.Fatal("large numeric secret was not preserved")
 	}
 }

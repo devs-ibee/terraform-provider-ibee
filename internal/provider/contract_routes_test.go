@@ -143,13 +143,27 @@ type contractRoutes map[string][]*regexp.Regexp
 
 var pathParameter = regexp.MustCompile(`\{[^/{}]+\}`)
 
-// add records a contract path; each {parameter} matches one path segment.
+// multiSegmentParameters hold a path of their own, as in the gateway (a Secret
+// Manager secret path such as apps/billing/db).
+var multiSegmentParameters = map[string]bool{"{secret_path}": true}
+
+// add records a contract path; each {parameter} matches one path segment, except
+// the multi-segment ones, which match one or more.
 func (c contractRoutes) add(method, path string) {
 	literal := pathParameter.Split(path, -1)
+	params := pathParameter.FindAllString(path, -1)
+	pattern := "^"
 	for i := range literal {
-		literal[i] = regexp.QuoteMeta(literal[i])
+		pattern += regexp.QuoteMeta(literal[i])
+		if i < len(params) {
+			if multiSegmentParameters[params[i]] {
+				pattern += "[^/]+(?:/[^/]+)*"
+			} else {
+				pattern += "[^/]+"
+			}
+		}
 	}
-	c[method] = append(c[method], regexp.MustCompile("^"+strings.Join(literal, "[^/]+")+"$"))
+	c[method] = append(c[method], regexp.MustCompile(pattern+"$"))
 }
 
 func (c contractRoutes) match(method, path string) bool {
@@ -415,7 +429,13 @@ func TestContractRouteMatching(t *testing.T) {
 		"POST /billing/resource-eligibility":                    false,
 		"PATCH /compute/cloud-vms/vm-1/actions/resize-plan":     false,
 		"GET /compute/plans/backup-storage":                     true,
-		"POST /secret-store/stores/store-1/secrets:batchIngest": true,
+		"POST /secret-store/stores/store-1/secrets:batchIngest": false,
+		"PUT /secret-manager/secret-metadata/apps/billing/db":   true,
+		"GET /secret-manager/secret-metadata/db":                true,
+		"GET /secret-manager/secrets/apps/db":                   false,
+		"POST /container-registry/registries/r-1/empty":         false,
+		"POST /networking/load-balancers/l4":                    false,
+		"PUT /networking/load-balancers/lb-1":                   true,
 	} {
 		method, path, _ := strings.Cut(route, " ")
 		if allowed(method, path) != want {

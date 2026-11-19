@@ -109,12 +109,6 @@ resource "ibee_%[1]s_vm_volume_attachment" "test" {
  volume_id = "%[1]s-volume"
  billing_catalog = jsonencode({ sku_id = "block-sku", sku_code = "BLOCK-STD", product_code = "block_storage", site_id = "site", currency = "INR" })
 }
-resource "ibee_%[1]s_vm_snapshot" "test" {
- vm_id = ibee_%[1]s_vm.test.id
- name = "%[1]s-snapshot"
- billing_catalog = jsonencode({ sku_id = "snapshot-sku", sku_code = "SNAPSHOT-STD", product_code = "snapshot_storage", site_id = "site", currency = "INR" })
- depends_on = [ibee_%[1]s_vm_volume_attachment.test]
-}
 resource "ibee_%[1]s_vm_backup_policy" "test" {
  vm_id = ibee_%[1]s_vm.test.id
  retention_days = 7
@@ -158,7 +152,7 @@ resource "ibee_%[1]s_vm_backup_policy" "test" {
 	f.mu.Unlock()
 	writeTestFile(t, filepath.Join(work, "main.tf"), config)
 	for _, kind := range []string{"cloud", "gpu"} {
-		for _, item := range []struct{ suffix, id string }{{"_vm", kind + "-vm-id"}, {"_vm_volume_attachment", kind + "-vm-id/" + kind + "-volume"}, {"_vm_snapshot", kind + "-snapshot-id"}, {"_vm_backup_policy", kind + "-vm-id"}} {
+		for _, item := range []struct{ suffix, id string }{{"_vm", kind + "-vm-id"}, {"_vm_volume_attachment", kind + "-vm-id/" + kind + "-volume"}, {"_vm_backup_policy", kind + "-vm-id"}} {
 			address := "ibee_" + kind + item.suffix + ".test"
 			run(0, "state", "rm", address)
 			run(0, "import", "-input=false", "-no-color", address, item.id)
