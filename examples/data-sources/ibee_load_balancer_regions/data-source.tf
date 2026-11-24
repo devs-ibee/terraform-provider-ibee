@@ -4,3 +4,9 @@ data "ibee_load_balancer_regions" "available" {}
 output "load_balancer_regions" {
   value = data.ibee_load_balancer_regions.available.ids
 }
+
+# Regions whose load balancers can send traffic to private VPC addresses; elsewhere,
+# targets are VMs (or addresses the region reaches publicly).
+output "private_target_regions" {
+  value = [for r in data.ibee_load_balancer_regions.available.regions : r.id if r.capabilities.private_targets]
+}

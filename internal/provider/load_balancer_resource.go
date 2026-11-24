@@ -1,9 +1,11 @@
 package provider
 
-// Regional load balancers (contract 0.11.0): one full specification per load balancer.
-// Create, update and delete answer 202 with an operation; every change carries an
-// Idempotency-Key. The service decides defaults, what it accepts and what each
-// node-hour costs; the provider sends the specification and relays the answer.
+// Regional load balancers (contract 0.11.0, firewall and options from 0.14.3): one full
+// specification per load balancer. Create, update and delete answer 202 with an
+// operation; every change carries an Idempotency-Key. The service decides defaults, what
+// it accepts and what each node-hour costs; the provider sends the specification and
+// relays the answer. Attributes the service fills in when they are left out are
+// Optional+Computed, so its answer never conflicts with the plan.
 
 import (
 	"context"
@@ -31,7 +33,10 @@ const loadBalancersPath = "/networking/load-balancers"
 
 // loadBalancerSpecFields are the LoadBalancerSpec fields the resource sends, in the
 // API's names (the Terraform attributes have the same names).
-var loadBalancerSpecFields = []string{"name", "region_id", "vpc_id", "scope", "traffic_type", "capacity_mode", "visibility", "node_count", "listeners", "target_groups", "logging"}
+var loadBalancerSpecFields = []string{"name", "region_id", "vpc_id", "scope", "traffic_type", "capacity_mode", "visibility", "node_count", "listeners", "target_groups", "logging", "firewall"}
+
+// loadBalancerSpecObjects are read from the answer's spec, not its top level.
+var loadBalancerSpecObjects = map[string]bool{"listeners": true, "target_groups": true, "logging": true, "firewall": true}
 
 type loadBalancerResource struct{ client *Client }
 
@@ -43,6 +48,10 @@ func optionalComputedString(description string) schema.StringAttribute {
 
 func optionalComputedInt64(description string) schema.Int64Attribute {
 	return schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}, Description: description}
+}
+
+func optionalComputedInt64List(description string) schema.ListAttribute {
+	return schema.ListAttribute{Optional: true, Computed: true, ElementType: types.Int64Type, PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}, Description: description}
 }
 
 func loadBalancerAttributes() map[string]schema.Attribute {
@@ -80,22 +89,36 @@ func loadBalancerAttributes() map[string]schema.Attribute {
 				"resource_id": schema.StringAttribute{Optional: true, Description: "VM ID, with kind vm."},
 				"address":     schema.StringAttribute{Optional: true, Description: "Private IP address, with kind ip."},
 			}}},
-			"health_check": schema.SingleNestedAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()}, Attributes: map[string]schema.Attribute{
-				"protocol":            schema.StringAttribute{Optional: true, Description: "HTTP or TCP."},
-				"path":                schema.StringAttribute{Optional: true},
-				"interval_seconds":    schema.Int64Attribute{Optional: true},
-				"timeout_seconds":     schema.Int64Attribute{Optional: true},
-				"unhealthy_threshold": schema.Int64Attribute{Optional: true},
-				"healthy_threshold":   schema.Int64Attribute{Optional: true},
+			"proxy_protocol": optionalComputedString("TCP target groups only: off, v1 or v2. v1 and v2 send the client's address to the targets with PROXY protocol. The API default (off) applies when omitted."),
+			"health_check": schema.SingleNestedAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()}, Description: "Health check. Fields left out get the API's defaults.", Attributes: map[string]schema.Attribute{
+				"protocol":            optionalComputedString("HTTP or TCP. The API default applies when omitted."),
+				"path":                optionalComputedString("HTTP checks: the path to request. The API default applies when omitted."),
+				"hostname":            schema.StringAttribute{Optional: true, Description: "HTTP checks only: the Host header the check sends, for example app.example.com."},
+				"expected_statuses":   optionalComputedInt64List("HTTP checks only: response codes that count as healthy, each listed once. The API default ([200]) applies when omitted."),
+				"interval_seconds":    optionalComputedInt64("Seconds between checks. The API default applies when omitted."),
+				"timeout_seconds":     optionalComputedInt64("Seconds a check may take. The API default applies when omitted."),
+				"unhealthy_threshold": optionalComputedInt64("Failed checks before a target is taken out of service. Left out, the server picks it: 1 for an HTTP check (the only value the current gateway supports for HTTP), 3 for TCP."),
+				"healthy_threshold":   optionalComputedInt64("Passed checks before a target is put back in service. The API default applies when omitted."),
 			}},
 		}}},
 		"logging": schema.SingleNestedAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()}, Attributes: map[string]schema.Attribute{
 			"enabled":    schema.BoolAttribute{Optional: true},
 			"dataset_id": schema.StringAttribute{Optional: true},
 		}},
+		"firewall": schema.SingleNestedAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()}, Description: "Who may reach the listeners. Left out, the API default applies (mode public: everyone).", Attributes: map[string]schema.Attribute{
+			"mode": optionalComputedString("public (everyone) or restricted (only what rules allow). The API default (public) applies when omitted."),
+			"rules": schema.ListNestedAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}, Description: "With mode restricted: the sources allowed or blocked, at most 100.", NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
+				"address_family": schema.StringAttribute{Required: true, Description: "IPv4 or IPv6."},
+				"protocol":       schema.StringAttribute{Required: true, Description: "TCP or UDP."},
+				"source":         schema.StringAttribute{Required: true, Description: "Source address or CIDR, for example 203.0.113.0/24; must match address_family."},
+				"port":           schema.Int64Attribute{Required: true, Description: "Listener port the rule applies to."},
+				"action":         optionalComputedString("allow or block. The API default (allow) applies when omitted."),
+			}}},
+		}},
 		"version":        schema.Int64Attribute{Computed: true, Description: "Specification version the API last applied; sent back on update."},
-		"managed_by":     schema.StringAttribute{Computed: true, Description: "Who manages the load balancer. Ones a Kubernetes cluster's cloud controller made are changed through the Kubernetes Service, not here."},
+		"managed_by":     schema.StringAttribute{Computed: true, Description: "Who manages the load balancer: portal, or ccm for one a Kubernetes cluster's cloud controller made (those are changed through the Kubernetes Service, not here)."},
 		"observed_state": schema.StringAttribute{Computed: true, Description: "State the service observes."},
+		"address":        schema.StringAttribute{Computed: true, Description: "The public IP address clients connect to (the first of conditions.addresses): point an A record at it to use your own domain. Null until the frontend is ready."},
 	}
 }
 
@@ -105,7 +128,7 @@ func (r *loadBalancerResource) Metadata(_ context.Context, req resource.Metadata
 
 func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "A regional load balancer, declared as one specification. Create and update send the whole specification (update with the API's current version) and wait for the operation to finish; destroy deletes the load balancer and waits. The service decides defaults, what it accepts and the node-hour price, and the provider relays its answer. Targets are private addresses or VMs in your VPC. Import with the load balancer ID." + networkBillingDescription,
+		Description: "A regional load balancer, declared as one specification. Create and update send the whole specification (update with the API's current version) and wait for the operation to finish; destroy deletes the load balancer and waits. The service decides defaults, what it accepts and the node-hour price, and the provider relays its answer. Targets are VMs, or private addresses in your VPC where the region's capabilities.private_targets is true (ibee_load_balancer_regions); a target the region cannot reach is refused with 422 target_not_usable. address is the public IP to point DNS at. Import with the load balancer ID." + networkBillingDescription,
 		Attributes:  loadBalancerAttributes(),
 	}
 }
@@ -155,9 +178,11 @@ func (r *loadBalancerResource) read(ctx context.Context, id string) (map[string]
 	values := map[string]attr.Value{}
 	for name, t := range r.attributeTypes() {
 		var raw any
-		switch name {
-		case "listeners", "target_groups", "logging":
+		switch {
+		case loadBalancerSpecObjects[name]:
 			raw = spec[name]
+		case name == "address":
+			raw = loadBalancerAddress(out)
 		default:
 			raw = out[name]
 		}
@@ -168,6 +193,19 @@ func (r *loadBalancerResource) read(ctx context.Context, id string) (map[string]
 		values[name] = value
 	}
 	return values, true, nil
+}
+
+// loadBalancerAddress is the first public address in conditions.addresses, or nil.
+func loadBalancerAddress(out map[string]any) any {
+	conditions, _ := out["conditions"].(map[string]any)
+	addresses, _ := conditions["addresses"].([]any)
+	if len(addresses) == 0 {
+		return nil
+	}
+	if address, ok := addresses[0].(string); ok && address != "" {
+		return address
+	}
+	return nil
 }
 
 // waitOperation polls GET /networking/load-balancers/operations/{id} until it ends.
@@ -294,7 +332,7 @@ func (r *loadBalancerResource) ModifyPlan(ctx context.Context, req resource.Modi
 			return
 		}
 	}
-	for _, field := range []string{"version", "managed_by", "observed_state"} {
+	for _, field := range []string{"version", "managed_by", "observed_state", "address"} {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(field), prior[field])...)
 	}
 }
@@ -355,12 +393,38 @@ func (d *loadBalancerRegionsDataSource) Metadata(_ context.Context, req datasour
 	resp.TypeName = req.ProviderTypeName + "_load_balancer_regions"
 }
 
+// loadBalancerRegionCapabilitiesType and loadBalancerRegionType are the contract's
+// LoadBalancerRegion (0.14.1).
+var loadBalancerRegionCapabilitiesType = types.ObjectType{AttrTypes: map[string]attr.Type{
+	"private_targets": types.BoolType,
+	"udp_firewall":    types.BoolType,
+}}
+
+var loadBalancerRegionType = types.ObjectType{AttrTypes: map[string]attr.Type{
+	"id":           types.StringType,
+	"code":         types.StringType,
+	"name":         types.StringType,
+	"site_id":      types.StringType,
+	"max_nodes":    types.Int64Type,
+	"capabilities": loadBalancerRegionCapabilitiesType,
+}}
+
 func (d *loadBalancerRegionsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = dschema.Schema{
-		Description: "Regions where load balancers can be created, as the API lists them.",
+		Description: "Regions where load balancers can be created, as the API lists them, with what each supports.",
 		Attributes: map[string]dschema.Attribute{
-			"ids":     dschema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Region IDs, for region_id of ibee_load_balancer."},
-			"regions": dschema.ListAttribute{Computed: true, ElementType: types.MapType{ElemType: types.StringType}, Description: "Each region's fields as the API returns them, as strings."},
+			"ids": dschema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Region IDs, for region_id of ibee_load_balancer."},
+			"regions": dschema.ListNestedAttribute{Computed: true, Description: "Each region as the API lists it.", NestedObject: dschema.NestedAttributeObject{Attributes: map[string]dschema.Attribute{
+				"id":        dschema.StringAttribute{Computed: true, Description: "Region ID, for region_id of ibee_load_balancer."},
+				"code":      dschema.StringAttribute{Computed: true, Description: "Region code, such as vga-dev."},
+				"name":      dschema.StringAttribute{Computed: true, Description: "Display name."},
+				"site_id":   dschema.StringAttribute{Computed: true, Description: "The site the region is in."},
+				"max_nodes": dschema.Int64Attribute{Computed: true, Description: "The most nodes one load balancer can have in this region."},
+				"capabilities": dschema.SingleNestedAttribute{Computed: true, Description: "What load balancers in this region support.", Attributes: map[string]dschema.Attribute{
+					"private_targets": dschema.BoolAttribute{Computed: true, Description: "Targets can be private addresses in a VPC. When false, use VMs or addresses the region reaches publicly; a private target is refused with 422 target_not_usable."},
+					"udp_firewall":    dschema.BoolAttribute{Computed: true, Description: "UDP listeners are protected by the region's network policy."},
+				}},
+			}}},
 		},
 	}
 }
@@ -384,22 +448,42 @@ func (d *loadBalancerRegionsDataSource) Read(ctx context.Context, _ datasource.R
 		return
 	}
 	ids := []string{}
-	rows := []map[string]string{}
+	rows := []attr.Value{}
 	for _, region := range regions {
-		row := map[string]string{}
-		for key, value := range region {
-			if value != nil {
-				row[key] = fmt.Sprint(value)
-			}
+		id, _ := region["id"].(string)
+		if id == "" {
+			id, _ = region["region_id"].(string)
 		}
-		if id := findString(region, "id", "region_id"); id != "" {
+		if id != "" {
 			ids = append(ids, id)
 		}
-		rows = append(rows, row)
+		capabilities, _ := region["capabilities"].(map[string]any)
+		caps := map[string]attr.Value{}
+		for _, name := range []string{"private_targets", "udp_firewall"} {
+			caps[name] = types.BoolNull()
+			if value, ok := capabilities[name].(bool); ok {
+				caps[name] = types.BoolValue(value)
+			}
+		}
+		row := map[string]attr.Value{
+			"id":           types.StringValue(id),
+			"capabilities": types.ObjectValueMust(loadBalancerRegionCapabilitiesType.AttrTypes, caps),
+			"max_nodes":    types.Int64Null(),
+		}
+		for _, name := range []string{"code", "name", "site_id"} {
+			row[name] = types.StringNull()
+			if value, ok := region[name].(string); ok {
+				row[name] = types.StringValue(value)
+			}
+		}
+		if nodes, ok := region["max_nodes"].(float64); ok && float64(int64(nodes)) == nodes {
+			row["max_nodes"] = types.Int64Value(int64(nodes))
+		}
+		rows = append(rows, types.ObjectValueMust(loadBalancerRegionType.AttrTypes, row))
 	}
 	idList, diags := types.ListValueFrom(ctx, types.StringType, ids)
 	resp.Diagnostics.Append(diags...)
-	rowList, diags := types.ListValueFrom(ctx, types.MapType{ElemType: types.StringType}, rows)
+	rowList, diags := types.ListValue(loadBalancerRegionType, rows)
 	resp.Diagnostics.Append(diags...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("ids"), idList)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("regions"), rowList)...)

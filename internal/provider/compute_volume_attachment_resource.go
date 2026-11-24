@@ -37,14 +37,15 @@ type vmDataVolume struct {
 	BillingCatalog    recoveryCatalog `json:"billing_catalog"`
 }
 type vmVolumeAttachmentModel struct {
-	ID                types.String `tfsdk:"id"`
-	VmID              types.String `tfsdk:"vm_id"`
-	VolumeID          types.String `tfsdk:"volume_id"`
-	Mode              types.String `tfsdk:"mode"`
-	ConfirmUnmounted  types.Bool   `tfsdk:"confirm_unmounted"`
-	GuestDevice       types.String `tfsdk:"guest_device"`
-	MountInstructions types.String `tfsdk:"mount_instructions"`
-	BillingCatalog    types.String `tfsdk:"billing_catalog"`
+	ID                    types.String `tfsdk:"id"`
+	VmID                  types.String `tfsdk:"vm_id"`
+	VolumeID              types.String `tfsdk:"volume_id"`
+	Mode                  types.String `tfsdk:"mode"`
+	SharedAccessConfirmed types.Bool   `tfsdk:"shared_access_confirmed"`
+	ConfirmUnmounted      types.Bool   `tfsdk:"confirm_unmounted"`
+	GuestDevice           types.String `tfsdk:"guest_device"`
+	MountInstructions     types.String `tfsdk:"mount_instructions"`
+	BillingCatalog        types.String `tfsdk:"billing_catalog"`
 }
 
 func (r *vmVolumeAttachmentResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -53,14 +54,15 @@ func (r *vmVolumeAttachmentResource) Metadata(_ context.Context, req resource.Me
 func (r *vmVolumeAttachmentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{Description: "Attaches an existing block volume to a VM through the VM's attach-volume operation. Destroy calls detach-volume; it does not delete the volume. Import using VM_ID/VOLUME_ID.", Attributes: map[string]schema.Attribute{
-		"billing_catalog":    recoveryCatalogAttribute("block_storage (the volume's billing_catalog, ibee_block_volume.<name>.billing_catalog)", true),
-		"id":                 schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-		"vm_id":              schema.StringAttribute{Required: true, PlanModifiers: replace},
-		"volume_id":          schema.StringAttribute{Required: true, PlanModifiers: replace},
-		"mode":               schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()}, Description: "single-writer or multi-writer. Omit to use the API's default."},
-		"confirm_unmounted":  schema.BoolAttribute{Optional: true, Description: "Sent as confirm_unmounted with detach-volume on destroy."},
-		"guest_device":       schema.StringAttribute{Computed: true},
-		"mount_instructions": schema.StringAttribute{Computed: true},
+		"billing_catalog":         recoveryCatalogAttribute("block_storage (the volume's billing_catalog, ibee_block_volume.<name>.billing_catalog)", true),
+		"id":                      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+		"vm_id":                   schema.StringAttribute{Required: true, PlanModifiers: replace},
+		"volume_id":               schema.StringAttribute{Required: true, PlanModifiers: replace},
+		"mode":                    schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()}, Description: "single-writer (only this VM writes) or multi-writer (shared raw block access from several VMs, up to 16 on at most two compute hosts, in the same organization, workspace and site; data volumes only, with delete_on_termination off; needs shared_access_confirmed = true). Omit to use the API's default. multi-writer is not a shared file system: ordinary ext4, XFS or NTFS mounted on several VMs at once corrupts data."},
+		"shared_access_confirmed": schema.BoolAttribute{Optional: true, Description: "Sent with the attach. The API requires true with mode = multi-writer: it confirms the guests run cluster-aware software with its own locking and fencing. Without it the attach operation fails. Changing it later sends nothing."},
+		"confirm_unmounted":       schema.BoolAttribute{Optional: true, Description: "Sent as confirm_unmounted with detach-volume on destroy."},
+		"guest_device":            schema.StringAttribute{Computed: true},
+		"mount_instructions":      schema.StringAttribute{Computed: true},
 	}}
 }
 func (r *vmVolumeAttachmentResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -119,6 +121,9 @@ func (r *vmVolumeAttachmentResource) Create(ctx context.Context, req resource.Cr
 	body := map[string]any{"volume_id": m.VolumeID.ValueString()}
 	if !m.Mode.IsNull() && !m.Mode.IsUnknown() {
 		body["mode"] = m.Mode.ValueString()
+	}
+	if !m.SharedAccessConfirmed.IsNull() && !m.SharedAccessConfirmed.IsUnknown() {
+		body["shared_access_confirmed"] = m.SharedAccessConfirmed.ValueBool()
 	}
 	if catalog != nil {
 		body["billing_catalog"] = catalog

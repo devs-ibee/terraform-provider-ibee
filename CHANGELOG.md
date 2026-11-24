@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.11.0 (unreleased)
+
+Moves the provider to public API contract 0.14.3.
+
+- `ibee_load_balancer`:
+  - `firewall` (`mode` public or restricted, and `rules` with `address_family`,
+    `protocol`, `source`, `port` and `action`). Left out, the API default applies
+    (public).
+  - Target-group `proxy_protocol` (off, v1 or v2; TCP target groups).
+  - Health-check `hostname` and `expected_statuses` (HTTP checks).
+  - Computed `address`: the public IP clients connect to (the first of
+    `conditions.addresses`), for a DNS A record. Null until the frontend is ready.
+  - `unhealthy_threshold` is no longer sent unless configured: the server picks it
+    (1 for HTTP, 3 for TCP). The health-check fields the service fills in (`protocol`,
+    `path`, `interval_seconds`, `timeout_seconds`, `healthy_threshold`,
+    `expected_statuses`) are now Optional+Computed, so a partly configured health check
+    no longer ends in "inconsistent result after apply".
+- `ibee_load_balancer_regions`: **`regions` is now a list of objects** (`id`, `code`,
+  `name`, `site_id`, `max_nodes` and `capabilities` with `private_targets` and
+  `udp_firewall`) instead of a list of string maps. `regions[0].id` and
+  `regions[0]["name"]` still work; `max_nodes` is a number and the capabilities are
+  booleans. Filter with
+  `[for r in data.ibee_load_balancer_regions.x.regions : r.id if r.capabilities.private_targets]`.
+- `ibee_cloud_vm_volume_attachment` and `ibee_gpu_vm_volume_attachment`:
+  `shared_access_confirmed`, sent with the attach. The API requires `true` with
+  `mode = "multi-writer"` (shared raw block access for cluster-aware software).
+- No new object resources: upload and download links are one-off operations for the
+  CLI and SDKs.
+
 ## 0.10.0 (2026-11-18)
 
 Breaking. Moves the provider to public API contract 0.13.0 and keeps only what Terraform
