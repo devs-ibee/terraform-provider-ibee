@@ -81,7 +81,7 @@ func (r *containerRegistryAccessTokenResource) Schema(_ context.Context, _ resou
 }
 
 func (r *containerRegistryAccessTokenResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	r.client = configureSecretResource(req, resp)
+	r.client = configureResourceClient(req, resp)
 }
 
 func (out containerRegistryTokenAPI) apply(state *containerRegistryAccessTokenModel) {

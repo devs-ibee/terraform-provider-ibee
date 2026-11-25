@@ -51,12 +51,19 @@ type apiError struct {
 	PublicOperationPaused bool
 }
 
-// Error relays the server's answer: status, code, message and request id.
-// The raw body is shown when there is no message or it carries more detail.
+// Error relays the server's answer: status, code, reason, required scope,
+// message and request id. The raw body is shown when there is no message or it
+// carries more detail.
 func (e *apiError) Error() string {
 	message := fmt.Sprintf("IBEE API returned HTTP %d", e.Status)
 	if e.Code != "" {
 		message += " " + e.Code
+	}
+	if e.Reason != "" && e.Reason != e.Code {
+		message += " (" + e.Reason + ")"
+	}
+	if e.RequiredScope != "" {
+		message += " (needs " + e.RequiredScope + ")"
 	}
 	switch {
 	case e.Message != "" && e.hasDetails:

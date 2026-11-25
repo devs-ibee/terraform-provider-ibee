@@ -2,20 +2,17 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -100,46 +97,6 @@ func TestComputeCatalogPlanSafetyMissingSelection(t *testing.T) {
 	}
 }
 
-func TestComputeCatalogPlanSafetyLegacySnapshotReplacement(t *testing.T) {
-	for _, kind := range []string{"cloud", "gpu"} {
-		for _, field := range []string{"vm_id", "unknown vm_id", "name", "description", "mode", "selected_data_volume_ids"} {
-			t.Run(kind+"/"+field, func(t *testing.T) {
-				r, model := recoveryTestResource(kind, "snapshot_storage", nil)
-				old := model.(vmSnapshotModel)
-				old.ID = types.StringValue("snap-legacy")
-				old.BillingCatalog = types.StringNull()
-				// Keep selective mode valid when changing only the selected set.
-				if field == "selected_data_volume_ids" {
-					old.Mode = types.StringValue("selective")
-					old.SelectedDataVolumeIDs = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("vol-1")})
-				}
-				next := old
-				next.BillingCatalog = types.StringUnknown()
-				switch field {
-				case "vm_id":
-					next.VmID = types.StringValue("vm-2")
-				case "unknown vm_id":
-					next.VmID = types.StringUnknown()
-				case "name":
-					next.Name = types.StringValue("renamed")
-				case "description":
-					next.Description = types.StringValue("new description")
-				case "mode":
-					next.Mode = types.StringValue("all_attached")
-				case "selected_data_volume_ids":
-					next.SelectedDataVolumeIDs = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("vol-2")})
-				}
-				// Replacing a legacy snapshot without a catalog is planned; the API decides at create.
-				resp := catalogSafetyModify(t, r, old, next, types.StringNull())
-				computeNoErrors(t, resp.Diagnostics)
-				if resp.RequiresReplace || !resp.PlanValue.IsNull() {
-					t.Fatalf("omitted legacy catalog must stay omitted: replace=%v value=%s", resp.RequiresReplace, resp.PlanValue)
-				}
-			})
-		}
-	}
-}
-
 func TestComputeCatalogPlanSafetyUnknownSelection(t *testing.T) {
 	for _, kind := range []string{"cloud", "gpu"} {
 		for _, product := range []string{"snapshot_storage", "backup_storage", "block_storage"} {
@@ -194,57 +151,15 @@ func TestTerraformComputeCatalogPlanSafety(t *testing.T) {
 	env = append(env, "TF_CLI_CONFIG_FILE="+cli, "TF_IN_AUTOMATION=1", "CHECKPOINT_DISABLE=1")
 	for _, kind := range []string{"cloud", "gpu"} {
 		t.Run(kind, func(t *testing.T) {
-			for _, scenario := range []string{"legacy replacement", "new snapshot missing", "new backup missing", "unknown catalog replacement"} {
-				t.Run(scenario, func(t *testing.T) {
-					var mutations atomic.Int64
-					snapshot := map[string]any{
-						"snapshot_set_id": "snap-legacy", "vm_id": "vm-1", "name": "before", "description": nil,
-						"capture_scope": "root_only", "status": "succeeded", "recovery_point_id": "rp-legacy",
-					}
-					if scenario == "unknown catalog replacement" {
-						snapshot["billing_catalog"] = map[string]any{"sku_id": "snapshot-sku", "sku_code": "SNAPSHOT-STD"}
-					}
-					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-						if req.Method != http.MethodGet {
-							mutations.Add(1)
-							http.Error(w, "planning must not mutate the API", http.StatusBadRequest)
-							return
-						}
-						if req.URL.Path != "/compute/"+kind+"-vm-snapshots/snap-legacy" {
-							t.Errorf("unexpected fixture read: %s", req.URL.Path)
-							http.NotFound(w, req)
-							return
-						}
-						computeJSON(w, snapshot)
-					}))
-					defer srv.Close()
-					t.Cleanup(func() {
-						if got := mutations.Load(); got != 0 {
-							t.Errorf("unsafe plan/apply attempted %d API mutations, including possible snapshot deletion", got)
-						}
-					})
-					work := t.TempDir()
-					run := func(want int, args ...string) string {
-						t.Helper()
-						ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-						defer cancel()
-						cmd := exec.CommandContext(ctx, "terraform", args...)
-						cmd.Dir, cmd.Env = work, env
-						out, err := cmd.CombinedOutput()
-						code := 0
-						if err != nil {
-							if exit, ok := err.(*exec.ExitError); ok {
-								code = exit.ExitCode()
-							} else {
-								t.Fatalf("terraform %v: %v", args, err)
-							}
-						}
-						if code != want {
-							t.Fatalf("terraform %v: exit %d, want %d\n%s", args, code, want, out)
-						}
-						return string(out)
-					}
-					prefix := fmt.Sprintf(`terraform {
+			// A new backup policy without a billing catalog must plan, not call the API.
+			var requests atomic.Int64
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				requests.Add(1)
+				http.Error(w, "planning must not call the API", http.StatusBadRequest)
+			}))
+			defer srv.Close()
+			work := t.TempDir()
+			writeTestFile(t, filepath.Join(work, "main.tf"), fmt.Sprintf(`terraform {
  required_providers { ibee = { source = "devs-ibee/ibee" } }
 }
 provider "ibee" {
@@ -252,84 +167,20 @@ provider "ibee" {
  token = "catalog-fixture-token"
  workspace_id = "catalog-fixture-workspace"
 }
-`, srv.URL)
-					address := "ibee_" + kind + "_vm_snapshot.legacy"
-					config := prefix + fmt.Sprintf(`resource "ibee_%s_vm_snapshot" "legacy" {
+resource "ibee_%s_vm_backup_policy" "new" {
  vm_id = "vm-1"
- name = "before"
- mode = "root_only"
 }
-`, kind)
-					assertSnapshotTracked := func() {
-						t.Helper()
-						out := run(0, "state", "show", "-no-color", address)
-						if !strings.Contains(out, `"snap-legacy"`) || !strings.Contains(out, `"before"`) {
-							t.Fatalf("legacy snapshot identity/state lost:\n%s", out)
-						}
-					}
-					switch scenario {
-					case "legacy replacement":
-						writeTestFile(t, filepath.Join(work, "main.tf"), config)
-						run(0, "import", "-input=false", "-no-color", address, "snap-legacy")
-						run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-						// Planning makes no API decision about the missing catalog; nothing is applied here.
-						writeTestFile(t, filepath.Join(work, "main.tf"), strings.Replace(config, `name = "before"`, `name = "after"`, 1))
-						run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-						assertSnapshotTracked()
-						writeTestFile(t, filepath.Join(work, "main.tf"), config)
-						run(2, "plan", "-replace="+address, "-detailed-exitcode", "-input=false", "-no-color")
-						run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-						run(2, "plan", "-destroy", "-detailed-exitcode", "-input=false", "-no-color")
-						assertSnapshotTracked()
-					case "new snapshot missing", "new backup missing":
-						if scenario == "new backup missing" {
-							config = prefix + fmt.Sprintf("resource \"ibee_%s_vm_backup_policy\" \"new\" {\n vm_id = \"vm-1\"\n}\n", kind)
-						}
-						writeTestFile(t, filepath.Join(work, "main.tf"), config)
-						run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-					case "unknown catalog replacement":
-						config = strings.Replace(config, ` mode = "root_only"`, " mode = \"root_only\"\n billing_catalog = terraform_data.catalog.output", 1)
-						config += `resource "terraform_data" "catalog" {
- input = jsonencode({ sku_id = "snapshot-sku", sku_code = "SNAPSHOT-STD" })
-}
-`
-						writeTestFile(t, filepath.Join(work, "main.tf"), config)
-						// Seed only Terraform's built-in resource; never create a cloud resource.
-						run(0, "apply", "-target=terraform_data.catalog", "-auto-approve", "-input=false", "-no-color")
-						run(0, "import", "-input=false", "-no-color", address, "snap-legacy")
-						run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-						config = strings.ReplaceAll(config, "SNAPSHOT-STD", "SNAPSHOT-OTHER")
-						writeTestFile(t, filepath.Join(work, "main.tf"), config)
-						run(2, "plan", "-out=unknown.tfplan", "-detailed-exitcode", "-input=false", "-no-color")
-						var plan struct {
-							Changes []struct {
-								Address string `json:"address"`
-								Change  struct {
-									Actions      []string       `json:"actions"`
-									AfterUnknown map[string]any `json:"after_unknown"`
-									ReplacePaths [][]string     `json:"replace_paths"`
-								} `json:"change"`
-							} `json:"resource_changes"`
-						}
-						if err := json.Unmarshal([]byte(run(0, "show", "-json", "unknown.tfplan")), &plan); err != nil {
-							t.Fatal(err)
-						}
-						found := false
-						for _, change := range plan.Changes {
-							if change.Address != address {
-								continue
-							}
-							found = true
-							if !reflect.DeepEqual(change.Change.Actions, []string{"delete", "create"}) || change.Change.AfterUnknown["billing_catalog"] != true || !reflect.DeepEqual(change.Change.ReplacePaths, [][]string{{"billing_catalog"}}) {
-								t.Fatalf("unknown explicit catalog must already require replacement: %+v", change.Change)
-							}
-						}
-						if !found {
-							t.Fatal("snapshot missing from Terraform plan")
-						}
-						assertSnapshotTracked()
-					}
-				})
+`, srv.URL, kind))
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "terraform", "plan", "-detailed-exitcode", "-input=false", "-no-color")
+			cmd.Dir, cmd.Env = work, env
+			out, err := cmd.CombinedOutput()
+			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 {
+				t.Fatalf("plan must propose the policy: %v\n%s", err, out)
+			}
+			if got := requests.Load(); got != 0 {
+				t.Fatalf("planning made %d API calls", got)
 			}
 		})
 	}

@@ -131,23 +131,20 @@ resource "ibee_reserved_ip_attachment" "test" {
  reserved_ip_id = ibee_reserved_ip.test.id
  vm_id = "vm-public"
 }
-resource "ibee_load_balancer_l4" "test" {
- name = "tcp"
- protocol = "tcp"
- backends = [{ type = "ip", target = "192.0.2.1", port = 443 }]
-}
-resource "ibee_load_balancer_l7" "test" {
- name = "http"
- protocol = "http"
- backends = [{ type = "ip", target = "192.0.2.1", port = 8080 }]
- rules = [{ path_prefix = "/api", backends = [{ type = "ip", target = "192.0.2.1", port = 8081 }] }]
+data "ibee_load_balancer_regions" "test" {}
+resource "ibee_load_balancer" "test" {
+ name = "web"
+ region_id = data.ibee_load_balancer_regions.test.ids[0]
+ traffic_type = "network"
+ listeners = [{ name = "tcp-443", protocol = "TCP", port = 443, target_group = "app" }]
+ target_groups = [{ name = "app", protocol = "TCP", targets = [{ kind = "ip", address = "192.0.2.1", port = 8443 }] }]
 }
 `, server.URL)
 	writeTestFile(t, filepath.Join(dir, "main.tf"), config)
 	run(0, "validate", "-no-color")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-	for _, item := range []struct{ name, id string }{{"vpc", "vpc-1"}, {"vpc_subnet", "vpc-1/subnet-1"}, {"nat_gateway", "vpc-1/nat-1"}, {"vpc_node_attachment", "vpc-1/vm-private"}, {"nat_port_forwarding_rule", "vpc-1/nat-1/pf-1"}, {"firewall_group", "group-1"}, {"firewall_rule", "group-1/rule-1"}, {"firewall_attachment", "group-1/vm-private"}, {"reserved_ip", "ip-1"}, {"reserved_ip_attachment", "ip-1/vm-public"}, {"load_balancer_l4", "lb-l4"}, {"load_balancer_l7", "lb-l7"}} {
+	for _, item := range []struct{ name, id string }{{"vpc", "vpc-1"}, {"vpc_subnet", "vpc-1/subnet-1"}, {"nat_gateway", "vpc-1/nat-1"}, {"vpc_node_attachment", "vpc-1/vm-private"}, {"nat_port_forwarding_rule", "vpc-1/nat-1/pf-1"}, {"firewall_group", "group-1"}, {"firewall_rule", "group-1/rule-1"}, {"firewall_attachment", "group-1/vm-private"}, {"reserved_ip", "ip-1"}, {"reserved_ip_attachment", "ip-1/vm-public"}, {"load_balancer", "lb-1"}} {
 		address := "ibee_" + item.name + ".test"
 		run(0, "state", "rm", address)
 		run(0, "import", "-input=false", "-no-color", address, item.id)
@@ -160,15 +157,13 @@ resource "ibee_load_balancer_l7" "test" {
 	}
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
-	// Exercise mutable fields and nullable optional L7 rules removal.
-	config = strings.Replace(config, "port = 8080", "port = 8082", 1)
-	config = strings.Replace(config, " rules = [{ path_prefix = \"/api\", backends = [{ type = \"ip\", target = \"192.0.2.1\", port = 8081 }] }]", " rules = []", 1)
+	// Exercise mutable fields, including a load balancer specification change.
+	config = strings.Replace(config, `name = "web"`, `name = "web-2"`, 1)
+	config = strings.Replace(config, "port = 8443", "port = 9443", 1)
 	config = strings.Replace(config, "internal_port = 443", "internal_port = 444", 1)
 	config = strings.Replace(config, `name = "fixture"`, `name = "renamed-vpc"`, 1)
 	config = strings.Replace(config, `dns = ["1.1.1.1", "8.8.8.8"]`, `dns = ["9.9.9.9"]`, 1)
 	config = strings.Replace(config, `vm_id = "vm-public"`, `vm_id = "vm-public-2"`, 1)
-	config = strings.Replace(config, `protocol = "tcp"`, `protocol = "tls_passthrough"`+"\n tls = { mode = \"passthrough\", certificate_source = \"managed\" }", 1)
-	config = strings.Replace(config, `protocol = "http"`, `protocol = "https"`+"\n tls = { mode = \"terminate\", certificate_source = \"managed\" }", 1)
 	writeTestFile(t, filepath.Join(dir, "main.tf"), config)
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
@@ -179,7 +174,7 @@ resource "ibee_load_balancer_l7" "test" {
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	fixture.mu.Lock()
-	fixture.objects["/networking/load-balancers/lb-l4"]["name"] = "portal-drift"
+	fixture.objects["/networking/load-balancers/lb-1"]["name"] = "portal-drift"
 	fixture.mu.Unlock()
 	run(2, "plan", "-detailed-exitcode", "-input=false", "-no-color")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
@@ -208,6 +203,10 @@ func (f *networkTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	p := r.URL.Path
 	if p == "/billing/resource-eligibility" {
 		networkTestEligibility(w, f.allowed)
+		return
+	}
+	if strings.HasPrefix(p, "/networking/load-balancers") {
+		f.loadBalancer(w, r, p, send)
 		return
 	}
 	body := map[string]any{}
@@ -298,25 +297,6 @@ func (f *networkTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			body["address"] = "203.0.113.1"
 			body["status"] = "reserved"
 			body["reverse_dns"] = ""
-		case "/networking/load-balancers/l4", "/networking/load-balancers/l7":
-			if protocol := body["protocol"]; protocol == "https" || protocol == "tls_passthrough" {
-				tls, ok := body["tls"].(map[string]any)
-				mode := "terminate"
-				if protocol == "tls_passthrough" {
-					mode = "passthrough"
-				}
-				if !ok || tls["mode"] != mode || tls["certificate_source"] != "managed" {
-					http.Error(w, "TLS request missing required managed mode", 400)
-					return
-				}
-			}
-			layer := strings.TrimPrefix(p, "/networking/load-balancers/")
-			id, idField, collection = "lb-"+layer, "lb_id", "/networking/load-balancers"
-			body["layer"] = layer
-			body["status"] = "active"
-			body["endpoint"] = map[string]any{"host": id + ".test", "port": 80}
-			body["url"] = "http://" + id + ".test"
-			body["endpoint_url"] = body["url"]
 		default:
 			http.Error(w, "unexpected POST "+p, 400)
 			return
@@ -325,10 +305,6 @@ func (f *networkTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		f.objects[collection+"/"+id] = body
 		send(body)
 		return
-	}
-	if r.Method == "PATCH" && (strings.HasPrefix(p, "/networking/load-balancers/l4/") || strings.HasPrefix(p, "/networking/load-balancers/l7/")) {
-		parts := strings.Split(p, "/")
-		p = "/networking/load-balancers/" + parts[len(parts)-1]
 	}
 	if obj, ok := f.objects[p]; ok {
 		switch r.Method {
@@ -355,4 +331,94 @@ func (f *networkTerraformFixture) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	http.Error(w, "missing fixture object "+p, 404)
+}
+
+// loadBalancer serves the regional load balancer API: every change is accepted
+// as an operation, and updates must carry the current specification version.
+func (f *networkTerraformFixture) loadBalancer(w http.ResponseWriter, r *http.Request, p string, send func(any)) {
+	const id = "lb-1"
+	objectPath := "/networking/load-balancers/" + id
+	if r.Method != "GET" && r.Header.Get("Idempotency-Key") == "" {
+		http.Error(w, "load balancer change without Idempotency-Key", 400)
+		return
+	}
+	body := map[string]any{}
+	if r.Method == "POST" || r.Method == "PUT" {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	accepted := func(op string) {
+		w.WriteHeader(http.StatusAccepted)
+		send(map[string]any{"id": op, "lb_id": id, "status": "queued"})
+	}
+	apply := func(obj, spec map[string]any) {
+		// Answer like the live service (dev, 19 Nov): it fills in defaults the
+		// configuration may leave out, such as rules: [] on a listener and the
+		// algorithm and a null health check on a target group.
+		if listeners, ok := spec["listeners"].([]any); ok {
+			for _, l := range listeners {
+				if listener, ok := l.(map[string]any); ok && listener["rules"] == nil {
+					listener["rules"] = []any{}
+				}
+			}
+		}
+		if groups, ok := spec["target_groups"].([]any); ok {
+			for _, g := range groups {
+				if group, ok := g.(map[string]any); ok {
+					if group["algorithm"] == nil {
+						group["algorithm"] = "least_request"
+					}
+					if _, set := group["health_check"]; !set {
+						group["health_check"] = nil
+					}
+				}
+			}
+		}
+		if spec["logging"] == nil {
+			// The live service always answers logging, even when it was not sent.
+			spec["logging"] = map[string]any{"enabled": false, "dataset_id": nil}
+		}
+		for k, v := range spec {
+			obj[k] = v
+		}
+		obj["spec"] = spec
+	}
+	switch {
+	case p == "/networking/load-balancers/regions":
+		send([]any{map[string]any{"id": "in-south", "name": "Chennai"}})
+	case strings.HasPrefix(p, "/networking/load-balancers/operations/"):
+		send(map[string]any{"id": strings.TrimPrefix(p, "/networking/load-balancers/operations/"), "lb_id": id, "status": "succeeded"})
+	case p == "/networking/load-balancers" && r.Method == "POST":
+		if body["region_id"] != "in-south" {
+			http.Error(w, "unknown region", 400)
+			return
+		}
+		obj := map[string]any{"id": id, "version": 1, "managed_by": "customer", "observed_state": "active", "scope": "regional", "capacity_mode": "fixed", "visibility": "external", "node_count": 1}
+		apply(obj, body)
+		f.objects[objectPath] = obj
+		accepted("op-create")
+	case p == objectPath:
+		obj, ok := f.objects[objectPath]
+		if !ok {
+			http.Error(w, `{"error":"not_found"}`, 404)
+			return
+		}
+		switch r.Method {
+		case "PUT":
+			if fmt.Sprint(body["version"]) != fmt.Sprint(obj["version"]) {
+				http.Error(w, "stale version", 409)
+				return
+			}
+			spec, _ := body["specification"].(map[string]any)
+			apply(obj, spec)
+			obj["version"] = obj["version"].(int) + 1
+			accepted("op-update")
+		case "DELETE":
+			delete(f.objects, objectPath)
+			accepted("op-delete")
+		default:
+			send(obj)
+		}
+	default:
+		http.Error(w, "unexpected load balancer request "+r.Method+" "+p, 400)
+	}
 }

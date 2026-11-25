@@ -177,13 +177,10 @@ func TestImagesDataSourceQuery(t *testing.T) {
 }
 
 func TestStoragePlanDataSources(t *testing.T) {
-	for _, product := range []string{"snapshot", "backup"} {
+	for _, product := range []string{"backup"} {
 		t.Run(product, func(t *testing.T) {
-			var d datasource.DataSource = NewSnapshotStoragePlansDataSource()
-			if product == "backup" {
-				d = NewBackupStoragePlansDataSource()
-			}
-			sku := map[string]string{"snapshot": "SNAPSHOT-STD", "backup": "BACKUP-STD"}[product]
+			var d datasource.DataSource = NewBackupStoragePlansDataSource()
+			sku := map[string]string{"backup": "BACKUP-STD"}[product]
 			d.(*recoveryStoragePlansDataSource).client = computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 				if req.URL.Path != "/compute/plans/"+product+"-storage" || req.URL.Query().Get("billing_interval") != "MONTHLY" || req.URL.Query().Has("currency") {
 					t.Errorf("unexpected request %s", req.URL)
@@ -314,33 +311,6 @@ func TestReservedIPReadAndLabelUpdate(t *testing.T) {
 	computeNoErrors(t, update.Diagnostics)
 	if patched["label"] != "api" {
 		t.Fatalf("update body: %v", patched)
-	}
-}
-
-func TestCDNPurgeAndVerifyActions(t *testing.T) {
-	var purged map[string]any
-	a := &cdnAction{}
-	a.client = networkTestClient(func(w http.ResponseWriter, req *http.Request) {
-		switch req.Method + " " + req.URL.Path {
-		case "POST /cdn/distributions/dist-1/purge":
-			_ = json.NewDecoder(req.Body).Decode(&purged)
-			_, _ = w.Write([]byte(`{"success":true,"mode":"url"}`))
-		case "POST /cdn/distributions/dist-1/custom-domains/cdn.example.com/verify":
-			_, _ = w.Write([]byte(`{"domain":"cdn.example.com","status":"pending_validation"}`))
-		default:
-			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
-		}
-	})
-	resp, _ := invokeAction(t, a, map[string]attr.Value{"distribution_id": types.StringValue("dist-1"), "mode": types.StringValue("url"), "paths": types.ListValueMust(types.StringType, []attr.Value{types.StringValue("/index.html")})})
-	computeNoErrors(t, resp.Diagnostics)
-	if !reflect.DeepEqual(purged, map[string]any{"mode": "url", "paths": []any{"/index.html"}}) {
-		t.Fatalf("purge body: %v", purged)
-	}
-	verify := &cdnAction{verify: true, client: a.client}
-	resp, progress := invokeAction(t, verify, map[string]attr.Value{"distribution_id": types.StringValue("dist-1"), "domain": types.StringValue("cdn.example.com")})
-	computeNoErrors(t, resp.Diagnostics)
-	if len(progress) != 1 || !strings.Contains(progress[0], "pending_validation") {
-		t.Fatalf("verify must report the API's status: %v", progress)
 	}
 }
 

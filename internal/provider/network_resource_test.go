@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"testing"
 	"time"
 
@@ -144,38 +143,7 @@ func TestNATFailedReadinessRetainsID(t *testing.T) {
 		t.Fatalf("lost created identity: %q", id)
 	}
 }
-func TestNetworkLBStateConversion(t *testing.T) {
-	for _, layer := range []string{"l4", "l7"} {
-		t.Run(layer, func(t *testing.T) {
-			r := newNetworkLB(layer).(*networkResource)
-			protocol := "tcp"
-			if layer == "l7" {
-				protocol = "http"
-			}
-			raw := map[string]any{"id": "lb-1", "name": "app", "protocol": protocol, "backends": []any{map[string]any{"target": "192.0.2.1", "port": float64(8080), "type": "ip", "weight": float64(100), "tls": false}}, "rules": nil}
-			v := networkTestValues(t, r, raw)
-			response := map[string]any{"lb_id": "lb-1", "name": "app", "protocol": protocol, "status": "active", "layer": layer, "backends": raw["backends"], "endpoint": map[string]any{"host": "lb.test", "port": float64(80)}, "url": "http://lb.test", "endpoint_url": "http://lb.test", "rules": nil}
-			if err := r.merge(v, response); err != nil {
-				t.Fatal(err)
-			}
-			s := networkTestState(t, networkTestSchema(r), types.ObjectValueMust(r.attributeTypes(), v))
-			var output types.Object
-			if d := s.Get(context.Background(), &output); d.HasError() {
-				t.Fatal(d)
-			}
-			body, err := r.body(networkObject(output), false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, ok := body["rules"]; ok {
-				t.Fatal("null optional rules sent during create")
-			}
-			if !reflect.DeepEqual(body["backends"], []any{map[string]any{"target": "192.0.2.1", "port": int64(8080), "type": "ip", "weight": int64(100), "tls": false}}) {
-				t.Fatalf("backend conversion: %#v", body["backends"])
-			}
-		})
-	}
-}
+
 func networkTestFirewallPlan() firewallRuleModel {
 	return firewallRuleModel{GroupID: types.StringValue("group"), Direction: types.StringValue("ingress"), Protocol: types.StringValue("tcp"), PortStart: types.Int64Value(443), PortEnd: types.Int64Unknown(), RemoteTargets: types.ListValueMust(types.StringType, []attr.Value{types.StringValue("0.0.0.0/0")}), Action: types.StringValue("allow"), Description: types.StringNull(), Priority: types.Int64Unknown(), Enabled: types.BoolValue(false), ID: types.StringUnknown()}
 }
