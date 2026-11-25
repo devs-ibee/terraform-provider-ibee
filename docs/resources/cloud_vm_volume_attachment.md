@@ -20,6 +20,18 @@ resource "ibee_cloud_vm_volume_attachment" "web" {
   # The volume's billing_catalog, for example ibee_block_volume.data.billing_catalog.
   billing_catalog = jsonencode({ sku_id = "SKU_ID", sku_code = "BLOCKSTO-NVME" })
 }
+
+# One data volume shared by several VMs as raw block storage. Only for cluster-aware
+# software with its own locking and fencing: ext4, XFS or NTFS mounted on several VMs
+# at once corrupts data.
+resource "ibee_cloud_vm_volume_attachment" "shared" {
+  for_each                = toset(["VM_ID_1", "VM_ID_2"])
+  vm_id                   = each.key
+  volume_id               = "SHARED_VOLUME_ID"
+  mode                    = "multi-writer"
+  shared_access_confirmed = true
+  billing_catalog         = jsonencode({ sku_id = "SKU_ID", sku_code = "BLOCKSTO-NVME" })
+}
 ```
 
 ## Schema
@@ -30,8 +42,9 @@ resource "ibee_cloud_vm_volume_attachment" "web" {
 | `confirm_unmounted` | `bool` | Optional | Sent as confirm_unmounted with detach-volume on destroy. |
 | `guest_device` | `string` | Read-only |  |
 | `id` | `string` | Read-only |  |
-| `mode` | `string` | Optional, Defaulted | single-writer or multi-writer. Omit to use the API's default. |
+| `mode` | `string` | Optional, Defaulted | single-writer (only this VM writes) or multi-writer (shared raw block access from several VMs, up to 16 on at most two compute hosts, in the same organization, workspace and site; data volumes only, with delete_on_termination off; needs shared_access_confirmed = true). Omit to use the API's default. multi-writer is not a shared file system: ordinary ext4, XFS or NTFS mounted on several VMs at once corrupts data. |
 | `mount_instructions` | `string` | Read-only |  |
+| `shared_access_confirmed` | `bool` | Optional | Sent with the attach. The API requires true with mode = multi-writer: it confirms the guests run cluster-aware software with its own locking and fencing. Without it the attach operation fails. Changing it later sends nothing. |
 | `vm_id` | `string` | Required |  |
 | `volume_id` | `string` | Required |  |
 

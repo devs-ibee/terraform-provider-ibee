@@ -117,6 +117,8 @@ resource "ibee_reserved_ip_attachment" "public" {
 data "ibee_load_balancer_regions" "available" {}
 
 # Each load balancer node is billed per hour; node_count sets how many run.
+# Private ip targets need a region whose capabilities.private_targets is true;
+# elsewhere use kind = "vm" targets.
 resource "ibee_load_balancer" "web" {
   name         = "app-web"
   region_id    = data.ibee_load_balancer_regions.available.ids[0]
@@ -154,4 +156,7 @@ output "reserved_ip" {
 }
 output "load_balancer_id" {
   value = ibee_load_balancer.web.id
+}
+output "load_balancer_address" {
+  value = ibee_load_balancer.web.address
 }

@@ -134,16 +134,30 @@ resource "ibee_reserved_ip_attachment" "test" {
 data "ibee_load_balancer_regions" "test" {}
 resource "ibee_load_balancer" "test" {
  name = "web"
- region_id = data.ibee_load_balancer_regions.test.ids[0]
+ region_id = [for r in data.ibee_load_balancer_regions.test.regions : r.id if !r.capabilities.private_targets][0]
  traffic_type = "network"
  listeners = [{ name = "tcp-443", protocol = "TCP", port = 443, target_group = "app" }]
- target_groups = [{ name = "app", protocol = "TCP", targets = [{ kind = "ip", address = "192.0.2.1", port = 8443 }] }]
+ target_groups = [{
+  name = "app"
+  protocol = "TCP"
+  proxy_protocol = "v2"
+  targets = [{ kind = "vm", resource_id = "vm-public", port = 8443 }]
+  health_check = { protocol = "HTTP", path = "/healthz", hostname = "app.example.com" }
+ }]
+ firewall = {
+  mode = "restricted"
+  rules = [{ address_family = "IPv4", protocol = "TCP", source = "203.0.113.0/24", port = 443 }]
+ }
 }
+output "load_balancer_address" { value = ibee_load_balancer.test.address }
 `, server.URL)
 	writeTestFile(t, filepath.Join(dir, "main.tf"), config)
 	run(0, "validate", "-no-color")
 	run(0, "apply", "-auto-approve", "-input=false", "-no-color")
 	run(0, "plan", "-detailed-exitcode", "-input=false", "-no-color")
+	if out := run(0, "output", "-raw", "load_balancer_address"); out != "203.0.113.80" {
+		t.Fatalf("load balancer address output %q", out)
+	}
 	for _, item := range []struct{ name, id string }{{"vpc", "vpc-1"}, {"vpc_subnet", "vpc-1/subnet-1"}, {"nat_gateway", "vpc-1/nat-1"}, {"vpc_node_attachment", "vpc-1/vm-private"}, {"nat_port_forwarding_rule", "vpc-1/nat-1/pf-1"}, {"firewall_group", "group-1"}, {"firewall_rule", "group-1/rule-1"}, {"firewall_attachment", "group-1/vm-private"}, {"reserved_ip", "ip-1"}, {"reserved_ip_attachment", "ip-1/vm-public"}, {"load_balancer", "lb-1"}} {
 		address := "ibee_" + item.name + ".test"
 		run(0, "state", "rm", address)
@@ -160,6 +174,7 @@ resource "ibee_load_balancer" "test" {
 	// Exercise mutable fields, including a load balancer specification change.
 	config = strings.Replace(config, `name = "web"`, `name = "web-2"`, 1)
 	config = strings.Replace(config, "port = 8443", "port = 9443", 1)
+	config = strings.Replace(config, `source = "203.0.113.0/24"`, `source = "198.51.100.0/24", action = "block"`, 1)
 	config = strings.Replace(config, "internal_port = 443", "internal_port = 444", 1)
 	config = strings.Replace(config, `name = "fixture"`, `name = "renamed-vpc"`, 1)
 	config = strings.Replace(config, `dns = ["1.1.1.1", "8.8.8.8"]`, `dns = ["9.9.9.9"]`, 1)
@@ -367,8 +382,24 @@ func (f *networkTerraformFixture) loadBalancer(w http.ResponseWriter, r *http.Re
 					if group["algorithm"] == nil {
 						group["algorithm"] = "least_request"
 					}
+					if group["proxy_protocol"] == nil {
+						group["proxy_protocol"] = "off"
+					}
+					group["session_persistence"] = nil
 					if _, set := group["health_check"]; !set {
 						group["health_check"] = nil
+					}
+					// Health-check defaults as the live service answers them (dev, 24 Nov).
+					if check, ok := group["health_check"].(map[string]any); ok {
+						defaults := map[string]any{"protocol": "TCP", "path": "/", "port": nil, "hostname": nil, "expected_statuses": []any{200}, "interval_seconds": 10, "timeout_seconds": 3, "healthy_threshold": 1}
+						for k, v := range defaults {
+							if check[k] == nil {
+								check[k] = v
+							}
+						}
+						if check["unhealthy_threshold"] == nil {
+							check["unhealthy_threshold"] = map[bool]int{true: 1, false: 3}[check["protocol"] == "HTTP"]
+						}
 					}
 				}
 			}
@@ -377,6 +408,24 @@ func (f *networkTerraformFixture) loadBalancer(w http.ResponseWriter, r *http.Re
 			// The live service always answers logging, even when it was not sent.
 			spec["logging"] = map[string]any{"enabled": false, "dataset_id": nil}
 		}
+		// And firewall (public, no rules), with each rule's action.
+		if spec["firewall"] == nil {
+			spec["firewall"] = map[string]any{"mode": "public", "rules": []any{}}
+		}
+		if firewall, ok := spec["firewall"].(map[string]any); ok {
+			if firewall["mode"] == nil {
+				firewall["mode"] = "public"
+			}
+			if firewall["rules"] == nil {
+				firewall["rules"] = []any{}
+			}
+			for _, rule := range firewall["rules"].([]any) {
+				if rule, ok := rule.(map[string]any); ok && rule["action"] == nil {
+					rule["action"] = "allow"
+				}
+			}
+		}
+		spec["managed_by"], spec["owner"] = "portal", nil
 		for k, v := range spec {
 			obj[k] = v
 		}
@@ -384,7 +433,7 @@ func (f *networkTerraformFixture) loadBalancer(w http.ResponseWriter, r *http.Re
 	}
 	switch {
 	case p == "/networking/load-balancers/regions":
-		send([]any{map[string]any{"id": "in-south", "name": "Chennai"}})
+		send([]any{map[string]any{"id": "in-south", "code": "vga-dev", "name": "Chennai", "site_id": "VGA", "max_nodes": 1, "capabilities": map[string]any{"udp_firewall": true, "private_targets": false}}})
 	case strings.HasPrefix(p, "/networking/load-balancers/operations/"):
 		send(map[string]any{"id": strings.TrimPrefix(p, "/networking/load-balancers/operations/"), "lb_id": id, "status": "succeeded"})
 	case p == "/networking/load-balancers" && r.Method == "POST":
@@ -392,7 +441,8 @@ func (f *networkTerraformFixture) loadBalancer(w http.ResponseWriter, r *http.Re
 			http.Error(w, "unknown region", 400)
 			return
 		}
-		obj := map[string]any{"id": id, "version": 1, "managed_by": "customer", "observed_state": "active", "scope": "regional", "capacity_mode": "fixed", "visibility": "external", "node_count": 1}
+		obj := map[string]any{"id": id, "version": 1, "managed_by": "portal", "observed_state": "active", "scope": "regional", "capacity_mode": "fixed", "visibility": "external", "node_count": 1,
+			"conditions": map[string]any{"addresses": []any{"203.0.113.80"}, "configuration_ready": true, "frontend_ready": true, "backend_ready": true, "reason": nil}}
 		apply(obj, body)
 		f.objects[objectPath] = obj
 		accepted("op-create")

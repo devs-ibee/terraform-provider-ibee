@@ -343,16 +343,39 @@ func TestLoadBalancerRegionsDataSource(t *testing.T) {
 		if req.Method+" "+req.URL.Path != "GET /networking/load-balancers/regions" {
 			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
 		}
-		computeJSON(w, []any{map[string]any{"id": "in-south", "name": "Chennai", "nodes": 3}})
+		computeJSON(w, []any{
+			map[string]any{"id": "in-south", "code": "vga-dev", "name": "Chennai", "site_id": "VGA", "max_nodes": 1, "capabilities": map[string]any{"udp_firewall": true, "private_targets": false}},
+			map[string]any{"id": "in-west", "name": "Mumbai"},
+		})
 	})}
 	resp := dataSourceRead(t, d, map[string]attr.Value{})
 	computeNoErrors(t, resp.Diagnostics)
 	var ids []string
 	computeNoErrors(t, resp.State.GetAttribute(context.Background(), path.Root("ids"), &ids))
-	var regions []map[string]string
+	type capabilities struct {
+		PrivateTargets types.Bool `tfsdk:"private_targets"`
+		UDPFirewall    types.Bool `tfsdk:"udp_firewall"`
+	}
+	type region struct {
+		ID           types.String `tfsdk:"id"`
+		Code         types.String `tfsdk:"code"`
+		Name         types.String `tfsdk:"name"`
+		SiteID       types.String `tfsdk:"site_id"`
+		MaxNodes     types.Int64  `tfsdk:"max_nodes"`
+		Capabilities capabilities `tfsdk:"capabilities"`
+	}
+	var regions []region
 	computeNoErrors(t, resp.State.GetAttribute(context.Background(), path.Root("regions"), &regions))
-	if len(ids) != 1 || ids[0] != "in-south" || regions[0]["name"] != "Chennai" || regions[0]["nodes"] != "3" {
-		t.Fatalf("ids %v regions %v", ids, regions)
+	if len(ids) != 2 || ids[0] != "in-south" || len(regions) != 2 {
+		t.Fatalf("ids %v regions %+v", ids, regions)
+	}
+	first, second := regions[0], regions[1]
+	if first.Name.ValueString() != "Chennai" || first.Code.ValueString() != "vga-dev" || first.SiteID.ValueString() != "VGA" || first.MaxNodes.ValueInt64() != 1 ||
+		first.Capabilities.PrivateTargets.IsNull() || first.Capabilities.PrivateTargets.ValueBool() || !first.Capabilities.UDPFirewall.ValueBool() {
+		t.Fatalf("typed region %+v", first)
+	}
+	if !second.Capabilities.PrivateTargets.IsNull() || !second.MaxNodes.IsNull() || !second.Code.IsNull() {
+		t.Fatalf("fields the API leaves out must be null: %+v", second)
 	}
 }
 

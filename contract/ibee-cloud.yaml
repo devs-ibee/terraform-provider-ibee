@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: IBEE Solutions API
-  version: 0.13.0
+  version: 0.14.3
   description: 'Public API reference for IBEE Solutions.
 
 
@@ -37,7 +37,7 @@ tags:
 - name: Firewalls
   description: Manage stateful firewall groups, rules, and VM attachments.
 - name: LoadBalancers
-  description: Create and manage regional load balancers in front of private VPC targets.
+  description: Create and manage regional load balancers in front of your VMs.
   x-fern-display-name: Load Balancers
   x-displayName: Load Balancers
 - name: ComputeCatalog
@@ -139,6 +139,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SecretManagerOperation'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
         '409':
           $ref: '#/components/responses/Conflict'
         '401':
@@ -1701,8 +1703,8 @@ paths:
       summary: Get bucket custom domains
       description: 'Returns the bucket''s custom domains with their status and the
         CNAME target to point them at, as the portal''s Settings › Custom domains
-        tab shows. Answers 404 when the bucket has no custom domain. Requires scope:
-        object-storage.read.'
+        tab shows. Read `cname_target` here before adding the first domain: `custom_domains`
+        is empty until then. Requires scope: object-storage.read.'
       operationId: getBucketCustomDomains
       x-ibee-required-scope: object-storage.read
       parameters:
@@ -1739,9 +1741,12 @@ paths:
       tags:
       - Object Storage
       summary: Add a bucket custom domain
-      description: 'Adds a custom hostname that serves the bucket. Create the CNAME
-        record shown in `cname_target`, then check `status` on the list. Requires
-        scope: object-storage.write.'
+      description: 'Adds a custom hostname that serves the bucket. Do it in this order:
+        read `cname_target` from the list, create a CNAME record from your hostname
+        to it at your DNS provider, then add the domain. The add is refused with 400
+        (`CNAME verification failed: …`, naming the target) until the record resolves,
+        and the bucket must be public. Then check `status` on the list. Requires scope:
+        object-storage.write.'
       operationId: addBucketCustomDomain
       x-ibee-required-scope: object-storage.write
       parameters:
@@ -1883,6 +1888,168 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /object-storage/buckets/{bucket_name}/objects/{object_path}/upload-link:
+    post:
+      tags:
+      - Object Storage
+      summary: Create an upload link
+      description: 'Returns a temporary link that uploads exactly one file to this
+        key through the S3 gateway: the file whose size and SHA-256 you send. Send
+        the file with a single HTTP `PUT` to `url`, with exactly the `headers` in
+        the answer; the file never passes through this API. The link carries at most
+        80,000,000 bytes (larger files: an S3 tool, which uploads in parts) and replaces
+        an object with the same key. It works for `expires_in` seconds (60 to 1,800;
+        900 when not given), and anyone holding it can use it until then, so treat
+        it like a password. When the file arrives, an organization verified only by
+        the Rs 1 payment that has used its free storage is refused with 403 `free_storage_limit_reached`,
+        and 503 with `Retry-After` means the storage allowance could not be checked:
+        retry later. Check the result with Get object metadata. Requires scope: object-storage.write.'
+      operationId: createObjectUploadLink
+      x-ibee-required-scope: object-storage.write
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/BucketName'
+      - $ref: '#/components/parameters/ObjectPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObjectUploadLinkRequest'
+            example:
+              size_bytes: 1048576
+              checksum_sha256: n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg=
+              content_type: application/pdf
+      responses:
+        '200':
+          description: The upload link and the headers to send with the file.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectUploadLink'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /object-storage/buckets/{bucket_name}/objects/{object_path}/download-link:
+    post:
+      tags:
+      - Object Storage
+      summary: Create a download link
+      description: 'Returns a temporary link that downloads one object through the
+        S3 gateway with an HTTP `GET`. Anyone holding the link can download the object
+        until it expires, so share it only with whom it is meant for. It works for
+        `expires_in` seconds (60 to 1,800; 900 when not given). `disposition: attachment`
+        makes a browser save the file instead of showing it. The link is made even
+        when no object has this key; the download then answers 404. Requires scope:
+        object-storage.read.'
+      operationId: createObjectDownloadLink
+      x-ibee-required-scope: object-storage.read
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/BucketName'
+      - $ref: '#/components/parameters/ObjectPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObjectDownloadLinkRequest'
+            example:
+              expires: 600
+              disposition: attachment
+      responses:
+        '200':
+          description: The download link.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectDownloadLink'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /object-storage/buckets/{bucket_name}/objects/{object_path}/metadata:
+    get:
+      tags:
+      - Object Storage
+      summary: Get object metadata
+      description: 'Returns one object''s size, SHA-256 (for a file uploaded whole
+        with a checksum, as upload links always do), ETag, content type, last change
+        and custom metadata without downloading it. Use it to confirm an upload made
+        with a link: compare `size_bytes` and `checksum_sha256` with the file you
+        sent. 404 when no object has this key. Requires scope: object-storage.read.'
+      operationId: getObjectMetadata
+      x-ibee-required-scope: object-storage.read
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/BucketName'
+      - $ref: '#/components/parameters/ObjectPath'
+      responses:
+        '200':
+          description: The object's metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
   /object-storage/credentials:
@@ -3928,8 +4095,8 @@ paths:
       tags:
       - LoadBalancers
       summary: List load balancer regions
-      description: 'Lists the regions where you can create a load balancer. Requires
-        scope: load-balancer.read.'
+      description: 'Lists the regions where you can create a load balancer, with what
+        each one supports (`capabilities`). Requires scope: load-balancer.read.'
       operationId: listLoadBalancerRegions
       x-ibee-required-scope: load-balancer.read
       parameters:
@@ -3942,8 +4109,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
-                  additionalProperties: true
+                  $ref: '#/components/schemas/LoadBalancerRegion'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3989,6 +4155,14 @@ paths:
           minimum: 1
           maximum: 100
           default: 50
+      - name: include_deleted
+        in: query
+        required: false
+        description: Also list deleted load balancers (`observed_state` `deleted`).
+          Left out or false, the list has only load balancers that still exist.
+        schema:
+          type: boolean
+          default: false
       responses:
         '200':
           description: Success.
@@ -4019,8 +4193,12 @@ paths:
       - LoadBalancers
       summary: Create a load balancer
       description: 'Creates a load balancer from a full specification. Answers 202
-        with an operation to read with getLoadBalancerOperation. Targets are private
-        addresses in the VPC. Billed per node-hour. Requires scope: load-balancer.write.'
+        with an operation to read with getLoadBalancerOperation. Targets are checked
+        before anything is reserved: a VM the region cannot reach (for example one
+        without a public IP), or a private target in a region whose `capabilities.private_targets`
+        is false (see listLoadBalancerRegions), answers 422 `target_not_usable`. Billed
+        per node-hour; a Billing refusal is 402 `billing_denied` with `billing_reason`.
+        Requires scope: load-balancer.write.'
       operationId: createLoadBalancer
       x-ibee-required-scope: load-balancer.write
       parameters:
@@ -4053,6 +4231,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '423':
+          $ref: '#/components/responses/Locked'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -4154,6 +4334,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '423':
+          $ref: '#/components/responses/Locked'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -4201,6 +4383,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '423':
+          $ref: '#/components/responses/Locked'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9633,6 +9817,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ContainerRegistry'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
         '202':
           description: Registry accepted; provisioning continues in the background.
           content:
@@ -11020,6 +11206,18 @@ components:
       schema:
         type: string
       description: Logical bucket name.
+    ObjectPath:
+      name: object_path
+      in: path
+      required: true
+      description: The object's key, such as `photos/2026/cat.jpg`, sent with plain
+        `/` between segments; percent-encode other reserved characters in a segment
+        (a space as `%20`). At most 1,024 bytes. A key with an empty, `.` or `..`
+        segment, or with `?`, `#`, `%`, `\` or a control character, is refused with
+        400.
+      schema:
+        type: string
+        minLength: 1
     AccessKeyId:
       name: access_key_id
       in: path
@@ -11332,9 +11530,13 @@ components:
       description: Billing refused the request (`billing_denied`). `billing_reason`
         carries Billing's reason unchanged, for example `insufficient_balance`, `credit_limit_exceeded`,
         `initial_topup_required`, `resource_limit_reached` (a plan limit) or `resource_usage_unavailable`
-        (Billing could not count usage). `billing_sku_code`, `billing_evaluated_at`
-        and `admission_context_id` identify the decision. Nothing is provisioned;
-        resolve the reason and retry with the same idempotency key where supported.
+        (Billing could not count usage). With `initial_topup_required`, `required_topup_minor`
+        and `billing_currency` give Billing's first top-up minimum. `billing_sku_code`,
+        `billing_evaluated_at` and `admission_context_id` identify the decision when
+        the API's admission check refused. A refusal from the product itself (for
+        example Secret Manager, Container Registry or load balancers) has the same
+        `error`, `billing_reason` and `message`. Nothing is provisioned; resolve the
+        reason and retry with the same idempotency key where supported.
       content:
         application/json:
           schema:
@@ -13223,6 +13425,145 @@ components:
           type: array
           items:
             type: string
+    ObjectUploadLinkRequest:
+      type: object
+      description: The one file an upload link is for.
+      required:
+      - size_bytes
+      - checksum_sha256
+      properties:
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 80000000
+          description: The file's exact size in bytes; at most 80,000,000.
+        checksum_sha256:
+          type: string
+          description: The file's SHA-256, base64-encoded (44 characters), as `openssl
+            dgst -sha256 -binary FILE | base64` prints it.
+        content_type:
+          type: string
+          maxLength: 255
+          description: The file's media type, such as `application/pdf`. Sent with
+            the upload when given.
+        expires:
+          type: integer
+          minimum: 60
+          maximum: 1800
+          default: 900
+          description: Seconds the link works.
+    ObjectUploadLink:
+      type: object
+      description: A temporary upload link. `PUT` the file to `url` with exactly these
+        `headers`; no API token is needed. Treat the link like a password until it
+        expires.
+      required:
+      - url
+      - method
+      - headers
+      - expires_in
+      - max_bytes
+      properties:
+        url:
+          type: string
+          format: uri
+          description: The link, on the workspace's S3 host.
+        method:
+          type: string
+          enum:
+          - PUT
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Headers the upload must send unchanged (`Content-Length`, `x-amz-checksum-sha256`,
+            and `Content-Type` when given).
+        expires_in:
+          type: integer
+          description: Seconds the link works from now.
+        max_bytes:
+          type: integer
+          format: int64
+          description: The most one upload link carries (80,000,000).
+    ObjectDownloadLinkRequest:
+      type: object
+      description: How long the download link works and how a browser treats the file.
+        Send `{}` for the defaults.
+      properties:
+        expires:
+          type: integer
+          minimum: 60
+          maximum: 1800
+          default: 900
+          description: Seconds the link works.
+        disposition:
+          type: string
+          enum:
+          - inline
+          - attachment
+          description: '`attachment` makes a browser save the file under its name;
+            `inline` lets it show the file. Not set: the browser decides.'
+    ObjectDownloadLink:
+      type: object
+      description: A temporary download link; no API token is needed.
+      required:
+      - url
+      - expires_in
+      properties:
+        url:
+          type: string
+          format: uri
+        expires_in:
+          type: integer
+          description: Seconds the link works from now.
+    ObjectMetadata:
+      type: object
+      description: One object's details, without its contents.
+      required:
+      - name
+      - bucket
+      - size_bytes
+      properties:
+        name:
+          type: string
+          description: The object's key.
+        bucket:
+          type: string
+          description: The bucket's name.
+        size_bytes:
+          type: integer
+          format: int64
+          description: Size in bytes.
+        checksum_sha256:
+          type:
+          - string
+          - 'null'
+          description: The base64 SHA-256 kept for a file uploaded whole with a checksum
+            (upload links always send one); null otherwise.
+        last_modified:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        etag:
+          type:
+          - string
+          - 'null'
+          description: The object's ETag, as S3 tools show it.
+        content_type:
+          type:
+          - string
+          - 'null'
+        metadata:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+          description: The object's custom metadata.
+        is_public:
+          type: boolean
+          description: Whether anyone can read the object without a link.
     S3Credential:
       description: An S3 access key pair. The secret key is returned only when the
         pair is created.
@@ -14449,9 +14790,21 @@ components:
           - single-writer
           - multi-writer
           default: single-writer
-          description: '- `single-writer`: only this VM may write to the volume (default).
-
-            - `multi-writer`: the volume may be attached to several VMs.'
+          description: "- `single-writer`: only this VM may write to the volume (default).\n\
+            - `multi-writer`: shared raw block access from several VMs (up to 16,\
+            \ on at most two\n  compute hosts), in the same organization, workspace\
+            \ and site. Data volumes only, with\n  `delete_on_termination` off. Needs\
+            \ `shared_access_confirmed: true`. It is not a shared\n  file system:\
+            \ use cluster-aware software with its own locking and fencing, because\n\
+            \  ordinary ext4, XFS or NTFS mounted on several VMs at once corrupts\
+            \ data.\n\nSwitching modes needs every VM detached first. Otherwise the\
+            \ operation fails."
+        shared_access_confirmed:
+          type: boolean
+          default: false
+          description: 'Required as `true` with `mode: multi-writer`. Confirms the
+            guests run cluster-aware software with locking and fencing. Without it
+            the attach operation fails.'
         billing_catalog:
           $ref: '#/components/schemas/BillingCatalogSelection'
           description: Required. The Block Storage SKU from the Billing catalog that
@@ -16938,6 +17291,18 @@ components:
           description: 'Billing''s reason with `billing_denied`, passed through unchanged:
             for example `insufficient_balance`, `credit_limit_exceeded`, `initial_topup_required`,
             `resource_limit_reached` or `resource_usage_unavailable`.'
+        required_topup_minor:
+          type: integer
+          nullable: true
+          description: 'With `billing_reason` `initial_topup_required`: Billing''s
+            first top-up minimum in minor units of `billing_currency` (50000 is ₹500).
+            Absent when Billing did not send one.'
+          example: 50000
+        billing_currency:
+          type: string
+          nullable: true
+          description: The wallet currency `required_topup_minor` is in.
+          example: INR
         billing_sku_code:
           type: string
           nullable: true
@@ -18312,6 +18677,42 @@ components:
       type: object
       required:
       - target_group
+    LoadBalancerRegion:
+      type: object
+      additionalProperties: true
+      description: A region where load balancers can be created.
+      properties:
+        id:
+          type: string
+          description: Region ID; send it as `region_id` when creating a load balancer.
+          example: 01a1e3fe-3104-7563-ad37-95f90ab93ef3
+        code:
+          type: string
+          example: vga-dev
+        name:
+          type: string
+          example: Amaravati (dev)
+        site_id:
+          type: string
+          description: The site the region is in.
+          example: VGA
+        max_nodes:
+          type: integer
+          description: The most nodes one load balancer can have in this region.
+          example: 1
+        capabilities:
+          type: object
+          additionalProperties: true
+          description: What load balancers in this region support.
+          properties:
+            udp_firewall:
+              type: boolean
+              description: UDP listeners are protected by the region's network policy.
+            private_targets:
+              type: boolean
+              description: Targets can be private addresses in a VPC. When false,
+                use VMs or addresses the region reaches publicly; a private target
+                answers 422 `target_not_usable`.
     LoadBalancerHealthCheck:
       properties:
         protocol:
@@ -18339,12 +18740,34 @@ components:
           type: integer
           maximum: 10.0
           minimum: 1.0
-          default: 3
+          description: Failed checks before a target is taken out of service. Left
+            out, it is 1 for an `HTTP` health check (the only value the current gateway
+            supports for HTTP) and 3 for `TCP`.
         healthy_threshold:
           type: integer
           maximum: 10.0
           minimum: 1.0
           default: 1
+        hostname:
+          anyOf:
+          - type: string
+            maxLength: 253
+            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+          - type: 'null'
+          description: HTTP checks only. The Host header the check sends, for example
+            `app.example.com`.
+        expected_statuses:
+          type: array
+          items:
+            type: integer
+            minimum: 100
+            maximum: 599
+          minItems: 1
+          maxItems: 32
+          default:
+          - 200
+          description: HTTP checks only. Response codes that count as healthy, each
+            listed once.
       additionalProperties: false
       type: object
     LoadBalancerListener:
@@ -18460,6 +18883,23 @@ components:
           minItems: 1
         logging:
           $ref: '#/components/schemas/LoadBalancerLogging'
+        firewall:
+          $ref: '#/components/schemas/LoadBalancerFirewall'
+        managed_by:
+          type: string
+          enum:
+          - portal
+          - ccm
+          default: portal
+          description: Who manages it. Send `portal` (or leave it out). `ccm` load
+            balancers belong to a Kubernetes cluster and are read-only here.
+        owner:
+          anyOf:
+          - type: object
+            additionalProperties: true
+          - type: 'null'
+          description: Set only on load balancers a Kubernetes cluster made (`managed_by`
+            `ccm`). Don't send it.
       additionalProperties: false
       type: object
       required:
@@ -18468,6 +18908,89 @@ components:
       - traffic_type
       - listeners
       - target_groups
+    LoadBalancerFirewall:
+      description: Who may reach the listeners. `public` accepts everyone; `restricted`
+        applies `rules`.
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum:
+          - public
+          - restricted
+          default: public
+        rules:
+          type: array
+          maxItems: 100
+          default: []
+          items:
+            $ref: '#/components/schemas/LoadBalancerFirewallRule'
+    LoadBalancerFirewallRule:
+      type: object
+      additionalProperties: false
+      required:
+      - address_family
+      - protocol
+      - source
+      - port
+      properties:
+        address_family:
+          type: string
+          enum:
+          - IPv4
+          - IPv6
+        protocol:
+          type: string
+          enum:
+          - TCP
+          - UDP
+        source:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Source address or CIDR, for example `203.0.113.0/24`. Must
+            match `address_family`.
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        action:
+          type: string
+          enum:
+          - allow
+          - block
+          default: allow
+    LoadBalancerConditions:
+      description: 'How far the load balancer is from serving traffic. `addresses`
+        holds the public IP address clients connect to: point an A record at it to
+        use your own domain. It is empty until the frontend is ready.'
+      type: object
+      additionalProperties: true
+      properties:
+        addresses:
+          type: array
+          items:
+            type: string
+          description: Public IP addresses clients connect to. Empty until `frontend_ready`
+            is true.
+          example:
+          - 103.149.10.86
+        configuration_ready:
+          type: boolean
+          description: The configuration has been applied.
+        frontend_ready:
+          type: boolean
+          description: The public address is assigned and routing is ready.
+        backend_ready:
+          type: boolean
+          description: The targets are attached.
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Why the load balancer isn't ready, for example `backend_attachment_unavailable`;
+            null when it is.
     LoadBalancer:
       properties:
         id:
@@ -18503,8 +19026,7 @@ components:
         observed_state:
           type: string
         conditions:
-          additionalProperties: true
-          type: object
+          $ref: '#/components/schemas/LoadBalancerConditions'
         generation:
           type: integer
         observed_generation:
@@ -18647,6 +19169,15 @@ components:
           anyOf:
           - $ref: '#/components/schemas/LoadBalancerHealthCheck'
           - type: 'null'
+        proxy_protocol:
+          type: string
+          enum:
+          - 'off'
+          - v1
+          - v2
+          default: 'off'
+          description: TCP target groups only. Sends the client's address to the targets
+            with PROXY protocol v1 or v2.
       additionalProperties: false
       type: object
       required:
