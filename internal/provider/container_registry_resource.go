@@ -48,6 +48,14 @@ type containerRegistryAPI struct {
 	Generation         int64   `json:"generation"`
 	ObservedGeneration int64   `json:"observed_generation"`
 	DeletedAt          *string `json:"deleted_at"`
+	// Contract 0.15.0: FAILED means the service stopped retrying the latest change.
+	ReconciliationStatus *string `json:"reconciliation_status"`
+}
+
+// stopped reports a pending change the service gave up on: it will not
+// converge without a retry, so waiting longer cannot help.
+func (out containerRegistryAPI) stopped() bool {
+	return out.Generation > out.ObservedGeneration && out.ReconciliationStatus != nil && *out.ReconciliationStatus == "FAILED"
 }
 
 func (out containerRegistryAPI) deleted() bool {
@@ -115,6 +123,8 @@ func (r *containerRegistryResource) waitRegistry(ctx context.Context, id string,
 			return out, nil
 		case err == nil && out.ObservedState == "ERROR":
 			return out, fmt.Errorf("the API reports observed_state ERROR for registry %s; fix the cause and retry provisioning (POST .../reconcile, `ibee registries retry`)", id)
+		case err == nil && out.stopped():
+			return out, fmt.Errorf("the API reports reconciliation_status FAILED for registry %s: it stopped applying the latest change and keeps serving with its previous settings; retry it (POST .../reconcile, `ibee registries retry`) or apply again", id)
 		case err == nil && !gone && out.deleted():
 			return out, fmt.Errorf("the API reports registry %s as deleted", id)
 		case err != nil && gone && IsNotFound(err):

@@ -277,6 +277,28 @@ func TestContainerRegistryWaitStopsOnError(t *testing.T) {
 	}
 }
 
+func TestContainerRegistryWaitStopsWhenTheChangeFailed(t *testing.T) {
+	r := &containerRegistryResource{client: computeTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			w.WriteHeader(202)
+		}
+		computeJSON(w, map[string]any{"registry_id": testRegistryID, "registry_name": "acme-apps", "visibility": "PRIVATE", "security": map[string]any{"vulnerability_pull_policy": "ALLOW"}, "observed_state": "PROVISIONING", "generation": 1, "observed_generation": 0, "reconciliation_status": "FAILED", "deleted_at": nil})
+	})}
+	create := resource.CreateResponse{State: computeState(t, r, nil)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: computePlanState(t, r, registryTestModel())}, &create)
+	if !create.Diagnostics.HasError() || !strings.Contains(fmt.Sprint(create.Diagnostics), "reconciliation_status FAILED") {
+		t.Fatalf("reconciliation_status FAILED on a pending change must stop the wait: %v", create.Diagnostics)
+	}
+}
+
+func TestContainerRegistrySettledIgnoresAnOldFailure(t *testing.T) {
+	failed := "FAILED"
+	settled := containerRegistryAPI{ObservedState: "ACTIVE", Generation: 2, ObservedGeneration: 2, ReconciliationStatus: &failed}
+	if settled.stopped() || !settled.settled() {
+		t.Fatal("with every change applied, an old FAILED status must not stop anything")
+	}
+}
+
 func TestContainerRegistryAccessTokenLifecycle(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRegistryFixture(t)

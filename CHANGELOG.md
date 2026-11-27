@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.11.0 (unreleased)
+## 0.12.0 (unreleased)
+
+Moves the provider to public API contract 0.15.0.
+
+- Every delete now answers with a body (`deletion`: `deleted`, or `deleting` while it
+  continues in the background). The provider already treated any `2xx` as success, so
+  destroys behave as before.
+- `ibee_container_registry`: create, update and destroy stop waiting when the API
+  reports `reconciliation_status` `FAILED` for a pending change. The registry keeps its
+  previous settings and will not converge on its own, so the apply fails with the reason
+  instead of waiting out the timeout. Retry with `ibee registries retry` (or
+  `POST .../reconcile`) or apply again.
+
+## 0.11.0
 
 Moves the provider to public API contract 0.14.3.
 
