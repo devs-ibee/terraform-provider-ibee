@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: IBEE Solutions API
-  version: 0.14.3
+  version: 0.15.0
   description: 'Public API reference for IBEE Solutions.
 
 
@@ -119,8 +119,8 @@ paths:
       - SecretManager
       summary: Enable Secret Manager
       description: 'Enables Secret Manager for the workspace. Answers 202 with an
-        operation to read with getSecretManagerOperation. Billing can refuse it (403
-        billing_denied). Requires scope: secret-manager.write.'
+        operation to read with getSecretManagerOperation. Billing can refuse it (402
+        billing_denied, with billing_reason). Requires scope: secret-manager.write.'
       operationId: enableSecretManagerWorkspace
       x-ibee-required-scope: secret-manager.write
       parameters:
@@ -542,8 +542,10 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                allOf:
+                - type: object
+                  additionalProperties: true
+                - $ref: '#/components/schemas/DeletionAnswer'
         '404':
           $ref: '#/components/responses/NotFound'
         '401':
@@ -924,12 +926,16 @@ paths:
           format: uuid
       responses:
         '202':
-          description: Accepted.
+          description: Accepted. The `deletion` object says the deletion has started
+            (`state` ends in `-ing`) and `check` names the read that answers 404 once
+            it is gone.
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                allOf:
+                - type: object
+                  additionalProperties: true
+                - $ref: '#/components/schemas/DeletionAnswer'
         '404':
           $ref: '#/components/responses/NotFound'
         '401':
@@ -1209,7 +1215,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteResponse'
+                allOf:
+                - $ref: '#/components/schemas/DeleteResponse'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1335,7 +1343,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteResponse'
+                allOf:
+                - $ref: '#/components/schemas/DeleteResponse'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1458,7 +1468,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteResponse'
+                allOf:
+                - $ref: '#/components/schemas/DeleteResponse'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1673,7 +1685,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteResponse'
+                allOf:
+                - $ref: '#/components/schemas/DeleteResponse'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1815,7 +1829,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BucketCustomDomainRemoved'
+                allOf:
+                - $ref: '#/components/schemas/BucketCustomDomainRemoved'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2195,7 +2211,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/S3CredentialRevoked'
+                allOf:
+                - $ref: '#/components/schemas/S3CredentialRevoked'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2487,8 +2505,13 @@ paths:
       - $ref: '#/components/parameters/WorkspaceId'
       - $ref: '#/components/parameters/VpcId'
       responses:
-        '204':
-          description: VPC deleted successfully.
+        '200':
+          description: VPC deleted successfully. The answer names the resource and
+            its final state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2655,8 +2678,13 @@ paths:
       - $ref: '#/components/parameters/VpcId'
       - $ref: '#/components/parameters/SubnetId'
       responses:
-        '204':
-          description: Subnet deleted successfully.
+        '200':
+          description: Subnet deleted successfully. The answer names the resource
+            and its final state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2782,8 +2810,13 @@ paths:
       - $ref: '#/components/parameters/VpcId'
       - $ref: '#/components/parameters/VmId'
       responses:
-        '204':
-          description: Node detached successfully.
+        '200':
+          description: Node detached successfully. The answer names the resource and
+            its final state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2920,8 +2953,13 @@ paths:
             schema:
               $ref: '#/components/schemas/NatGatewayDeleteRequest'
       responses:
-        '204':
-          description: NAT gateway deleted successfully.
+        '200':
+          description: NAT gateway deleted successfully. The answer names the resource
+            and its final state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3158,8 +3196,13 @@ paths:
       - $ref: '#/components/parameters/NatGatewayId'
       - $ref: '#/components/parameters/PortForwardingRuleId'
       responses:
-        '204':
-          description: Port-forwarding rule deleted successfully.
+        '200':
+          description: Port-forwarding rule deleted successfully. The answer names
+            the resource and its final state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3429,8 +3472,13 @@ paths:
       - $ref: '#/components/parameters/WorkspaceId'
       - $ref: '#/components/parameters/ReservedIpId'
       responses:
-        '204':
-          description: Reserved IP released successfully.
+        '200':
+          description: Reserved IP released successfully. The answer names the resource
+            and its final state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3785,8 +3833,13 @@ paths:
       - $ref: '#/components/parameters/WorkspaceId'
       - $ref: '#/components/parameters/FirewallGroupId'
       responses:
-        '204':
-          description: Firewall group deleted successfully.
+        '200':
+          description: Firewall group deleted successfully. The answer names the resource
+            and its final state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3927,7 +3980,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FirewallGroup'
+                allOf:
+                - $ref: '#/components/schemas/FirewallGroup'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4067,7 +4122,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FirewallGroup'
+                allOf:
+                - $ref: '#/components/schemas/FirewallGroup'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4366,11 +4423,15 @@ paths:
       - $ref: '#/components/parameters/LoadBalancerIdempotencyKey'
       responses:
         '202':
-          description: Accepted.
+          description: Accepted. The `deletion` object says the deletion has started
+            (`state` ends in `-ing`) and `check` names the read that answers 404 once
+            it is gone.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoadBalancerOperation'
+                allOf:
+                - $ref: '#/components/schemas/LoadBalancerOperation'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -5208,11 +5269,15 @@ paths:
               public_ip_action: release
       responses:
         '202':
-          description: VM deletion accepted.
+          description: VM deletion accepted. The `deletion` object says the deletion
+            has started (`state` ends in `-ing`) and `check` names the read that answers
+            404 once it is gone.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OperationAccepted'
+                allOf:
+                - $ref: '#/components/schemas/OperationAccepted'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -6176,7 +6241,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SnapshotDeleteResult'
+                allOf:
+                - $ref: '#/components/schemas/SnapshotDeleteResult'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -6760,24 +6827,28 @@ paths:
       responses:
         '202':
           description: Deletion accepted. GET returns status deleting until cleanup
-            completes, then 404.
+            completes, then 404. The `deletion` object says the deletion has started
+            (`state` ends in `-ing`) and `check` names the read that answers 404 once
+            it is gone.
           content:
             application/json:
               schema:
-                type: object
-                required:
-                - status
-                - run_id
-                properties:
-                  status:
-                    type: string
-                    enum:
-                    - deleting
-                  run_id:
-                    type: string
-                  recovery_point_id:
-                    type: string
-                    nullable: true
+                allOf:
+                - type: object
+                  required:
+                  - status
+                  - run_id
+                  properties:
+                    status:
+                      type: string
+                      enum:
+                      - deleting
+                    run_id:
+                      type: string
+                    recovery_point_id:
+                      type: string
+                      nullable: true
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -7042,11 +7113,15 @@ paths:
               public_ip_action: release
       responses:
         '202':
-          description: VM deletion accepted.
+          description: VM deletion accepted. The `deletion` object says the deletion
+            has started (`state` ends in `-ing`) and `check` names the read that answers
+            404 once it is gone.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OperationAccepted'
+                allOf:
+                - $ref: '#/components/schemas/OperationAccepted'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -8011,7 +8086,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SnapshotDeleteResult'
+                allOf:
+                - $ref: '#/components/schemas/SnapshotDeleteResult'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -8595,24 +8672,28 @@ paths:
       responses:
         '202':
           description: Deletion accepted. GET returns status deleting until cleanup
-            completes, then 404.
+            completes, then 404. The `deletion` object says the deletion has started
+            (`state` ends in `-ing`) and `check` names the read that answers 404 once
+            it is gone.
           content:
             application/json:
               schema:
-                type: object
-                required:
-                - status
-                - run_id
-                properties:
-                  status:
-                    type: string
-                    enum:
-                    - deleting
-                  run_id:
-                    type: string
-                  recovery_point_id:
-                    type: string
-                    nullable: true
+                allOf:
+                - type: object
+                  required:
+                  - status
+                  - run_id
+                  properties:
+                    status:
+                      type: string
+                      enum:
+                      - deleting
+                    run_id:
+                      type: string
+                    recovery_point_id:
+                      type: string
+                      nullable: true
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -8934,7 +9015,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BlockVolumeDelete'
+                allOf:
+                - $ref: '#/components/schemas/BlockVolumeDelete'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -9228,6 +9311,10 @@ paths:
       responses:
         '200':
           description: Distribution deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CdnDeleteResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -9397,7 +9484,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CdnWebsiteConfig'
+                allOf:
+                - $ref: '#/components/schemas/CdnWebsiteConfig'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -9559,6 +9648,10 @@ paths:
       responses:
         '200':
           description: Custom domain removed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CdnDeleteResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -9902,11 +9995,15 @@ paths:
       - $ref: '#/components/parameters/ContainerRegistryConfirmName'
       responses:
         '202':
-          description: Deletion accepted.
+          description: Deletion accepted. The `deletion` object says the deletion
+            has started (`state` ends in `-ing`) and `check` names the read that answers
+            404 once it is gone.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContainerRegistry'
+                allOf:
+                - $ref: '#/components/schemas/ContainerRegistry'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -10309,7 +10406,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContainerRegistryMessage'
+                allOf:
+                - $ref: '#/components/schemas/ContainerRegistryMessage'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -10426,7 +10525,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContainerRegistryMessage'
+                allOf:
+                - $ref: '#/components/schemas/ContainerRegistryMessage'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -10520,7 +10621,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContainerRegistryMessage'
+                allOf:
+                - $ref: '#/components/schemas/ContainerRegistryMessage'
+                - $ref: '#/components/schemas/DeletionAnswer'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -13636,6 +13739,103 @@ components:
         message:
           description: Human-readable result.
           type: string
+    DeletionState:
+      description: 'What happened to the resource. Every successful delete, release,
+        detach and revoke answer carries it. With a `200` the work is done and `state`
+        is final (`deleted`, `released`, `detached`, `revoked`). With a `202` the
+        work continues in the background and `state` is `deleting`, `releasing`, `detaching`
+        or `revoking`: the resource disappears when it finishes. Read `check` (or
+        follow `operation_id`) until it answers `404` or a final state. See Asynchronous
+        operations.'
+      type: object
+      required:
+      - state
+      properties:
+        resource_id:
+          description: The ID from the request path (its last path parameter).
+          type: string
+          example: 2cf6870875a162c163b1926e
+        state:
+          type: string
+          enum:
+          - deleted
+          - deleting
+          - released
+          - releasing
+          - detached
+          - detaching
+          - revoked
+          - revoking
+          example: deleted
+        operation_id:
+          description: The operation that carries the work, when the product started
+            one. Follow it with that product's operation read.
+          type: string
+        check:
+          description: The public read that shows the resource (it answers `404` once
+            the resource is gone), or the list it belonged to.
+          type: string
+          example: GET /v1/networking/vpcs/2cf6870875a162c163b1926e?workspace_id=710995
+        site_code:
+          description: 'The location header (`X-Site-Code`) to send with `check`.
+            Present when the delete was sent with one: Secret Manager at a location
+            other than the workspace''s default.'
+          type: string
+          example: HYD
+    DeletionAnswer:
+      description: The `deletion` object that every successful delete answer carries
+        next to the product's own fields.
+      type: object
+      required:
+      - deletion
+      properties:
+        deletion:
+          $ref: '#/components/schemas/DeletionState'
+    DeleteResult:
+      description: 'The answer of a delete that has no other fields: VPCs, subnets,
+        firewall groups, NAT gateways and their port-forwarding rules, VPC node detach
+        and Reserved IP release. These finish before they answer.'
+      type: object
+      required:
+      - id
+      - status
+      - deletion
+      properties:
+        id:
+          description: The ID of the deleted, released or detached resource.
+          type: string
+        status:
+          type: string
+          enum:
+          - deleted
+          - released
+          - detached
+          description: The final state; the same as `deletion.state`.
+        deletion:
+          $ref: '#/components/schemas/DeletionState'
+    CdnDeleteResult:
+      description: The answer of a CDN distribution or custom domain delete. It finishes
+        before it answers.
+      type: object
+      required:
+      - deletion
+      properties:
+        id:
+          type: string
+          description: The ID of the deleted distribution or custom domain.
+        message:
+          type: string
+          description: Human-readable result.
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum:
+          - deleted
+        deletion:
+          $ref: '#/components/schemas/DeletionState'
     DeleteResponse:
       description: Confirmation of a delete.
       type: object
@@ -16359,7 +16559,8 @@ components:
         operation:
           $ref: '#/components/schemas/BlockVolumeOperation'
     BlockVolumeDelete:
-      description: Confirmation that a volume delete was started.
+      description: Confirmation that the volume is deleted. The delete finishes before
+        it answers; `operation_id` is the finished delete operation.
       type: object
       required:
       - status
@@ -16376,7 +16577,7 @@ components:
           description: ID of the deleted volume.
         operation_id:
           type: string
-          description: ID of the delete operation.
+          description: ID of the finished delete operation.
     ResizeBlockVolumeRequest:
       description: Body for growing a volume.
       type: object
@@ -17536,6 +17737,23 @@ components:
         observed_generation:
           type: integer
           description: The last generation applied; equal to `generation` when settled.
+        reconciliation_status:
+          description: 'How the latest change is being applied. The registry is still
+            updating while `generation` is greater than `observed_generation`; this
+            field tells a slow update from a stopped one.
+
+            - `PENDING` or `PROCESSING`: the change is still being applied. Keep polling.
+
+            - `COMPLETE`: the last change was applied.
+
+            - `FAILED`: the service stopped retrying the latest change. The registry
+            keeps serving with its previous settings. Retry with `POST /container-registry/registries/{registry_id}/reconcile`,
+            or send the change again.
+
+            - `null`: no reconciliation record (rare, for example a very old registry).'
+          allOf:
+          - $ref: '#/components/schemas/ContainerRegistryJobStatus'
+          nullable: true
         created_at:
           type: string
           format: date-time
